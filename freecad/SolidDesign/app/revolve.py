@@ -17,7 +17,7 @@ from . import refs, sketchfeature, util
 
 class RevolveProxy(sketchfeature.SketchFeatureProxy):
     TYPE = "Revolve"
-    LABELS = ("Revolve", "Cut-Revolve")
+    LABELS = ("Revolve", "Cut-Revolve", "Surface-Revolve")
 
     def setup(self, obj):
         super(RevolveProxy, self).setup(obj)

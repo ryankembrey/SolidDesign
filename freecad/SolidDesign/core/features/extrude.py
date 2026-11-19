@@ -12,7 +12,7 @@ import Part
 
 from .. import topo
 from ..bodies import SOLID
-from . import common
+from . import common, sheet
 from .profile import (THIN_MID, THIN_ONE, THIN_TWO, THIN_TYPES, Thin,
                       is_plane as _is_plane, plane_normal as _plane_normal,
                       plane_point as _plane_point, thin_faces)
@@ -71,6 +71,7 @@ class Params(object):
         self.dir1 = Extent()
         self.dir2 = None
         self.thin = None
+        self.cap_end = False        # Surface mode: close the ends (a closed surface)
         self.merge = True
         self.scope = common.Scope()
         self.keep = common.Keep()
@@ -282,6 +283,157 @@ def _direction_solid(p, base, faces, d, ext, tag, big, first):
     raise topo.GeometryError("Unknown end condition " + c)
 
 
+# ---------------------------------------------------------------- surface mode
+
+def _sheet_prism(prof, d, length, tag, draft=0.0, outward=False):
+    """The profile's curves swept along ``d``: faces, not a solid."""
+    faces, wires = prof
+    if length <= topo.TOL:
+        raise topo.GeometryError("The depth must be greater than zero.")
+    if not draft:
+        return topo.extrude(topo.compound(sheet.wires_of(faces, wires), tag), d * length, tag)
+    if wires:
+        raise topo.GeometryError("Draft needs closed curves; an open sketch can't be drafted.")
+    delta = length * math.tan(topo.deg(draft))
+    if not outward:
+        delta = -delta
+    out = []
+    for f in faces:
+        outer = f.OuterWire
+        for w in f.Wires:
+            sign = 1.0 if w.isSame(outer) else -1.0
+            top = _offset_wire(w, sign * delta)
+            if top is None:
+                raise topo.GeometryError("Draft: the angle is too large for this depth; the "
+                                         "end of the surface would vanish.")
+            top.translate(d * length)
+            out.extend(topo.loft([w, top], tag, solid=False).Faces)
+    return sheet.shells(out, tag)
+
+
+def _shift_prof(prof, vec):
+    faces, wires = prof
+    return _shift_faces(faces, vec), _shift_faces(wires, vec)
+
+
+def _sheet_direction(p, base, prof, d, ext, tag, big, first):
+    """One direction of a surface extrude."""
+    ref = Part.makeCompound(sheet.wires_of(*prof))
+    c = ext.condition
+
+    def mk(pr, dd, length):
+        return _sheet_prism(pr, dd, length, tag, ext.draft, ext.draft_outward)
+    if c == BLIND:
+        return mk(prof, d, ext.depth)
+    if c in (THROUGH_ALL, THROUGH_ALL_BOTH):
+        return mk(prof, d, big)
+    if c == UP_TO_VERTEX:
+        if ext.vertex is None:
+            raise topo.GeometryError("Up To Vertex: pick a vertex.")
+        L = (ext.vertex - p.origin).dot(d) - _start_shift(p, base) * p.normal.dot(d)
+        if L <= topo.TOL:
+            raise topo.GeometryError("Up To Vertex: the vertex is behind the start of the "
+                                     "extrusion. Click Reverse Direction.")
+        return mk(prof, d, L)
+    if c in (UP_TO_SURFACE, OFFSET_FROM_SURFACE):
+        face = _target_face(ext, d, c)
+        if _is_plane(face):
+            n = _plane_normal(face)
+            if abs(abs(n.dot(d)) - 1.0) < 1e-9:
+                L = (_plane_point(face) - ref.Vertexes[0].Point).dot(d)
+                if L <= topo.TOL:
+                    raise topo.GeometryError("{}: the surface is behind the profile. Click "
+                                             "Reverse Direction.".format(c))
+                return mk(prof, d, L)
+            tool = Part.Plane(_plane_point(face), n).toShape(-big, big, -big, big)
+        else:
+            tool = face
+        return sheet.trimmed(mk(prof, d, big), [tool], ref, tag, c)
+    if c in (UP_TO_NEXT, UP_TO_BODY):
+        long_ = mk(prof, d, big)
+        if c == UP_TO_BODY:
+            if not ext.body or ext.body not in base:
+                raise topo.GeometryError("Up To Body: pick the body to extrude up to.")
+            targets = [base.get(ext.body).shape]
+        else:
+            targets = [b.shape for b in base.bodies(SOLID)]
+            if not targets:
+                raise topo.GeometryError("Up To Next: nothing is in the way of the surface. "
+                                         "Use Blind or another end condition.")
+        return sheet.cut_by_bodies(long_, targets, ref, tag, c)
+    if c == MID_PLANE:
+        if not first:
+            raise topo.GeometryError("Mid Plane can't be used for Direction 2.")
+        if ext.draft:
+            a = mk(prof, d, ext.depth / 2.0)
+            b = mk(prof, -d, ext.depth / 2.0)
+            return sheet.shells(a.Faces + b.Faces, tag)
+        return _sheet_prism(_shift_prof(prof, d * (-ext.depth / 2.0)), d, ext.depth, tag)
+    raise topo.GeometryError("Unknown end condition " + c)
+
+
+def _target_face(ext, d, c):
+    if ext.face is None:
+        raise topo.GeometryError("{}: pick a face or plane.".format(c))
+    face = ext.face
+    if c == OFFSET_FROM_SURFACE and ext.offset:
+        off = ext.offset if ext.reverse_offset else -ext.offset
+        if _is_plane(face):
+            n = _plane_normal(face)
+            s = 1.0 if n.dot(d) > 0 else -1.0
+            face = face.copy()
+            face.translate(n * (off * s))
+        else:
+            try:
+                face = face.makeOffsetShape(off, 1e-6).Faces[0]
+            except Exception as e:
+                raise topo.GeometryError("Offset From Surface: the surface can't be offset "
+                                         "by that distance ({}).".format(e))
+    return face
+
+
+def sheet_shape(p, base):
+    """Surface mode: the profile's curves extruded into a surface body (closed at
+    both ends with Cap end)."""
+    tag = p.tag
+    if p.cap_end:
+        if not p.faces:
+            raise topo.GeometryError("Cap end needs a closed sketch (or closed regions in "
+                                     "Selected Contours).")
+        solid = Params.__new__(Params)
+        solid.__dict__.update(p.__dict__)
+        solid.mode = "Add"
+        solid.thin = None
+        solid.open_wires = []
+        return sheet.shell_of(tool_shape(solid, base), tag)
+    prof = (list(p.faces), list(p.open_wires))
+    if not prof[0] and not prof[1]:
+        raise topo.GeometryError("Pick a sketch, or regions of one, to extrude.")
+    n = App.Vector(p.normal)
+    n.normalize()
+    d = -n if p.reverse else n
+    if p.direction is not None:
+        if p.dir1.draft or (p.dir2 is not None and p.dir2.draft):
+            raise topo.GeometryError("Draft works with the sketch's normal direction; clear "
+                                     "the direction of extrusion or the draft.")
+        d = App.Vector(p.direction).normalize()
+        if p.reverse:
+            d = -d
+    shift = _start_shift(p, base)
+    if abs(shift) > topo.TOL:
+        prof = _shift_prof(prof, n * shift)
+    shapes = [b.shape for b in base]
+    big = topo.big_length(Part.makeCompound(sheet.wires_of(*prof)), *shapes)
+    parts = [_sheet_direction(p, base, prof, d, p.dir1, tag, big, True)]
+    if p.dir1.condition == THROUGH_ALL_BOTH:
+        parts.append(_sheet_prism(prof, -d, big, tag, p.dir1.draft, p.dir1.draft_outward))
+    elif p.dir2 is not None and p.dir1.condition != MID_PLANE:
+        parts.append(_sheet_direction(p, base, prof, -d, p.dir2, tag, big, False))
+    if len(parts) == 1:
+        return parts[0]
+    return sheet.shells([f for x in parts for f in x.Faces], tag)
+
+
 def _origin_of(faces):
     return faces[0].Vertexes[0].Point if faces and faces[0].Vertexes else App.Vector()
 
@@ -384,6 +536,10 @@ def _span(shape, d):
 
 def compute(p, base):
     """Run the extrude on ``base`` (a BodySet). Returns (Result, tool, preview)."""
+    if p.mode == sheet.SURFACE:
+        tool = sheet_shape(p, base)
+        res = common.apply_add(base, tool, p.feature, p.tag, False, p.scope, p.alloc)
+        return res, tool, tool
     tool = tool_shape(p, base)
     if p.mode == "Add":
         res = common.apply_add(base, tool, p.feature, p.tag, p.merge, p.scope, p.alloc)

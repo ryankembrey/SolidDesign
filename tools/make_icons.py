@@ -907,6 +907,77 @@ def boundary_cut():
     return s.render()
 
 
+def _open_loop(s, ring, z0, z1, pal=GREEN, layer=2):
+    """Walls (two-sided, no caps) standing on an open or closed curve."""
+    c = centroid(ring)
+    for i in range(len(ring) - 1):
+        q = [(ring[i][0], ring[i][1], z0), (ring[i + 1][0], ring[i + 1][1], z0),
+             (ring[i + 1][0], ring[i + 1][1], z1), (ring[i][0], ring[i][1], z1)]
+        m = centroid(q)
+        s.add(Face([q], pal, hint=(m[0] - c[0], m[1] - c[1], 0), two_sided=True,
+                   layer=layer))
+
+
+def extrude_surface():
+    """A green wall rising off an orange open curve, an arrow up."""
+    s = Scene()
+    curve = [(-12 + 24 * i / 16.0, 6 * math.sin(math.pi * i / 8.0), 0) for i in range(17)]
+    _open_loop(s, curve, 0, 14)
+    s.line(curve, ORANGE[2], 2.4, layer=10)
+    s.arrow((0, 0, 14.5), (0, 0, 24))
+    return s.render()
+
+
+def revolve_surface():
+    """An open green sleeve (no ends) round a dashed axis."""
+    s = Scene()
+    ring0 = circle(0, 0, 0, 10, 48)
+    ring1 = circle(0, 0, 14, 6, 48)
+    for i in range(48):
+        j = (i + 1) % 48
+        q = [ring0[i], ring0[j], ring1[j], ring1[i]]
+        m = centroid(q)
+        s.add(Face([q], GREEN, hint=(m[0], m[1], 0.4), two_sided=True, layer=2))
+    _axis(s, 0, 0, -3, 19)
+    s.arc_arrow(circle(0, 0, 2, 14.5, 24, 110, 330, closed=False))
+    return s.render()
+
+
+def sweep_surface():
+    """A green bent strip (one wall) along a dashed path."""
+    s = Scene()
+    outer, _inner = _bend(11, 15, 0, 90, 0, 0)
+    ring = [(x, y) for x, y in outer]
+    _open_loop(s, [(x, y, 0) for x, y in ring], 0, 9)
+    path = [(12 * math.cos(math.radians(a)), 12 * math.sin(math.radians(a)), 9.1)
+            for a in range(0, 91, 6)]
+    s.line(path, ORANGE[2], 2.0, dash="3 2.5", layer=10)
+    return s.render()
+
+
+def loft_surface():
+    """An open green skin from a square to a circle (no ends)."""
+    s = Scene()
+    n = 48
+    s.ruled(_square_ring(0, 0, 0, 10, n), circle(0, 0, 16, 6, n), GREEN, cap_top=False,
+            axis=(0, 0, 8))
+    return s.render()
+
+
+def boundary_surface():
+    """An open green skin through a network of orange curves."""
+    s = Scene()
+    n = 48
+    rings = [_bulge_loop(0, 9, 0.0, n), _bulge_loop(8, 7, 0.25, n), _bulge_loop(16, 6, 0.0, n)]
+    for a, b in zip(rings[:-1], rings[1:]):
+        s.ruled(a, b, GREEN, cap_top=False, axis=(0, 0, 8))
+    for ring in rings:
+        s.line(ring + [ring[0]], ORANGE[2], 2.2, layer=10)
+    for i in (6, 30):
+        s.line([rings[0][i], rings[1][i], rings[2][i]], ORANGE[2], 2.2, layer=10)
+    return s.render()
+
+
 def intersect():
     """Two crossing blocks, their shared region blue."""
     s = Scene()
@@ -1133,6 +1204,59 @@ def scale_icon():
     return s.render()
 
 
+def deform_icon():
+    """A grey slab with a blue bump pushed up out of it, an arrow up."""
+    s = Scene()
+    s.box(0, 0, 0, 24, 20, 5, GREY)
+    _dome(s, 12, 10, 5, 7, 7, pal=BLUE, layer=3)
+    s.arrow((12, 10, 13), (12, 10, 22), INK, 2.6)
+    return s.render()
+
+
+def indent_icon():
+    """A blue plate bent over a grey ball pressed up into it."""
+    s = Scene()
+    n = 16
+    prof = [(-15, 0), (-7, 0)]
+    for k in range(1, n):
+        a = math.pi * k / n
+        prof.append((-7 * math.cos(a), 7 * math.sin(a)))
+    prof += [(7, 0), (15, 0), (15, 2.5)]
+    for k in range(n + 1):
+        a = math.pi * k / n
+        x, y = 9.5 * math.cos(a), 9.5 * math.sin(a)
+        prof.append((x, max(y, 2.5)))
+    prof += [(-15, 2.5)]
+    s.cylinder(0, 7, -6, 0, 6.2, GREY, layer=1)
+    s.prism_y(prof, 0, 14, BLUE, layer=2)
+    return s.render()
+
+
+def freeform_icon():
+    """A grey block whose top is a blue wave, with control dots."""
+    s = Scene()
+    s.box(0, 0, 0, 22, 18, 6, GREY, top_pal=GREY)
+    _dome(s, 11, 9, 6, 8, 6, pal=BLUE, layer=3)
+    _dots(s, [(11, 9, 12.2), (5, 4, 6.4), (17, 14, 6.4)], ORANGE[2])
+    return s.render()
+
+
+def surface_flatten():
+    """A curved green sheet and the same sheet laid flat beside it."""
+    s = Scene()
+    for i in range(8):
+        a0 = math.radians(-70 + 140 * i / 8.0)
+        a1 = math.radians(-70 + 140 * (i + 1) / 8.0)
+        p0 = (-6 + 8 * math.sin(a0), -8 * math.cos(a0) + 4)
+        p1 = (-6 + 8 * math.sin(a1), -8 * math.cos(a1) + 4)
+        q = [(p0[0], p0[1], 8), (p1[0], p1[1], 8), (p1[0], p1[1], 20), (p0[0], p0[1], 20)]
+        m = centroid(q)
+        s.add(Face([q], GREEN, hint=(m[0] + 6, m[1] - 4, 0.3), two_sided=True, layer=2))
+    _sheet(s, 2, 2, 22, 14, 0, pal=GREEN, layer=1)
+    s.arrow((0, 0, 7), (9, 6, 1), INK, 2.4)
+    return s.render()
+
+
 def rebuild():
     """A block with two arrows chasing round it."""
     s = Scene()
@@ -1180,7 +1304,9 @@ def context_toolbar():
 ICONS = {
     "SolidDesign": workbench,
     "Part": part,
-    "ExtrudeAdd": extrude_add, "ExtrudeCut": extrude_cut,
+    "ExtrudeAdd": extrude_add, "ExtrudeCut": extrude_cut, "ExtrudeSurface": extrude_surface,
+    "RevolveSurface": revolve_surface, "SweepSurface": sweep_surface,
+    "LoftSurface": loft_surface, "BoundarySurface": boundary_surface,
     "RevolveAdd": revolve_add, "RevolveCut": revolve_cut,
     "SweepAdd": sweep_add, "SweepCut": sweep_cut,
     "LoftAdd": loft_add, "LoftCut": loft_cut,
@@ -1203,7 +1329,8 @@ ICONS = {
     "RuledSurface": ruled_surface, "RadiateSurface": radiate_surface,
     "UntrimSurface": untrim_surface, "MidSurface": mid_surface, "SurfaceCut": surface_cut,
     "ReplaceFace": replace_face, "Flex": flex, "Scale": scale_icon,
-    "Rebuild": rebuild,
+    "Rebuild": rebuild, "Deform": deform_icon, "Indent": indent_icon,
+    "Freeform": freeform_icon, "SurfaceFlatten": surface_flatten,
     "WhatsWrong": whats_wrong, "ContextToolbar": context_toolbar,
     "BodySolid": body_solid, "BodySurface": body_surface,
     "RollbackBar": rollback_bar,

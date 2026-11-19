@@ -50,7 +50,7 @@ class SketchFeaturePanel(FeaturePanel):
 
     def __init__(self, obj, is_new=False):
         LAST[0] = self
-        self.ICON = icon(self.ICONS[0] if obj.Mode == "Add" else self.ICONS[1])
+        self.ICON = icon(self.ICONS[{"Add": 0, "Cut": 1}.get(obj.Mode, 2)])
         self._regions = []
         self._click_cb = None
         self._loaders = []          # for building blocks borrowed from ToolPanel
@@ -103,10 +103,13 @@ class SketchFeaturePanel(FeaturePanel):
         obj = self.obj
         L = self.layout
         self.mode = parts.Switch(
-            ["Add", "Cut"],
+            ["Add", "Cut", "Surface"],
             tips={"Add": "Add material: the new shape is fused to the bodies it touches",
-                  "Cut": "Remove material: the shape is cut from the bodies in the feature scope"},
-            icons={"Add": icon(self.ICONS[0]), "Cut": icon(self.ICONS[1])})
+                  "Cut": "Remove material: the shape is cut from the bodies in the feature scope",
+                  "Surface": "Make a surface body from the sketch's curves (open sketches "
+                             "too), not a solid"},
+            icons={"Add": icon(self.ICONS[0]), "Cut": icon(self.ICONS[1]),
+                   "Surface": icon(self.ICONS[2])})
         self.mode.set_value(obj.Mode)
         self.mode.changed.connect(self._mode_changed)
         L.addWidget(self.mode)
@@ -203,18 +206,20 @@ class SketchFeaturePanel(FeaturePanel):
     def refresh(self):
         obj = self.obj
         add = obj.Mode == "Add"
+        surface = obj.Mode == "Surface"
         first = obj.BaseFeature is None or not self.base_ids()
         n_bodies = len(self.base_ids())
         if getattr(self, "_body_group", None) is not None:
             self.r_merge.set_visible(add and not first)
-            self.r_flip_side.set_visible(not add)
+            self.r_flip_side.set_visible(obj.Mode == "Cut")
+        self.sec_thin.setVisible(not surface)
         self.refresh_parameters()
         # Thin
         self.r_thin_t2.set_visible(self.thin_type.currentText() == core.THIN_TWO)
         if self.cap is not None:
             self.r_cap_t.set_visible(self.cap.isChecked())
         # Scope: only when there is a choice to make (spec 8.1, auto-select the obvious).
-        uses_scope = (not add) or obj.MergeResult
+        uses_scope = (obj.Mode == "Cut") or (add and obj.MergeResult)
         self.sec_scope.setVisible(uses_scope and n_bodies > 1)
         sel = obj.FeatureScope == "Selected bodies"
         self.r_auto.set_visible(sel)
@@ -222,7 +227,8 @@ class SketchFeaturePanel(FeaturePanel):
         # Bodies to Keep: shown only when the cut splits a body.
         self._refresh_keep()
         # Icon follows the mode.
-        self.widget.setWindowIcon(QtGui.QIcon(icon(self.ICONS[0] if add else self.ICONS[1])))
+        self.widget.setWindowIcon(QtGui.QIcon(icon(
+            self.ICONS[{"Add": 0, "Cut": 1}.get(obj.Mode, 2)])))
 
     def _pieces(self):
         try:
@@ -408,7 +414,7 @@ class SketchFeaturePanel(FeaturePanel):
     # ------------------------------------------------------------ preview
     def preview_layers(self):
         shape = self.obj.AddSubShape
-        add = self.obj.Mode == "Add"
+        add = self.obj.Mode != "Cut"
         node = pv.result_node(shape, add)
         layers = [("result", node)]
         labels = None

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """Clean tooltips on the drop-down toolbar buttons (Reference Geometry, Patterns,
-Curves, More Surfaces, Flex/Scale).
+Curves, More Surfaces, Deform Bodies).
 
 FreeCAD wraps a drop-down group's tooltip around its current command's tooltip,
 which already has its title, so the name shows twice. Each such button gets its
@@ -12,7 +12,8 @@ import re
 import FreeCADGui as Gui
 from PySide import QtCore, QtWidgets
 
-GROUPS = ("SD_ReferenceGeometry", "SD_Patterns", "SD_Curves", "SD_MoreSurfaces", "SD_Deform")
+GROUPS = ("SD_ReferenceGeometry", "SD_Patterns", "SD_Curves", "SD_MoreSurfaces",
+          "SD_DeformBodies")
 _NAME = re.compile(r"<i>(SD_\w+)</i>")
 
 

@@ -79,7 +79,7 @@ class RevolveDirection(object):
 
 class RevolvePanel(SketchFeaturePanel):
     TITLE = "Revolve"
-    ICONS = ("RevolveAdd", "RevolveCut")
+    ICONS = ("RevolveAdd", "RevolveCut", "RevolveSurface")
 
     def build_parameters(self, L):
         self.sec_axis = self.group("Axis of Revolution")

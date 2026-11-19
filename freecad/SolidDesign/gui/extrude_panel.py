@@ -125,7 +125,7 @@ class DirectionWidgets(object):
 
 class ExtrudePanel(SketchFeaturePanel):
     TITLE = "Extrude"
-    ICONS = ("ExtrudeAdd", "ExtrudeCut")
+    ICONS = ("ExtrudeAdd", "ExtrudeCut", "ExtrudeSurface")
     ref_box = ToolPanel.ref_box
 
     def build_parameters(self, L):
@@ -156,6 +156,9 @@ class ExtrudePanel(SketchFeaturePanel):
             "instead of square to the sketch (none: square to it)", ("Edge", "Face"),
             empty="Normal to sketch")
         self.add_body_rows(self.sec_d1)
+        self.cap_end, self.r_cap_end = self.check(
+            self.sec_d1, "CapEnd", "Cap end",
+            "Close both ends of a closed profile, so the surface is closed")
 
         # Direction 2 --------------------------------------------------
         self.sec_d2 = self.group("Direction 2", "Extrude the other way from the sketch too",
@@ -248,6 +251,7 @@ class ExtrudePanel(SketchFeaturePanel):
 
     def refresh_parameters(self):
         obj = self.obj
+        self.r_cap_end.set_visible(obj.Mode == "Surface")
         self.place_handles()
         self.d1.refresh()
         self.d2.refresh()

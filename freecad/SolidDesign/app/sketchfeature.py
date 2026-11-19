@@ -7,7 +7,7 @@ Thin Feature, Merge result, Feature scope, Bodies to Keep and Flip side to cut.
 
 from ..core import regions, topo
 from ..core.bodies import IdAllocator
-from ..core.features import common, profile
+from ..core.features import common, profile, sheet
 from . import feature, refs, util
 
 SCOPES = ["All bodies", "Selected bodies"]
@@ -21,8 +21,8 @@ class SketchFeatureProxy(feature.FeatureProxy):
         super(SketchFeatureProxy, self).setup(obj)
         a = util.add_prop
         g = self.TYPE
-        a(obj, "App::PropertyEnumeration", "Mode", g, "Add material or cut it",
-          enum=["Add", "Cut"])
+        a(obj, "App::PropertyEnumeration", "Mode", g,
+          "Add material, cut it, or make a surface body", enum=sheet.MODES)
         a(obj, "App::PropertyLink", "Sketch", g, "The profile sketch")
         a(obj, "App::PropertyStringList", "Contours", g,
           "Selected Contours: regions of the sketch (bounding geometry IDs + a point inside)")
@@ -49,9 +49,20 @@ class SketchFeatureProxy(feature.FeatureProxy):
           "The material this feature adds or removes, repeated by patterns and mirrors")
         util.hide_prop(obj, "ToolShape")
 
+    def onDocumentRestored(self, obj):
+        super(SketchFeatureProxy, self).onDocumentRestored(obj)
+        if "Mode" in obj.PropertiesList and \
+                list(obj.getEnumerationsOfProperty("Mode")) != sheet.MODES:
+            m = obj.Mode        # files from before Surface mode
+            obj.Mode = sheet.MODES
+            obj.Mode = m
+        if self.TYPE == "Extrude" and "CapEnd" not in obj.PropertiesList:
+            util.add_prop(obj, "App::PropertyBool", "CapEnd", "Surface",
+                          "Surface mode: close both ends of a closed profile", False)
+
     # ------------------------------------------------------------------ naming
     def default_label(self, obj):
-        return self.LABELS[0] if obj.Mode == "Add" else self.LABELS[1]
+        return label_for(self.LABELS, obj.Mode)
 
     def onChanged(self, obj, prop):
         if prop == "Mode" and "AutoLabel" in obj.PropertiesList and obj.AutoLabel:
@@ -125,6 +136,12 @@ class SketchFeatureProxy(feature.FeatureProxy):
         res.warnings.extend(w for w in warns if w)
 
 
+def label_for(labels, mode):
+    """The label for a mode: (Add, Cut, Surface)."""
+    i = sheet.MODES.index(mode) if mode in sheet.MODES else 0
+    return labels[i] if i < len(labels) else labels[0]
+
+
 def create(cls, doc, part, mode, sketch, name):
     """A new sketch feature in ``part`` at the rollback bar (Add mode by default)."""
     import FreeCAD as App
@@ -132,7 +149,7 @@ def create(cls, doc, part, mode, sketch, name):
     obj = doc.addObject("Part::FeaturePython", name)
     cls(obj)
     obj.Mode = mode
-    obj.AutoLabel = util.set_label(obj, cls.LABELS[0 if mode == "Add" else 1])
+    obj.AutoLabel = util.set_label(obj, label_for(cls.LABELS, mode))
     if sketch is not None:
         obj.Sketch = sketch
     part_mod.insert_feature(part, obj, [sketch] if sketch is not None else [])

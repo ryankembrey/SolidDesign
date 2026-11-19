@@ -12,7 +12,7 @@ import Part
 
 from .. import topo
 from ..bodies import SOLID
-from . import common
+from . import common, sheet
 from .profile import face_point, is_plane, plane_normal, plane_point, thin_faces
 
 # End conditions, in SolidWorks' order.
@@ -88,6 +88,10 @@ def check_axis(faces, open_wires, point, d):
     # The side of each point, measured in the plane of the profile.
     try:
         n = faces[0].normalAt(0, 0) if faces else None
+        if n is None:
+            pl = Part.makeCompound([shape, Part.LineSegment(point, point + d).toShape()]) \
+                .findPlane()
+            n = pl.Axis if pl is not None else None
     except Exception:
         n = None
     if n is None or abs(n.dot(d)) > 1e-6:
@@ -144,7 +148,7 @@ def _plane_contains_axis(face, point, d):
     return abs(n.dot(d)) < 1e-9 and abs((point - plane_point(face)).dot(n)) < 1e-7
 
 
-def _direction_solid(p, faces, d, ext, tag, ref):
+def _direction_solid(p, faces, d, ext, tag, ref, surface=False):
     point = p.axis_point
     c = ext.condition
     if c == BLIND:
@@ -195,6 +199,8 @@ def _direction_solid(p, faces, d, ext, tag, ref):
             tool = Part.Plane(plane_point(face), plane_normal(face)).toShape(-big, big, -big, big)
         else:
             tool = face
+        if surface:
+            return sheet.trimmed(full, [tool], Part.makeCompound(faces), tag, c)
         pieces = topo.slice_by(full, [tool], tag).Solids
         if len(pieces) < 2:
             raise topo.GeometryError("{}: the revolve doesn't reach the surface.".format(c))
@@ -208,6 +214,27 @@ def _direction_solid(p, faces, d, ext, tag, ref):
         start = _rotated(faces, point, d, -ext.angle / 2.0)
         return _revolve(start, point, d, ext.angle, tag)
     raise topo.GeometryError("Unknown end condition " + c)
+
+
+def sheet_shape(p, base):
+    """Surface mode: the profile's curves revolved into a surface body."""
+    tag = p.tag
+    prof = sheet.wires_of(p.faces, p.open_wires)
+    if not prof:
+        raise topo.GeometryError("Pick a sketch, or regions of one, to revolve.")
+    d = App.Vector(p.axis_dir)
+    if d.Length < 1e-12:
+        raise topo.GeometryError("Pick an axis of revolution.")
+    d.normalize()
+    check_axis(p.faces, p.open_wires, p.axis_point, d)
+    if p.reverse:
+        d = -d
+    ref = _profile_ref(p.faces, p.open_wires)
+    parts = [_direction_solid(p, prof, d, p.dir1, tag, ref, True)]
+    full = p.dir1.condition == BLIND and p.dir1.angle >= 360.0 - ANG_TOL
+    if p.dir2 is not None and p.dir1.condition != MID_PLANE and not full:
+        parts.append(_direction_solid(p, prof, -d, p.dir2, tag, ref, True))
+    return sheet.shells([f for x in parts for f in x.Faces], tag)
 
 
 def tool_shape(p, base):
@@ -241,6 +268,10 @@ def tool_shape(p, base):
 
 def compute(p, base):
     """Run the revolve on ``base``. Returns (Result, tool, preview)."""
+    if p.mode == sheet.SURFACE:
+        tool = sheet_shape(p, base)
+        res = common.apply_add(base, tool, p.feature, p.tag, False, p.scope, p.alloc)
+        return res, tool, tool
     tool = tool_shape(p, base)
     if p.mode == "Add":
         res = common.apply_add(base, tool, p.feature, p.tag, p.merge, p.scope, p.alloc)

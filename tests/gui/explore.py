@@ -904,6 +904,153 @@ def thicken_add_and_cut_modes():
 
 
 @scenario
+def surface_features_through_panels():
+    """Extruded and Revolved Surface from the Surfaces toolbar: the feature's panel
+    opens in Surface; solid-only rows hide; switching modes keeps working."""
+    doc, part = new_doc("SFX")
+    sk = sketch(doc, plane(part, "Top Plane"))
+    sk.addGeometry(Part.ArcOfCircle(Part.Circle(V(0, 0, 0), V(0, 0, 1), 10), 0, math.pi))
+    app_part.add_to_part(part, sk)
+    doc.recompute()
+    select(doc, sk)
+    p = run_cmd("SD_ExtrudedSurface")
+    expect(p is not None and p.obj.Mode == "Surface", "opens in Surface")
+    expect(p.mode.value() == "Surface", "the switch shows Surface")
+    expect(not p.sec_thin.isVisible() and shown(p.r_cap_end), "no Thin Feature; Cap end")
+    expect(not shown(p.r_merge), "no Merge result for a surface")
+    p.d1.depth.spin.setProperty("rawValue", 15.0)
+    wait(700)
+    expect(ok_enabled(), "extruded surface OK: %s" % p.error.value())
+    expect(p.obj.Label.startswith("Surface-Extrude"), "label (%s)" % p.obj.Label)
+    shot("extruded_surface")
+    close_panel(True)
+    srf = surface_views(part)
+    expect(len(srf) == 1 and abs(srf[0].Shape.Area - math.pi * 10 * 15) < 1e-4,
+           "a half-cylinder surface (%s)" % [x.Shape.Area for x in srf])
+    rv = sketch(doc, plane(part, "Front Plane"))
+    rv.addGeometry(Part.LineSegment(V(30, 0, 0), V(35, 10, 0)))
+    rv.addGeometry(Part.LineSegment(V(25, -5, 0), V(25, 20, 0)), True)
+    app_part.add_to_part(part, rv)
+    doc.recompute()
+    select(doc, rv)
+    p = run_cmd("SD_RevolvedSurface")
+    wait(700)
+    expect(p is not None and p.obj.Mode == "Surface", "Revolved Surface opens in Surface")
+    expect(ok_enabled(), "revolved surface OK: %s" % p.error.value())
+    p.mode.buttons["Add"].click()
+    wait(700)
+    expect(not ok_enabled(), "an open profile can't be a solid revolve")
+    p.mode.buttons["Surface"].click()
+    wait(700)
+    expect(ok_enabled(), "back to a surface")
+    close_panel(True)
+    expect(len(surface_views(part)) == 2, "two surface bodies")
+    expect(not body_views(part) or all(b.Kind == "surface" for b in body_views(part)),
+           "no solids")
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
+def deform_tools_through_panels():
+    """Indent, Deform, Freeform and Surface Flatten, driven through their panels."""
+    from freecad.SolidDesign.app import part as ap
+    doc, part = new_doc("DEF")
+    sk = plate_sketch(doc, part, 60, 40)
+    extrude_ui(doc, part, sk, 4)
+    bs = sketch(doc, plane(part, "Top Plane"), attach_offset=App.Placement(
+        V(0, 0, -6), App.Rotation()))
+    circle(bs, 30, 20, 6)
+    app_part.add_to_part(part, bs)
+    doc.recompute()
+    select(doc, bs)
+    p = run_cmd("SD_Extrude")
+    p.d1.depth.spin.setProperty("rawValue", 10.0)
+    p.merge.setChecked(False)
+    wait(500)
+    close_panel(True)
+    views = body_views(part)
+    expect(len(views) == 2, "a plate and a boss (%d)" % len(views))
+    Gui.Selection.clearSelection()
+    for v in views:
+        Gui.Selection.addSelection(doc.Name, v.Name)
+    p = run_cmd("SD_Indent")
+    expect(p is not None and p.obj.TargetBody and p.obj.ToolBody, "Indent with target and tool")
+    wait(800)
+    expect(p.region_list.count() == 1 and p.region_list.item(0).checkState() ==
+           QtCore.Qt.Checked, "one tool region, kept")
+    expect(ok_enabled(), "indent OK: %s" % p.error.value())
+    p.cut.setChecked(True)
+    wait(600)
+    expect(not shown(p.r_t), "Cut: no thickness")
+    p.cut.setChecked(False)
+    wait(600)
+    shot("indent")
+    close_panel(True)
+    plate = [v for v in body_views(part) if v.Shape.BoundBox.XLength > 50][0]
+    expect(abs(plate.Shape.BoundBox.ZMin + 7) < 1e-4, "the plate wraps the boss (%.3f)"
+           % plate.Shape.BoundBox.ZMin)
+
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Deform")
+    expect(p is not None and p.kind.currentText() == "Point", "Deform opens on Point")
+    p.activate(p.point)
+    pick(p, plate, face_at(plate, V(10, 10, 4)), V(10, 10, 4))
+    p.dist.spin.setProperty("rawValue", 3.0)
+    p.radius.spin.setProperty("rawValue", 8.0)
+    wait(900)
+    expect(ok_enabled(), "deform OK: %s" % p.error.value())
+    arrows = p._drag.arrows() if p._drag else []
+    expect(len(arrows) == 1 and arrows[0].prop == "Distance", "a distance arrow")
+    p.kind.setCurrentText("Curve to curve")
+    wait(400)
+    expect(p.sec_curves.isVisible() and not p.sec_point.isVisible(), "curve rows show")
+    p.kind.setCurrentText("Point")
+    wait(900)
+    shot("deform")
+    close_panel(True)
+    plate = [v for v in body_views(part) if v.Shape.BoundBox.XLength > 50][0]
+    expect(abs(plate.Shape.BoundBox.ZMax - 7) < 0.1, "a 3 mm bump (%.3f)"
+           % plate.Shape.BoundBox.ZMax)
+
+    top = face_at(plate, V(40, 30, 4))
+    select(doc, plate, top)
+    p = run_cmd("SD_Freeform")
+    expect(p is not None and p.face.items, "Freeform with the face")
+    p.activate(p.points)
+    pick(p, plate, top, V(45, 30, 4))
+    expect(len(p.obj.ControlPoints) == 1, "a control point (%s)" % list(p.obj.ControlPoints))
+    p.height.setValue(4.0)
+    wait(900)
+    expect(ok_enabled(), "freeform OK: %s" % p.error.value())
+    arrows = p._drag.arrows() if p._drag else []
+    expect(len(arrows) == 1, "an arrow on the point")
+    if arrows:
+        arrows[0].on_drag(5.0)
+        wait(900)
+        expect(abs(p.obj.Proxy.points(p.obj)[0][1] - 5.0) < 1e-9, "dragging sets the height")
+    shot("freeform")
+    close_panel(True)
+    plate = [v for v in body_views(part) if v.Shape.BoundBox.XLength > 50][0]
+    expect(plate.Shape.isValid() and plate.Shape.BoundBox.ZMax > 8.5, "pulled up (%.3f)"
+           % plate.Shape.BoundBox.ZMax)
+
+    boss = [v for v in body_views(part) if v.Shape.BoundBox.XLength < 20][0]
+    side = face_at(boss, V(36, 20, 0))
+    select(doc, boss, side)
+    p = run_cmd("SD_SurfaceFlatten")
+    expect(p is not None and p.faces.items, "Flatten with the face")
+    wait(900)
+    expect(ok_enabled(), "flatten OK: %s" % p.error.value())
+    shot("flatten")
+    close_panel(True)
+    flat = surface_views(part)
+    expect(len(flat) == 1 and abs(flat[0].Shape.Area - 2 * math.pi * 6 * 10) < 0.5,
+           "a flat sheet of the same area (%s)" % [x.Shape.Area for x in flat])
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+    _ = ap
+
+
+@scenario
 def delete_and_patch_a_boss():
     doc, part = new_doc("SRF2")
     sk = plate_sketch(doc, part, 40, 30)
@@ -2099,7 +2246,7 @@ def handles_on_more_features():
 @scenario
 def dropdown_tooltips_name_once():
     """The drop-down buttons' tooltips name their command once, as the others do."""
-    names = ("Reference Geometry", "Patterns", "Curves", "More Surfaces", "Flex/Scale")
+    names = ("Reference Geometry", "Patterns", "Curves", "More Surfaces", "Deform Bodies")
     seen = {}
     for tb in Gui.getMainWindow().findChildren(QtWidgets.QToolBar):
         if not tb.windowTitle().startswith("Solid Design"):

@@ -38,7 +38,7 @@ def guides_of(objs):
 
 class SweepProxy(sketchfeature.SketchFeatureProxy):
     TYPE = "Sweep"
-    LABELS = ("Sweep", "Cut-Sweep")
+    LABELS = ("Sweep", "Cut-Sweep", "Surface-Sweep")
 
     def setup(self, obj):
         super(SweepProxy, self).setup(obj)
@@ -129,7 +129,7 @@ class SweepProxy(sketchfeature.SketchFeatureProxy):
 
 class LoftProxy(sketchfeature.SketchFeatureProxy):
     TYPE = "Loft"
-    LABELS = ("Loft", "Cut-Loft")
+    LABELS = ("Loft", "Cut-Loft", "Surface-Loft")
 
     def setup(self, obj):
         super(LoftProxy, self).setup(obj)
@@ -230,7 +230,7 @@ class BoundaryProxy(LoftProxy):
     direction loft like a Loft; with curves in a second direction too, the shape
     passes through the whole network."""
     TYPE = "Boundary"
-    LABELS = ("Boundary", "Boundary-Cut")
+    LABELS = ("Boundary", "Boundary-Cut", "Boundary-Surface")
 
     def setup(self, obj):
         super(BoundaryProxy, self).setup(obj)
@@ -260,7 +260,7 @@ class BoundaryProxy(LoftProxy):
         dir2 = [g.sec.wire() for g in guides_of(obj.Direction2)]
         p.merge, p.scope, p.keep, p.flip, p.alloc = self.bodies_options(obj, base, warns)
         p.base = base
-        tool = core_b.network(dir1, dir2, True, p.tag)
+        tool = core_b.network(dir1, dir2, p.mode != "Surface", p.tag)
         res, preview = core.compute(p, tool)
         self.finish(obj, res, p.alloc, warns, tool)
         return res, preview

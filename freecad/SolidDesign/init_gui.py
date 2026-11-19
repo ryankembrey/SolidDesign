@@ -21,17 +21,21 @@ class SolidDesignWorkbench(Gui.Workbench):
                 "SD_SketchPattern", "SD_TablePattern", "SD_FillPattern", "SD_Mirror"]
     CURVES = ["SD_SplitLine", "SD_ProjectedCurve", "SD_CompositeCurve", "SD_CurveXYZ",
               "SD_CurvePoints", "SD_Helix"]
-    BODIES = ["SD_Combine", "SD_Split", "SD_DeleteBody", "SD_MoveCopy", "SD_Deform",
+    BODIES = ["SD_Combine", "SD_Split", "SD_DeleteBody", "SD_MoveCopy", "SD_DeformBodies",
               "SD_MoveFace", "SD_DeleteFace", "SD_ReplaceFace"]
     BODIES_MENU = ["SD_Combine", "SD_Split", "SD_DeleteBody", "SD_MoveCopy", "SD_Flex",
-                   "SD_Scale", "SD_MoveFace", "SD_DeleteFace", "SD_ReplaceFace"]
-    SURFACES = ["SD_PlanarSurface", "SD_OffsetSurface", "SD_FilledSurface", "SD_ExtendSurface",
-                "SD_TrimSurface", "SD_Knit", "SD_MoreSurfaces", "SD_Thicken",
-                "SD_SurfaceCut"]
-    SURFACES_MENU = ["SD_PlanarSurface", "SD_OffsetSurface", "SD_FilledSurface",
-                     "SD_ExtendSurface", "SD_TrimSurface", "SD_UntrimSurface", "SD_Knit",
-                     "SD_RuledSurface", "SD_RadiateSurface", "SD_MidSurface", "Separator",
-                     "SD_Thicken", "SD_SurfaceCut"]
+                   "SD_Deform", "SD_Indent", "SD_Freeform", "SD_Scale", "SD_MoveFace",
+                   "SD_DeleteFace", "SD_ReplaceFace"]
+    SURFACE_MAKERS = ["SD_ExtrudedSurface", "SD_RevolvedSurface", "SD_SweptSurface",
+                      "SD_LoftedSurface", "SD_BoundarySurface"]
+    SURFACES = SURFACE_MAKERS + [
+        "SD_PlanarSurface", "SD_OffsetSurface", "SD_FilledSurface", "SD_ExtendSurface",
+        "SD_TrimSurface", "SD_Knit", "SD_MoreSurfaces", "SD_Thicken", "SD_SurfaceCut"]
+    SURFACES_MENU = SURFACE_MAKERS + [
+        "Separator", "SD_PlanarSurface", "SD_OffsetSurface", "SD_FilledSurface",
+        "SD_ExtendSurface", "SD_TrimSurface", "SD_UntrimSurface", "SD_Knit",
+        "SD_RuledSurface", "SD_RadiateSurface", "SD_MidSurface", "SD_SurfaceFlatten",
+        "Separator", "SD_Thicken", "SD_SurfaceCut"]
     EVALUATE = ["SD_Rebuild", "SD_WhatsWrong"]
 
     # Toolbars, left to right. The names are new (FreeCAD remembers where toolbars

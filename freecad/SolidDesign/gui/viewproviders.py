@@ -279,11 +279,12 @@ class FeatureVP(_DrawsNothing):
             return "ThickenCut" if obj.Mode == "Cut" else "Thicken"
         named = {"Planar": "PlanarSurface", "Filled": "FilledSurface", "Trim": "TrimSurface",
                  "Extend": "ExtendSurface", "Ruled": "RuledSurface",
-                 "Radiate": "RadiateSurface", "Untrim": "UntrimSurface"}
+                 "Radiate": "RadiateSurface", "Untrim": "UntrimSurface",
+                 "Flatten": "SurfaceFlatten"}
         if t in named:
             return named[t]
         if "Mode" in obj.PropertiesList:
-            return t + ("Add" if obj.Mode == "Add" else "Cut")
+            return t + {"Add": "Add", "Cut": "Cut"}.get(obj.Mode, "Surface")
         return t
 
     def getIcon(self):
@@ -447,6 +448,10 @@ def panel_class(obj):
     if t in ("Scale", "Flex"):
         from . import surface_panel as su
         return {"Scale": su.ScalePanel, "Flex": su.FlexPanel}[t]
+    if t in ("Indent", "Deform", "Freeform", "Flatten"):
+        from . import deform_panel as dp
+        return {"Indent": dp.IndentPanel, "Deform": dp.DeformPanel,
+                "Freeform": dp.FreeformPanel, "Flatten": dp.FlattenPanel}[t]
     if t in ("Ruled", "Radiate", "Untrim", "MidSurface", "SurfaceCut", "ReplaceFace"):
         from . import surface_panel as su
         return {"Ruled": su.RuledPanel, "Radiate": su.RadiatePanel, "Untrim": su.UntrimPanel,

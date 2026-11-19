@@ -154,8 +154,19 @@ def _refined(bs, size, segs):
 
 
 def _flex_face(face, fn, size, segs):
-    nf = face.toNurbs().Faces[0]
-    s = nf.Surface
+    nf = face
+    try:
+        s = face.Surface
+        if s.TypeId != "Part::GeomBSplineSurface":
+            nf = face.toNurbs().Faces[0]
+            s = nf.Surface
+        else:
+            s = s.copy()
+    except TypeError:
+        # A surface FreeCAD can't hand over as it is (seen on faces already
+        # deformed once): its B-spline form.
+        nf = face
+        s = face.Surface.toBSpline()
     if s.TypeId != "Part::GeomBSplineSurface":
         s = s.toBSpline()
     natural = False
@@ -197,9 +208,15 @@ def _flex_face(face, fn, size, segs):
     return out
 
 
-def flexed(shape, fn, tag, segs=48):
+def flexed(shape, fn, tag, segs=48, face_fn=None):
+    """``shape`` with every control point moved by ``fn``. ``face_fn(face)`` (when
+    given) picks the function per face instead; None leaves that face as it is
+    (a deformation that is zero on its edges)."""
     size = shape.BoundBox.DiagonalLength
-    faces = [_flex_face(f, fn, size, segs) for f in shape.Faces]
+    faces = []
+    for f in shape.Faces:
+        g = fn if face_fn is None else face_fn(f)
+        faces.append(f if g is None else _flex_face(f, g, size, segs))
     sh = Part.Shell(faces)
     try:
         sh.sewShape(1e-4 * size)
@@ -208,8 +225,8 @@ def flexed(shape, fn, tag, segs=48):
     shells = sh.Shells if sh.ShapeType != "Shell" else [sh]
     if shape.Solids:
         if len(shells) != 1 or not shells[0].isClosed():
-            raise topo.GeometryError("The flexed faces didn't close into a solid; try a "
-                                     "smaller bend, twist or taper.")
+            raise topo.GeometryError("The changed faces didn't close into a solid; try a "
+                                     "smaller change.")
         so = Part.Solid(shells[0])
         if so.Volume < 0:
             so.reverse()

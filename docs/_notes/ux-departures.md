@@ -730,3 +730,50 @@ These follow SolidWorks unless a line says otherwise.
   starts. Not while a panel is open or a sketch is being edited. Solid Design >
   Context Toolbar turns it off (kept between sessions). SolidWorks also shows
   one for tree picks; this doesn't yet.
+
+## Surface features, Deform, Indent, Freeform, Surface Flatten (2026-11-20)
+
+- **Extruded, Revolved, Swept, Lofted and Boundary Surface:** not separate
+  features. Extrude, Revolve, Sweep, Loft and Boundary have a third mode,
+  Add | Cut | Surface, and the Surfaces toolbar's buttons open them in Surface
+  (labels Surface-Extrude1, Surface-Revolve1, Surface-Sweep1, Surface-Loft1,
+  Boundary-Surface1). Switching an existing feature between a solid and a
+  surface is one click. In Surface mode the sketch's curves are swept (open
+  sketches too), Thin Feature, Merge result, Feature scope and Bodies to Keep
+  hide, and every end condition works (Up To Surface/Next/Body trim the sheet
+  where it meets them). Extrude has Cap end (closed profiles: a closed surface).
+  A closed loft's or sweep's holes become surfaces of their own walls.
+- **Deform:** Point, Curve to curve, Surface push, in one panel (a type list).
+  The deform point is a position (a vertex picked, or where a face is clicked);
+  it doesn't follow the model. The direction is an edge, axis or plane, or
+  square to the face when empty. Stiffness Minimum / Medium / Maximum sets how
+  the change fades over the radius. Curve to curve pairs initial and target
+  curves in order (a reversed target is turned round); there are no fixed curves
+  yet. Surface push uses a body of the part as the tool (SolidWorks also offers
+  built-in sphere, ellipse, polygon and rectangle tools) and pushes along the
+  direction picked, or from the tool towards the bodies; there's no deform
+  deviation yet, so the dent follows the tool to within the control net's
+  spacing (a few percent of the overlap can stay at the rim). The changed faces
+  become B-splines, like Flex; faces the change doesn't reach stay as they were.
+  The distance has a drag arrow.
+- **Indent:** Target and Tool are bodies; the tool's regions outside the target
+  are listed, numbered in the view, all ticked: the target wraps the ticked ones
+  with the wall thickness (rounded where it turns a corner) and is only cut at
+  the unticked ones. Clearance is the gap off the tool; Cut only cuts. The tool
+  body stays.
+- **Freeform:** pick one face; click on it to add control points; each point has a
+  height along the face's normal (typed, or dragged with its arrow). The face's
+  edges stay put; Edges: Contact, Tangent or Curvature sets how the change meets
+  them; Reach sets how far each point's pull spreads. SolidWorks drags control
+  curves and points with a triad; there are no control curves here, and points
+  only move along the normal. A point on (or within a few control-net spacings
+  of) an edge is refused.
+- **Surface Flatten:** faces (connected) laid flat as a new surface body,
+  touching the faces at the vertex (or edge middle) picked, or the first face's
+  centre. Uses FreeCAD's flatmesh unwrapper; developable faces come out true,
+  others are stretched as little as possible and a warning gives the change of
+  area. Round faces are opened along their seams; a closed body (a whole sphere)
+  has to be split first. No relief cuts or tear lines yet.
+- Toolbar: the five surface makers lead the Surfaces toolbar; the Flex/Scale
+  drop-down is now Deform Bodies (Flex, Deform, Indent, Freeform, Scale); Surface
+  Flatten is in More Surfaces.

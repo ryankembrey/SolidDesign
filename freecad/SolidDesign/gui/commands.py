@@ -118,11 +118,12 @@ def _install_gui_observer():
 class SketchTool(object):
     """A sketch-based Add | Cut tool (Extrude, Revolve). Opens in Add mode."""
 
-    def __init__(self, name, icon_name, tooltip, create):
+    def __init__(self, name, icon_name, tooltip, create, mode="Add"):
         self.name = name
         self.icon_name = icon_name
         self.tooltip = tooltip
         self.create = create
+        self.mode = mode            # Surface: SolidWorks' Extruded Surface and the like
 
     def GetResources(self):
         return {"Pixmap": icon(self.icon_name), "MenuText": self.name, "ToolTip": self.tooltip}
@@ -165,7 +166,7 @@ def _unused_sketch(part):
 
 def open_feature(doc, part, tool, sketch):
     doc.openTransaction(tool.name)
-    obj = tool.create(doc, part, "Add", sketch)
+    obj = tool.create(doc, part, getattr(tool, "mode", "Add"), sketch)
     _edit_new(doc, obj)
     if sketch is not None:
         sketch.ViewObject.Visibility = False
@@ -607,6 +608,29 @@ def _thicken_prefill(mode):
     return fn
 
 
+def _indent_prefill(part):
+    """The first body picked is the target, the second the tool."""
+    ids = _selected_bodies(part)
+    out = {}
+    if ids:
+        out["TargetBody"] = ids[0]
+    if len(ids) > 1:
+        out["ToolBody"] = ids[1]
+    return out
+
+
+def _deform_prefill(part):
+    """A clicked point on a body is the deform point."""
+    out = {}
+    for se in Gui.Selection.getSelectionEx("", 0):
+        pts = list(getattr(se, "PickedPoints", []) or [])
+        subs = list(se.SubElementNames)
+        if pts and subs and util.is_body_view(se.Object):
+            out["DeformPoint"] = pts[-1]
+            break
+    return out
+
+
 def _deform(name):
     def fn(doc, part, **props):
         from ..app import deform
@@ -616,14 +640,14 @@ def _deform(name):
 
 class DeformGroup(object):
     def GetCommands(self):
-        return ("SD_Flex", "SD_Scale")
+        return ("SD_Flex", "SD_Deform", "SD_Indent", "SD_Freeform", "SD_Scale")
 
     def GetDefaultCommand(self):
         return 0
 
     def GetResources(self):
-        return {"Pixmap": icon("Flex"), "MenuText": "Flex/Scale",
-                "ToolTip": "Flex (bend, twist, taper, stretch) or scale bodies.",
+        return {"Pixmap": icon("Flex"), "MenuText": "Deform Bodies",
+                "ToolTip": "Flex, Deform, Indent, Freeform or Scale bodies.",
                 "DropDownMenu": True, "Exclusive": False}
 
     def IsActive(self):
@@ -655,14 +679,15 @@ class MoreSurfacesGroup(object):
     """The less used surface tools, in one drop-down."""
 
     def GetCommands(self):
-        return ("SD_RuledSurface", "SD_RadiateSurface", "SD_UntrimSurface", "SD_MidSurface")
+        return ("SD_RuledSurface", "SD_RadiateSurface", "SD_UntrimSurface", "SD_MidSurface",
+                "SD_SurfaceFlatten")
 
     def GetDefaultCommand(self):
         return 0
 
     def GetResources(self):
         return {"Pixmap": icon("RuledSurface"), "MenuText": "More Surfaces",
-                "ToolTip": "Ruled, Radiate, Untrim and Mid-Surface.",
+                "ToolTip": "Ruled, Radiate, Untrim, Mid-Surface and Surface Flatten.",
                 "DropDownMenu": True, "Exclusive": False}
 
     def IsActive(self):
@@ -869,6 +894,23 @@ def register():
         "Adds or cuts material through curves in one or two directions (Add | Cut in the "
         "panel); with curves both ways the shape passes through the whole network.",
         app_sweep.create_boundary))
+    for cmd, name, icon_name, what, create in (
+            ("SD_ExtrudedSurface", "Extruded Surface", "ExtrudeSurface",
+             "Extrudes a sketch's curves (open or closed) into a surface body.",
+             app_extrude.create),
+            ("SD_RevolvedSurface", "Revolved Surface", "RevolveSurface",
+             "Revolves a sketch's curves around an axis into a surface body.",
+             app_revolve.create),
+            ("SD_SweptSurface", "Swept Surface", "SweepSurface",
+             "Sweeps a profile's curves along a path into a surface body.",
+             app_sweep.create_sweep),
+            ("SD_LoftedSurface", "Lofted Surface", "LoftSurface",
+             "Makes a surface body between two or more profiles.", app_sweep.create_loft),
+            ("SD_BoundarySurface", "Boundary Surface", "BoundarySurface",
+             "Makes a surface body through curves in one or two directions.",
+             app_sweep.create_boundary)):
+        Gui.addCommand(cmd, SketchTool(name, icon_name, what + " Surface in the feature's "
+                                       "Add | Cut | Surface switch.", create, "Surface"))
     Gui.addCommand("SD_Shell", EdgeTool(
         "Shell", "Hollows a body, leaving open the faces you pick, with walls of the given "
         "thickness.", app_dressup.create_shell, kinds=("Face",)))
@@ -986,6 +1028,15 @@ def register():
          "axis.", _deform("create_flex"), _bodies_prefill()),
         ("SD_Scale", "Scale", "Scale", "Scales bodies about their centre, the origin or a "
          "coordinate system.", _deform("create_scale"), _bodies_prefill()),
+        ("SD_Deform", "Deform", "Deform", "Pushes a point, moves curves onto others, or "
+         "pushes a tool body in, and the body follows smoothly.", _deform("create_deform"),
+         _deform_prefill),
+        ("SD_Indent", "Indent", "Indent", "Presses a tool body's shape into a target body, "
+         "with a wall round it, or cuts it in.", _deform("create_indent"), _indent_prefill),
+        ("SD_Freeform", "Freeform", "Freeform", "Pushes or pulls a face at points you place "
+         "on it; its edges stay put.", _deform("create_freeform"), _items_prefill("Face")),
+        ("SD_SurfaceFlatten", "SurfaceFlatten", "Surface Flatten", "Lays faces out flat as "
+         "a new surface body.", _deform("create_flatten"), _items_prefill("Face")),
         ("SD_Thicken", "Thicken", "Thicken", "Thickens a surface body into a solid, or cuts "
          "the solids with it (Add | Cut in the panel).",
          app_surf.create_thicken, _thicken_prefill("Add")),
@@ -1001,4 +1052,4 @@ def register():
     Gui.addCommand("SD_Patterns", PatternGroup())
     Gui.addCommand("SD_Curves", CurvesGroup())
     Gui.addCommand("SD_MoreSurfaces", MoreSurfacesGroup())
-    Gui.addCommand("SD_Deform", DeformGroup())
+    Gui.addCommand("SD_DeformBodies", DeformGroup())

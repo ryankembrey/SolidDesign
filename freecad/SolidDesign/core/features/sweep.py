@@ -15,7 +15,7 @@ import Part
 
 from .. import skin, topo
 from ..bodies import SOLID
-from . import common
+from . import common, sheet
 from .profile import thin_faces
 
 SKETCH_PROFILE = "Sketch Profile"
@@ -132,7 +132,10 @@ def _circle_at_start(path, diameter):
 def sweep_tool(p):
     if p.path is None:
         raise topo.GeometryError("Pick a path.")
+    surface = p.mode == sheet.SURFACE
     if p.profile_type == SOLID_PROFILE:
+        if surface:
+            raise topo.GeometryError("A swept surface needs a sketch or circular profile.")
         return solid_sweep(p)
     if p.profile_type == CIRCULAR_PROFILE:
         if p.diameter <= 0:
@@ -140,7 +143,7 @@ def sweep_tool(p):
         faces, open_wires = [_circle_at_start(p.path, p.diameter)], []
     else:
         faces, open_wires = list(p.faces), list(p.open_wires)
-    if p.thin is not None:
+    if p.thin is not None and not surface:
         faces, open_wires = thin_faces(faces, open_wires, p.thin, p.tag), []
     if not faces and not open_wires:
         raise topo.GeometryError("Pick a profile sketch, or use a Circular Profile.")
@@ -153,6 +156,9 @@ def sweep_tool(p):
     else:
         def along(w, solid):
             return _sweep_wire(p.path, w, p.orientation, solid, p.tag, p.axis)
+    if surface:
+        swept = [along(w, False) for w in sheet.wires_of(faces, open_wires)]
+        return sheet.shells([f for x in swept for f in x.Faces], p.tag)
     parts = []
     for f in faces:
         outer = along(f.OuterWire, True)
@@ -513,13 +519,14 @@ def loft_tool(p):
             outers.append(s)
         else:
             outers.append(s)
-    solid = all(o.ShapeType == "Vertex" or o.isClosed() for o in outers)
+    surface = p.mode == sheet.SURFACE
+    solid = all(o.ShapeType == "Vertex" or o.isClosed() for o in outers) and not surface
     body = topo.loft(outers, p.tag, solid=solid, ruled=False, closed=p.closed)
     if solid and not body.Solids:
         raise topo.GeometryError("The loft made no solid. Check the profiles' order and "
                                  "their start points.")
     n = holes[0] if holes else 0
-    if n and solid:
+    if n and (solid or surface):
         cuts = []
         for k in range(n):
             ws = []
@@ -528,8 +535,13 @@ def loft_tool(p):
                 inner.sort(key=lambda w: (round(w.BoundBox.Center.x, 6),
                                           round(w.BoundBox.Center.y, 6)))
                 ws.append(inner[k])
-            cuts.append(topo.loft(ws, p.tag, solid=True, ruled=False))
+            cuts.append(topo.loft(ws, p.tag, solid=not surface, ruled=False,
+                                  closed=p.closed))
+        if surface:     # the holes' walls are surfaces of their own
+            return sheet.shells(body.Faces + [f for c in cuts for f in c.Faces], p.tag)
         body = topo.cut(body, cuts, p.tag)
+    if surface:
+        return sheet.shells(body.Faces, p.tag)
     return body
 
 
@@ -559,14 +571,18 @@ def _skinned_loft(p):
                                           round(w.BoundBox.Center.y, 6)))
                 ws.append(inner[k])
             cuts.append(_skin_through(p, ws, []))
+        if p.mode == sheet.SURFACE:
+            return sheet.shells(body.Faces + [f for c in cuts for f in c.Faces], p.tag)
         body = topo.cut(body, cuts, p.tag)
+    if p.mode == sheet.SURFACE:
+        return sheet.shells(body.Faces, p.tag)
     return body
 
 
 def _skin_through(p, shapes, guides):
     sections = [skin.Section(s) for s in shapes]
     skin.align(sections)
-    solid = all(s.is_point or s.closed for s in sections)
+    solid = all(s.is_point or s.closed for s in sections) and p.mode != sheet.SURFACE
 
     def constraint(kind, k, length, draft, direction):
         if kind == NO_TANGENCY:
@@ -613,6 +629,11 @@ def _skin_through(p, shapes, guides):
 def compute(p, tool):
     """Apply a sweep or loft tool to the body set (shared Add | Cut rules)."""
     base = p.base
+    if p.mode == sheet.SURFACE:
+        if tool.Solids:
+            tool = sheet.shell_of(tool, p.tag)
+        res = common.apply_add(base, tool, p.feature, p.tag, False, p.scope, p.alloc)
+        return res, tool
     if p.mode == "Add":
         res = common.apply_add(base, tool, p.feature, p.tag, p.merge, p.scope, p.alloc)
         return res, tool

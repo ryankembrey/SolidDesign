@@ -824,6 +824,9 @@ class PanelHandles(object):
                 a.detach()
 
     def _dragged(self, prop, v):
+        hook = getattr(self.panel, "drag_set", None)
+        if hook is not None and hook(prop, v):
+            return
         f = field_for(self.panel, prop)
         if f is not None:
             f.spin.setProperty("rawValue", float(v))
@@ -858,3 +861,53 @@ def flex_specs(obj, part):
 
 
 SPECS["Flex"] = flex_specs
+
+
+def deform_specs(obj, part):
+    """Deform (Point): the distance arrow, from the point along the push."""
+    from ..core.features import morph
+    if obj.DeformType != morph.POINT:
+        return []
+    c = App.Vector(obj.DeformPoint)
+    try:
+        base = obj.Proxy.base_bodies(obj)
+        from ..app.deform import _direction, _normal_at
+        d = _direction(obj, "DeformDirection", "deform direction", obj.BaseFeature, [])
+        if d is None:
+            d = _normal_at(base, c)
+    except Exception:
+        return []
+    if d is None:
+        return []
+    if obj.ReverseDirection:
+        d = -d
+    return [("Distance", c, d, obj.Distance.Value, 1.0, _scale(obj, part))]
+
+
+def freeform_specs(obj, part):
+    """Freeform: an arrow at each control point, along the face's normal."""
+    v = obj.Items
+    if not v or v[0] is None:
+        return []
+    f = _sub_shape(obj, "Items")
+    if f is None or f.ShapeType != "Face":
+        return []
+    out = []
+    sc = _scale(obj, part)
+    for i, (c, h) in enumerate(obj.Proxy.points(obj)):
+        try:
+            u, w = f.Surface.parameter(c)
+            n = f.normalAt(u, w)
+        except Exception:
+            continue
+        # The arrow's base sits at the height; a negative height points it inwards
+        # (its name says which way, so a drag keeps the sign).
+        if h >= 0:
+            out.append(("Point%d+" % i, c, n, h, 1.0, sc))
+        else:
+            out.append(("Point%d-" % i, c, -n, -h, 1.0, sc))
+    return out
+
+
+SPECS["Deform"] = deform_specs
+SPECS["Freeform"] = freeform_specs

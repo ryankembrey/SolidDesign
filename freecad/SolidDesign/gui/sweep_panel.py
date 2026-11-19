@@ -13,7 +13,7 @@ __all__ = ["SweepPanel", "LoftPanel", "ShellPanel"]
 
 class SweepPanel(SketchFeaturePanel):
     TITLE = "Sweep"
-    ICONS = ("SweepAdd", "SweepCut")
+    ICONS = ("SweepAdd", "SweepCut", "SweepSurface")
     SKETCH_TITLE = "Profile"
     SKETCH_LABEL = "Profile"
     SKETCH_TIP = "The sketch swept along the path. Press the button, then click a sketch."
@@ -151,7 +151,7 @@ class SweepPanel(SketchFeaturePanel):
         self.tool.row.set_visible(solid)
         self.sketch_box.row.set_visible(not circ and not solid)
         self.sec_contours.setVisible(kind == core.SKETCH_PROFILE)
-        self.sec_thin.setVisible(not solid)
+        self.sec_thin.setVisible(not solid and self.obj.Mode != "Surface")
         self.sec_guides.setVisible(not solid)
         twisting = self.twist.currentText() == core.TWIST_VALUE
         self.r_twist.set_visible(not solid)
@@ -172,7 +172,7 @@ class SweepPanel(SketchFeaturePanel):
 
 class LoftPanel(SketchFeaturePanel):
     TITLE = "Loft"
-    ICONS = ("LoftAdd", "LoftCut")
+    ICONS = ("LoftAdd", "LoftCut", "LoftSurface")
     PROFILES_TITLE = "Profiles"
 
     def build_parameters(self, L):
@@ -259,7 +259,7 @@ class LoftPanel(SketchFeaturePanel):
 class BoundaryPanel(LoftPanel):
     """Direction 1 and Direction 2 curves (SolidWorks' Boundary)."""
     TITLE = "Boundary"
-    ICONS = ("BoundaryAdd", "BoundaryCut")
+    ICONS = ("BoundaryAdd", "BoundaryCut", "BoundarySurface")
     PROFILES_TITLE = "Direction 1"
 
     def build_parameters(self, L):

@@ -329,8 +329,9 @@ def repeat(base, seeds, body_ids, moves, feature, tag, alloc, merge_bodies=False
         comp = topo.compound(tools, tag)
         shown.extend(tools)
         scope = s.scope or common.Scope()
-        if s.mode == "Add":
-            r = common.apply_add(out, comp, feature, tag, s.merge, scope, alloc)
+        if s.mode in ("Add", "Surface"):
+            r = common.apply_add(out, comp, feature, tag, s.merge and s.mode == "Add", scope,
+                                 alloc)
         else:
             r = common.apply_cut(out, comp, feature, tag, scope, common.Keep(), alloc)
             if not r.touched:

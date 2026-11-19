@@ -10,7 +10,7 @@ from . import refs, sketchfeature, util
 
 class ExtrudeProxy(sketchfeature.SketchFeatureProxy):
     TYPE = "Extrude"
-    LABELS = ("Boss-Extrude", "Cut-Extrude")
+    LABELS = ("Boss-Extrude", "Cut-Extrude", "Surface-Extrude")
     CAP_ENDS = True
 
     def setup(self, obj):
@@ -18,6 +18,8 @@ class ExtrudeProxy(sketchfeature.SketchFeatureProxy):
         a = util.add_prop
         g = "Extrude"
         a(obj, "App::PropertyBool", "Reverse", g, "Reverse Direction", False)
+        a(obj, "App::PropertyBool", "CapEnd", "Surface",
+          "Surface mode: close both ends of a closed profile (a closed surface)", False)
 
         g = "From"
         a(obj, "App::PropertyEnumeration", "From", g, "Where the extrusion starts",
@@ -100,7 +102,8 @@ class ExtrudeProxy(sketchfeature.SketchFeatureProxy):
         p.dir1 = self._extent(obj, "", warns)
         if obj.Direction2 and obj.EndCondition not in (core.MID_PLANE, core.THROUGH_ALL_BOTH):
             p.dir2 = self._extent(obj, "2", warns)
-        p.thin = self.thin(obj)
+        p.thin = self.thin(obj) if p.mode != "Surface" else None
+        p.cap_end = obj.CapEnd
         p.merge, p.scope, p.keep, p.flip, p.alloc = self.bodies_options(obj, base, warns)
         res, tool, preview = core.compute(p, base)
         self.finish(obj, res, p.alloc, warns, tool)
