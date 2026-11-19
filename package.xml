@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+  <name>Solid Design</name>
+  <description>Model parts the SolidWorks way: one Add/Cut tool per shape, multi-body from the start, Solid Bodies and Surface Bodies folders, a rollback bar and live previews.</description>
+  <version>0.1.0</version>
+  <date>2026-11-16</date>
+  <maintainer email="ryankembrey@gmail.com">Ryan Kembrey</maintainer>
+  <license file="LICENSE">LGPL-2.1-or-later</license>
+  <icon>freecad/SolidDesign/resources/icons/SolidDesign.svg</icon>
+  <freecadmin>1.1.0</freecadmin>
+  <tag>part design</tag>
+  <tag>solidworks</tag>
+  <tag>multi-body</tag>
+  <content>
+    <workbench>
+      <name>Solid Design</name>
+      <classname>SolidDesignWorkbench</classname>
+      <subdirectory>./</subdirectory>
+      <icon>freecad/SolidDesign/resources/icons/SolidDesign.svg</icon>
+      <freecadmin>1.1.0</freecadmin>
+      <pythonmin>3.10</pythonmin>
+    </workbench>
+  </content>
+</package>

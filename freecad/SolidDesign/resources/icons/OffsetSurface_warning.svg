@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<path d="M30.61 16.80 L58.33 32.80 L33.39 47.20 L5.67 31.20 Z" fill="#f3f4f1" fill-rule="evenodd" stroke="#f3f4f1" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M30.61 16.80 L58.33 32.80 M58.33 32.80 L33.39 47.20 M33.39 47.20 L5.67 31.20 M5.67 31.20 L30.61 16.80" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M5.67 31.20 L33.39 47.20 L33.39 60.00 L5.67 44.00 Z" fill="#c9cdc5" fill-rule="evenodd" stroke="#c9cdc5" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M5.67 31.20 L33.39 47.20 M33.39 47.20 L33.39 60.00 M33.39 60.00 L5.67 44.00 M5.67 44.00 L5.67 31.20" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M58.33 45.60 L33.39 60.00 L33.39 47.20 L58.33 32.80 Z" fill="#9ca197" fill-rule="evenodd" stroke="#9ca197" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M58.33 45.60 L33.39 60.00 M33.39 60.00 L33.39 47.20 M33.39 47.20 L58.33 32.80 M58.33 32.80 L58.33 45.60" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M30.61 4.00 L58.33 20.00 L33.39 34.40 L5.67 18.40 Z" fill="#b3d0f2" fill-rule="evenodd" stroke="#b3d0f2" stroke-width="0.6" stroke-linejoin="round" opacity="0.90"/>
+<path d="M30.61 4.00 L58.33 20.00 M58.33 20.00 L33.39 34.40 M33.39 34.40 L5.67 18.40 M5.67 18.40 L30.61 4.00" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round" opacity="0.90"/>
+<path d="M32.00 32.00 L32.00 24.86" fill="none" stroke="#2e3436" stroke-width="2.60" stroke-linecap="round" stroke-linejoin="round"/><path d="M32.00 20.80 L37.20 27.56 L26.80 27.56 Z" fill="#2e3436" stroke="#2e3436" stroke-width="1" stroke-linejoin="round"/><circle cx="49" cy="49" r="13" fill="#e8a200" stroke="#ffffff" stroke-width="3"/><path d="M49 41 L49 51" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round"/><circle cx="49" cy="56.5" r="2.4" fill="#ffffff"/>
+</svg>

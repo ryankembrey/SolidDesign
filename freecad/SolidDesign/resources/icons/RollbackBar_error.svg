@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<rect x="3" y="24" width="58" height="16" rx="3" fill="#fdd9a6"/><path d="M14 24 L6 40" stroke="#d9730b" stroke-width="3"/><path d="M23 24 L15 40" stroke="#d9730b" stroke-width="3"/><path d="M32 24 L24 40" stroke="#d9730b" stroke-width="3"/><path d="M41 24 L33 40" stroke="#d9730b" stroke-width="3"/><path d="M50 24 L42 40" stroke="#d9730b" stroke-width="3"/><path d="M59 24 L51 40" stroke="#d9730b" stroke-width="3"/><rect x="3" y="24" width="58" height="16" rx="3" fill="none" stroke="#2e3436" stroke-width="2.0"/><circle cx="49" cy="49" r="13" fill="#d93025" stroke="#ffffff" stroke-width="3"/><path d="M49 41 L49 51" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round"/><circle cx="49" cy="56.5" r="2.4" fill="#ffffff"/>
+</svg>

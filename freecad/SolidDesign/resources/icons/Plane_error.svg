@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<path d="M32.00 15.83 L60.00 32.00 L32.00 48.17 L4.00 32.00 Z" fill="#fbc274" fill-rule="evenodd" stroke="#fbc274" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M32.00 15.83 L60.00 32.00 M60.00 32.00 L32.00 48.17 M32.00 48.17 L4.00 32.00 M4.00 32.00 L32.00 15.83" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/><circle cx="49" cy="49" r="13" fill="#d93025" stroke="#ffffff" stroke-width="3"/><path d="M49 41 L49 51" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round"/><circle cx="49" cy="56.5" r="2.4" fill="#ffffff"/>
+</svg>
