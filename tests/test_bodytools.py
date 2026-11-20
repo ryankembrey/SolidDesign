@@ -187,6 +187,89 @@ class TestSplitByFace(unittest.TestCase):
         self.assertEqual(len(volumes(self.part)), 1)
 
 
+    def test_extended_face_cuts_past_its_edges(self):
+        a = self.box(0, 10)
+        self.box(20, 30)
+        self.boss(25, 5)
+        f = self.split_by_top(a, 1)
+        f.ExtendFaces = True
+        self.doc.recompute()
+        self.assertEqual(f.ErrorMessage, "", f.ErrorMessage)
+        v = sorted(volumes(self.part).values())
+        self.assertEqual(len(v), 3)                     # the other boss is cut off
+        self.assertAlmostEqual(v[0], 3.14159265 * 4 * 5, 3)
+
+    def test_extended_face_cuts_a_boss_over_the_edge(self):
+        self.box(0, 10)
+        b = self.boss(10, 5)
+        f = self.split_by_top(b, 1)
+        f.ExtendFaces = True
+        self.doc.recompute()
+        self.assertEqual(f.ErrorMessage, "", f.ErrorMessage)
+        self.assertEqual(len(volumes(self.part)), 2)
+
+
+class TestSplitByCurvedFace(unittest.TestCase):
+    """A cylinder poking out of a sphere: the sphere's face cuts it off."""
+
+    def setUp(self):
+        from freecad.SolidDesign.app import revolve
+        import Part
+        self.doc, self.part = new_doc("SC")
+        sk = sketch(self.doc, plane(self.part, "Front Plane"))
+        sk.addGeometry(Part.ArcOfCircle(Part.Circle(V(0, 0, 0), V(0, 0, 1), 10),
+                                        -3.14159265 / 2, 3.14159265 / 2))
+        sk.addGeometry(Part.LineSegment(V(0, 10, 0), V(0, -10, 0)))
+        self.doc.recompute()
+        axis = sketch(self.doc, plane(self.part, "Front Plane"))
+        axis.addGeometry(Part.LineSegment(V(0, -20, 0), V(0, 20, 0)))
+        self.doc.recompute()
+        self.ball = revolve.create(self.doc, self.part, sketch=sk)
+        self.ball.Axis = (sk, ["Edge2"])
+        self.doc.recompute()
+        pin = sketch(self.doc, plane(self.part, "Top Plane"))
+        circle(pin, 0, 0, 3)
+        self.doc.recompute()
+        self.pin = extrude(self.doc, self.part, pin, Depth=25)
+        self.doc.recompute()
+
+    def tearDown(self):
+        App.closeDocument(self.doc.Name)
+
+    def ok(self, f):
+        self.assertEqual(f.ErrorMessage, "", f.ErrorMessage)
+
+    def test_sphere_face_cuts_off_the_cylinder(self):
+        sph = [i for i, g in enumerate(self.pin.Shape.Faces, 1)
+               if g.Surface.TypeId == "Part::GeomSphere"]
+        self.assertEqual(len(sph), 1)
+        f = bodytools.create_split(self.doc, self.part)
+        f.TrimFaces = (self.pin, ["Face%d" % sph[0]])
+        self.doc.recompute()
+        self.ok(f)
+        v = sorted(volumes(self.part).values())
+        self.assertEqual(len(v), 2)
+        self.assertAlmostEqual(v[1], 4 / 3.0 * 3.14159265 * 1000, 2)   # the ball, whole
+        f.ExtendFaces = True
+        self.doc.recompute()
+        self.ok(f)
+        self.assertEqual(len(volumes(self.part)), 2)
+
+    def test_extended_cylinder_cores_the_ball(self):
+        cyl = [i for i, g in enumerate(self.pin.Shape.Faces, 1)
+               if g.Surface.TypeId == "Part::GeomCylinder"]
+        total = sum(volumes(self.part).values())
+        f = bodytools.create_split(self.doc, self.part)
+        f.TrimFaces = (self.pin, ["Face%d" % cyl[0]])
+        f.ExtendFaces = True
+        self.doc.recompute()
+        self.ok(f)
+        v = sorted(volumes(self.part).values())
+        self.assertEqual(len(v), 2)       # the core (with the pin above it) and the rest
+        self.assertAlmostEqual(sum(v), total, 3)
+        self.assertGreater(v[1], 3500)
+
+
 class TestMoveCopy(Case):
     def test_body_view_follows_the_move(self):
         """What the user sees (the body in the tree and the view) moves too."""

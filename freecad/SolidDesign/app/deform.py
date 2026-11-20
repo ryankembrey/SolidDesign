@@ -232,15 +232,20 @@ class DeformProxy(_SurfaceTool):
         a(obj, "App::PropertyBool", "ReverseDirection", g, "The other way", False)
         a(obj, "App::PropertyLength", "Radius", g, "Deform region radius", 20.0)
         a(obj, "App::PropertyEnumeration", "Stiffness", g,
-          "Minimum spreads the change widely, Maximum keeps it close", enum=morph.STIFFNESS)
+          "Minimum spreads the change widely, Maximum keeps it close", enum=morph.STIFFNESS,
+          default=morph.MEDIUM)
         a(obj, "App::PropertyLinkList", "InitialCurves", g,
           "Curve to curve: the curves that move (sketches or curves)")
         a(obj, "App::PropertyLinkList", "TargetCurves", g,
           "Curve to curve: where they move to, in the same order")
+        a(obj, "App::PropertyLinkList", "FixedCurves", g,
+          "Curve to curve: curves that stay put")
         a(obj, "App::PropertyString", "ToolBody", g, "Surface push: the tool body, by ID", "")
         a(obj, "App::PropertyLinkSub", "PushDirection", g,
           "Surface push: the direction (an edge, axis or plane)")
-        obj.Stiffness = morph.MEDIUM
+        a(obj, "App::PropertyLength", "DeformDeviation", g,
+          "Surface push: how far round the tool the dent spreads (0: the tool's own shape)",
+          0.0)
 
     def compute(self, obj, base):
         from ..core.features import morph
@@ -263,6 +268,7 @@ class DeformProxy(_SurfaceTool):
         elif p.kind == morph.CURVE_TO_CURVE:
             p.initial = [topo.shape_of(o) for o in obj.InitialCurves if o is not None]
             p.target = [topo.shape_of(o) for o in obj.TargetCurves if o is not None]
+            p.fixed = [topo.shape_of(o) for o in getattr(obj, "FixedCurves", []) if o is not None]
         else:
             p.tool_id = obj.ToolBody
             b = base.get(obj.ToolBody) if obj.ToolBody else None
@@ -277,6 +283,7 @@ class DeformProxy(_SurfaceTool):
                     d = Part.makeCompound(others).BoundBox.Center - p.tool.CenterOfMass
                     d = d.normalize() if d.Length > 1e-12 else None
             p.push = d * sign if d is not None else None
+            p.deviation = getattr(obj, "DeformDeviation", App.Units.Quantity(0)).Value
         res, preview = morph.deform(p, base)
         self.done(obj, p, res, warns)
         return res, preview
@@ -294,28 +301,42 @@ class FreeformProxy(_SurfaceTool):
         g = "Freeform"
         a(obj, "App::PropertyLinkSub", "Items", g, "The face to change")
         a(obj, "App::PropertyStringList", "ControlPoints", g,
-          "Points on the face and how far each moves along the normal: x,y,z|height")
+          "Points on the face and how far each moves: x,y,z|height[|dx,dy,dz sideways]")
+        a(obj, "App::PropertyLinkList", "ControlCurves", g,
+          "Curves (sketches) the face is pulled onto")
         a(obj, "App::PropertyEnumeration", "Continuity", g,
-          "How the change meets the face's edges", enum=morph.CONTINUITY)
+          "How the change meets the face's edges", enum=morph.CONTINUITY,
+          default=morph.TANGENT)
         a(obj, "App::PropertyPercent", "Reach", g,
           "How far each point's change spreads, as a share of the face's size", 50)
-        obj.Continuity = morph.TANGENT
 
     @staticmethod
-    def points(obj):
+    def moves(obj):
+        """[(point, height, sideways vector)] from ControlPoints."""
         out = []
         for t in obj.ControlPoints:
             try:
-                xyz, h = str(t).split("|")
-                x, y, z = (float(c) for c in xyz.split(","))
-                out.append((App.Vector(x, y, z), float(h)))
-            except ValueError:
+                bits = str(t).split("|")
+                x, y, z = (float(c) for c in bits[0].split(","))
+                side = App.Vector()
+                if len(bits) > 2 and bits[2].strip():
+                    side = App.Vector(*(float(c) for c in bits[2].split(",")))
+                out.append((App.Vector(x, y, z), float(bits[1]), side))
+            except (ValueError, IndexError, TypeError):
                 continue
         return out
 
+    @classmethod
+    def points(cls, obj):
+        """[(point, height)]: the normal part only."""
+        return [(c, h) for c, h, _s in cls.moves(obj)]
+
     @staticmethod
-    def point_text(pt, h):
-        return "{:.6g},{:.6g},{:.6g}|{:.6g}".format(pt.x, pt.y, pt.z, h)
+    def point_text(pt, h, side=None):
+        t = "{:.6g},{:.6g},{:.6g}|{:.6g}".format(pt.x, pt.y, pt.z, h)
+        if side is not None and side.Length > 1e-12:
+            t += "|{:.6g},{:.6g},{:.6g}".format(side.x, side.y, side.z)
+        return t
 
     def compute(self, obj, base):
         from ..core.features import morph
@@ -331,7 +352,8 @@ class FreeformProxy(_SurfaceTool):
             raise topo.GeometryError("Pick one face to freeform.")
         (bid, fs), = faces_by_body(base, faces).items()
         p.body, p.face = bid, fs[0]
-        p.points = self.points(obj)
+        p.points = self.moves(obj)
+        p.curves = [topo.shape_of(o) for o in getattr(obj, "ControlCurves", []) if o is not None]
         p.continuity = obj.Continuity
         p.reach = obj.Reach / 100.0
         res, preview = morph.freeform(p, base)
@@ -360,6 +382,8 @@ class FlattenProxy(_SurfaceTool):
         a(obj, "App::PropertyLinkSub", "FlattenFrom", g,
           "A vertex (or an edge's middle) where the flat shape touches the faces")
         a(obj, "App::PropertyPercent", "Accuracy", g, "Finer is truer and slower", 50)
+        a(obj, "App::PropertyLinkSub", "TearEdges", g,
+          "Edges to cut the faces open along (relief cuts); a closed set needs them")
 
     def compute(self, obj, base):
         from ..core.features import flatten as core_f
@@ -381,6 +405,11 @@ class FlattenProxy(_SurfaceTool):
                 e = s.Edges[0]
                 p.anchor = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
         p.accuracy = obj.Accuracy / 100.0
+        t = getattr(obj, "TearEdges", None)
+        if t and t[0] is not None:
+            edges, w = refs.get_refs(obj, "TearEdges", "tear edge", obj.BaseFeature)
+            warns.extend(w)
+            p.tears = [e for e in edges if e.ShapeType == "Edge"]
         res, preview = core_f.compute(p, base)
         self.done(obj, p, res, warns)
         return res, preview

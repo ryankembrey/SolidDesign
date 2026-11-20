@@ -13,6 +13,13 @@ from helpers import V, circle, extrude, new_doc, plane, rect, sketch, volumes
 PI = math.pi
 
 
+def width_at(shape, z):
+    box = App.BoundBox()
+    for w in shape.slice(V(0, 0, 1), z):
+        box.add(w.BoundBox)
+    return box.XLength
+
+
 class Case(unittest.TestCase):
     def setUp(self):
         self.doc, self.part = new_doc("Sw")
@@ -234,6 +241,64 @@ class TestSweepMore(Case):
         _ = block
 
 
+class TestSweepOrientations(TestSweepMore):
+    def test_steered_orientations_on_a_flat_path(self):
+        """On a flat path, Natural and a direction square to its plane give what
+        Follow Path gives (the square sweeps the same volume, Pappus)."""
+        length = 20 + PI * 10 / 2
+        top = plane(self.part, "Top Plane")
+        for kw in ({"Orientation": "Natural"},
+                   {"Orientation": "Specify Direction Vector",
+                    "DirectionVector": (plane(self.part, "Front Plane"), [""])}):
+            f = self.make(self.square(), self.path, **kw)
+            self.ok(f)
+            self.assertAlmostEqual(f.Shape.Volume, 16 * length, 0)
+            self.doc.removeObject(f.Name)
+            self.doc.recompute()
+        del top
+
+    def test_direction_vector_needs_a_direction(self):
+        f = self.make(self.square(), self.path, Orientation="Specify Direction Vector")
+        self.assertIn("pick the direction", f.ErrorMessage)
+
+    def test_tangent_to_adjacent_faces(self):
+        sk = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, -40), App.Rotation()))
+        circle(sk, 0, 0, 10)
+        self.doc.recompute()
+        drum = extrude(self.doc, self.part, sk, Depth=5)
+        rim = next("Edge%d" % i for i, e in enumerate(drum.Shape.Edges, 1)
+                   if hasattr(e.Curve, "Radius") and abs(e.Curve.Center.z + 35) < 1e-6)
+        prof = sketch(self.doc, plane(self.part, "Front Plane"))
+        rect(prof, 9, -35.5, 11, -34)
+        self.doc.recompute()
+        f = app_sweep.create_sweep(self.doc, self.part, "Add", prof)
+        f.Path = (drum, [rim])
+        f.Orientation = "Tangent to Adjacent Faces"
+        self.doc.recompute()
+        self.ok(f)
+        from freecad.SolidDesign.app import part as app_part
+        s = [b.shape for b in app_part.tip_bodies(self.part)][0]
+        self.assertTrue(s.isValid())
+        self.assertAlmostEqual(s.BoundBox.ZMax, -34, 2)        # a ring on the rim
+        self.assertAlmostEqual(s.BoundBox.XMax, 11, 1)
+
+    def test_follow_two_guides(self):
+        path = self.straight()
+        g1 = sketch(self.doc, plane(self.part, "Front Plane"))
+        g1.addGeometry(Part.LineSegment(V(2, 0, 0), V(4, 30, 0)))
+        g2 = sketch(self.doc, plane(self.part, "Front Plane"))
+        g2.addGeometry(Part.LineSegment(V(-2, 0, 0), V(-4, 30, 0)))
+        self.doc.recompute()
+        f = self.make(self.prof, path, GuideCurves=[g1, g2],
+                      ProfileTwist="Follow 1st and 2nd Guide Curves")
+        self.ok(f)
+        self.assertAlmostEqual(f.Shape.BoundBox.XMax, 4, 3)
+        f.GuideCurves = [g1]
+        self.doc.recompute()
+        self.assertIn("two guide curves", f.ErrorMessage)
+
+
 class TestLoftMore(Case):
     def two(self):
         top = sketch(self.doc, plane(self.part, "Top Plane"),
@@ -262,6 +327,33 @@ class TestLoftMore(Case):
         self.doc.recompute()
         self.ok(f)
         self.assertAlmostEqual(f.Shape.Volume, PI * 4 * 20, 2)
+
+    def test_tangency_to_face_carries_the_walls_on(self):
+        base = sketch(self.doc, plane(self.part, "Top Plane"),
+                      attach_offset=App.Placement(V(0, 0, -10), App.Rotation()))
+        rect(base, -5, -5, 5, 5)
+        self.doc.recompute()
+        extrude(self.doc, self.part, base, Depth=10)              # a block up to z 0
+        start = sketch(self.doc, plane(self.part, "Top Plane"))
+        rect(start, -5, -5, 5, 5)                                 # along the block's top
+        top = sketch(self.doc, plane(self.part, "Top Plane"),
+                     attach_offset=App.Placement(V(0, 0, 10), App.Rotation()))
+        rect(top, -2, -2, 2, 2)
+        self.doc.recompute()
+        f = app_sweep.create_loft(self.doc, self.part, "Add", profiles=[start, top])
+        self.doc.recompute()
+        self.ok(f)
+        plain = width_at(f.Shape, 1.0)
+        f.StartConstraint = "Tangency To Face"
+        self.doc.recompute()
+        self.ok(f)
+        # It leaves the top going straight up, as the block's walls do.
+        self.assertGreater(width_at(f.Shape, 1.0), plain + 0.3)
+        self.assertAlmostEqual(width_at(f.Shape, 0.05), 10, 1)
+        f.StartConstraint = "None"
+        f.EndConstraint = "Tangency To Face"
+        self.doc.recompute()
+        self.assertIn("must lie along edges", f.ErrorMessage)
 
     def test_guide_curve_bulges_one_side(self):
         g = sketch(self.doc, plane(self.part, "Front Plane"))

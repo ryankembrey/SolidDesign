@@ -4,6 +4,7 @@
 import unittest
 
 import FreeCAD as App
+import Part
 
 from freecad.SolidDesign.app import part as app_part
 from freecad.SolidDesign.app import refgeom, surfaces
@@ -178,6 +179,32 @@ class TestSurfaces(Case):
         thick = [b for b in self.bodies() if abs(b.shape.Volume - 500) < 1e-3][0]
         self.assertAlmostEqual(thick.shape.BoundBox.ZMin, 29, 6)
 
+    def test_extend_up_to_point_and_surface(self):
+        pl, sid = self.flat()
+        e = [n for n in edges_at(pl, 30)
+             if abs(pl.Shape.getElement(n).CenterOfMass.x - 20) < 1e-6][0]
+        ps = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, 30), App.Rotation()))
+        ps.addGeometry(Part.Point(V(27, 3, 0)))
+        wall = refgeom.create_plane(self.doc, self.part, core_ref.OFFSET,
+                                    [(plane(self.part, "Right Plane"), "")])
+        wall.Distance = 32
+        self.doc.recompute()
+        x = surfaces.create_extend(self.doc, self.part, Items=[e], EndCondition="Up To Point",
+                                   UpTo=(ps, ["Vertex1"]))
+        self.doc.recompute()
+        self.ok(x)
+        s = [b for b in self.bodies() if b.id == sid][0]
+        self.assertAlmostEqual(s.shape.BoundBox.XMax, 27, 6)
+        # Up to a plane: the extension stops on it.
+        x.EndCondition = "Up To Surface"
+        x.UpTo = (wall, [])
+        self.doc.recompute()
+        self.ok(x)
+        s = [b for b in self.bodies() if b.id == sid][0]
+        self.assertAlmostEqual(s.shape.optimalBoundingBox().XMax, 32, 4)
+        self.assertAlmostEqual(s.shape.Area, 320, 3)
+
     def test_thickened_cut(self):
         sk = sketch(self.doc, plane(self.part, "Top Plane"),
                     attach_offset=App.Placement(V(0, 0, 5), App.Rotation()))
@@ -196,3 +223,24 @@ class TestSurfaces(Case):
         self.doc.recompute()
         self.assertEqual(t.Label, "Thicken1")
         _ = pl
+
+    def test_thickened_cut_scope(self):
+        sk = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, 5), App.Rotation()))
+        rect(sk, -5, -5, 30, 20)
+        self.doc.recompute()
+        surfaces.create_planar(self.doc, self.part, Sketch=sk)
+        self.doc.recompute()
+        sid = [b.id for b in self.bodies() if b.kind == "surface"][0]
+        solid = [b.id for b in self.bodies() if b.kind == "solid"][0]
+        t = surfaces.create_thicken(self.doc, self.part, Body=sid, Thickness=2, Mode="Cut",
+                                    AllBodies=False)
+        self.doc.recompute()
+        self.assertIn("Pick the bodies", t.ErrorMessage)
+        t.ScopeBodies = ["nobody"]
+        self.doc.recompute()
+        self.assertIn("doesn't cut any body", t.ErrorMessage)
+        t.ScopeBodies = [solid]
+        self.doc.recompute()
+        self.ok(t)
+        self.assertEqual(len(self.bodies()), 2)

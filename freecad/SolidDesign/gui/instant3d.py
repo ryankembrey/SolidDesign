@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-"""Instant3D outside the panels: select an Extrude or a Revolve (in the tree or
-the 3D view) and its depth arrows or angle rings show on the model; a Fillet's
-radius, a Chamfer's distance, a Shell's thickness and a Blind hole's depth get an
-arrow too. Drag one, or
+"""Instant3D outside the panels: select a feature that has draggers (handles.SPECS:
+Extrude's depths, Revolve's angles, a Fillet's radius, a Chamfer's distance, a
+Shell's thickness, a Blind hole's depth...) in the tree or the 3D view and they
+show on the model, the same draggers its panel shows. Drag one, or
 click its value and type, and the feature changes when you let go (one undo
 step), as SolidWorks' Instant3D does.
 """
@@ -58,14 +58,14 @@ class _Instant3D(object):
             return None
         o = objs[0]
         t = getattr(getattr(o, "Proxy", None), "TYPE", "")
-        if t not in ("Extrude", "Revolve") and t not in hmod.SPECS or not util.is_feature(o):
+        if t not in hmod.SPECS or not util.is_feature(o):
             return None
         if getattr(o, "RolledBack", False) or getattr(o, "Suppressed", False) or o.ErrorMessage:
             return None
         return o
 
     def update(self):
-        if self.set is not None and (self.set.active is not None or self._held):
+        if self.set is not None and (self.set.set.active is not None or self._held):
             return          # a drag is on: clicking the arrow may change the selection
         o = self.target()
         if o is self.obj and self.set is not None:
@@ -76,26 +76,12 @@ class _Instant3D(object):
         self.obj = o
         part = part_mod.owner_part(o) if hasattr(part_mod, "owner_part") else None
         part = part or util.part_of(o)
-        s = hmod.Handles()
-        t = o.Proxy.TYPE
-        if t == "Extrude" or t in hmod.SPECS:
-            specs = hmod.extrude_specs if t == "Extrude" else hmod.SPECS[t]
-            for prop, origin, d, value, factor, scale in specs(o, part):
-                a = s.add(hmod.DragArrow(lambda v: None))
-                a.prop = prop
-                a.factor = factor
-                a.place(origin, d, value, scale)
-                a.attach()
-        else:
-            for prop, centre, axis, ref, radius, value in hmod.revolve_specs(o, part):
-                r = s.add(hmod.RingHandle(lambda v: None))
-                r.prop = prop
-                r.place(centre, axis, ref, radius, value)
-                r.attach()
-        if not s.arrows:
+        s = hmod.FeatureDraggers(o, part, hmod.SPECS[o.Proxy.TYPE],
+                                 on_release=self.release)
+        s.place()
+        if not s.draggers():
+            s.stop()
             return
-        s.on_release = self.release
-        s.listen()
         self.set = s
 
     _held = False
@@ -111,15 +97,15 @@ class _Instant3D(object):
     def _apply(self, o, h):
         self._held = False
         try:
-            cur = getattr(o, h.prop).Value
+            cur = hmod.feature_value(o, h.prop)
         except Exception:
             return
         if abs(cur - h.value) < 1e-9:
             return
         doc = o.Document
-        doc.openTransaction("Change {}".format(h.prop))
+        doc.openTransaction("Change {}".format(h.prop.rstrip("+-")))
         try:
-            setattr(o, h.prop, h.value)
+            hmod.set_feature_value(o, h.prop, h.value)
             doc.recompute()
         finally:
             doc.commitTransaction()

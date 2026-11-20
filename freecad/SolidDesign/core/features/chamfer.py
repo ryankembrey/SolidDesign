@@ -114,9 +114,16 @@ def _face_face(p, shape, faces):
     picked first."""
     pairs = face_face_edges(shape, faces)
     if not pairs:
-        raise topo.GeometryError(
-            "Face Face: the picked faces don't share an edge. Pick faces that meet "
-            "(this version can't chamfer between faces that don't touch).")
+        if len(faces) != 2:
+            raise topo.GeometryError(
+                "Face Face: the picked faces don't share an edge. To chamfer across a gap, "
+                "pick two flat faces.")
+        from . import blend
+        d1 = p.d1
+        d2 = p.d1 if p.equal else p.d2
+        if p.flip:
+            d1, d2 = d2, d1
+        return blend.across_gap(shape, faces[0], faces[1], d1, d2, chamfer=True, tag=p.tag)
     r = shape
     for e, first in pairs:
         a, b = _setbacks(p, shape, e)
@@ -144,7 +151,7 @@ def compute(p, base):
     if p.kind == FACE_FACE:
         faces = [x for x in p.items if x.ShapeType == "Face"]
         if len(faces) < 2:
-            raise topo.GeometryError("Face Face: pick at least two faces that meet.")
+            raise topo.GeometryError("Face Face: pick at least two faces.")
         out = base.copy()
         res = common.Result(out)
         changed = []

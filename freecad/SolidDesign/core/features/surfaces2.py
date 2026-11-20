@@ -27,7 +27,8 @@ V = App.Vector
 
 TANGENT, NORMAL, TAPERED, PERPENDICULAR = ("Tangent to Surface", "Normal to Surface",
                                            "Tapered to Vector", "Perpendicular to Vector")
-RULED_TYPES = [TANGENT, NORMAL, TAPERED, PERPENDICULAR]
+SWEEP = "Sweep"
+RULED_TYPES = [TANGENT, NORMAL, TAPERED, PERPENDICULAR, SWEEP]
 ALL_EDGES, INTERNAL, EXTERNAL = "All edges", "Internal edges", "External edges"
 UNTRIM_TYPES = [ALL_EDGES, INTERNAL, EXTERNAL]
 
@@ -49,6 +50,9 @@ class Params(object):
         self.merge = False
         self.surface = None             # a replacement / cutting surface (shape)
         self.threshold = 0.0            # Mid-Surface: thickest pair (0: any)
+        self.trim_knit = False          # Ruled: trim the strips at corners and knit them
+        self.connect = False            # Ruled: fill the gaps at sharp corners
+        self.propagate = False          # Radiate: carry on along tangent edges
         self.scope = common.Scope()
 
 
@@ -102,6 +106,9 @@ def ruled(p, base):
         raise topo.GeometryError("Pick the reference vector (an edge, axis or plane).")
     import math
     sign = -1.0 if p.flip else 1.0
+    if p.kind == SWEEP:
+        shape = _swept_ruled(p, base, sign)
+        return _new(p, base, [shape]), shape
     strips = []
     for e, face in _edge_faces(base, p.edges):
         if face is None:
@@ -127,8 +134,125 @@ def ruled(p, base):
             a = math.radians(p.angle)
             return (v * math.cos(a) + side * math.sin(a)) * (sign * p.distance)
         strips.append(_strip(e, dirs))
+    if p.trim_knit:
+        strips = _trim_at_corners(strips, [e for e, _f in _edge_faces(base, p.edges)], p.tag)
+    if p.connect:
+        strips = strips + _corner_fills(strips, [e for e, _f in _edge_faces(base, p.edges)])
     shape = _sew(strips, 1e-6, p.tag)
     return _new(p, base, [shape]), shape
+
+
+def _swept_ruled(p, base, sign):
+    """Sweep: one smooth ruled surface, a straight line swept along the edges (a
+    chain), leaving the first edge tangent to the face beside it and keeping that
+    angle to the path as it goes."""
+    pairs = _edge_faces(base, p.edges)
+    edges = [e for e, _f in pairs]
+    try:
+        chains = Part.sortEdges(edges)
+    except Exception:
+        chains = [edges]
+    if len(chains) != 1:
+        raise topo.GeometryError("Sweep: the edges must be one chain, end to end.")
+    path = Part.Wire(chains[0])
+    e0 = path.OrderedEdges[0]
+    face = next((f for e, f in pairs if e.isSame(e0) or
+                 e.distToShape(e0)[0] < 1e-9 and abs(e.Length - e0.Length) < 1e-9), pairs[0][1])
+    start = path.OrderedVertexes[0].Point
+    u = e0.Curve.parameter(start)
+    if p.direction is not None:
+        t = V(e0.tangentAt(u)).normalize()
+        d = V(p.direction) - t * V(p.direction).dot(t)
+        if d.Length < 1e-9:
+            raise topo.GeometryError("The reference vector runs along the edge.")
+        d.normalize()
+    else:
+        if face is None:
+            raise topo.GeometryError("An edge has no face beside it.")
+        d = _outward(face, e0, start)
+        if d is None:
+            raise topo.GeometryError("Couldn't find the face's direction at the edge.")
+    line = Part.Wire([Part.LineSegment(start, start + d * (sign * p.distance)).toShape()])
+    try:
+        return topo.sweep(path, line, p.tag, False)
+    except topo.GeometryError as e:
+        raise topo.GeometryError("The ruled sweep failed: {}".format(e))
+
+
+def _shared(e1, e2, tol=1e-7):
+    for a in e1.Vertexes:
+        for b in e2.Vertexes:
+            if (a.Point - b.Point).Length < tol:
+                return a.Point
+    return None
+
+
+def _away(e, c):
+    """The edge's direction at its end ``c``, pointing along it away from ``c``."""
+    u = e.Curve.parameter(c)
+    t = V(e.tangentAt(u))
+    mid = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
+    if t.dot(mid - c) < 0:
+        t = -t
+    return t.normalize() if t.Length > 1e-12 else t
+
+
+def _trim_at_corners(strips, edges, tag):
+    """Where neighbouring strips run into each other at a corner, cut both back to
+    the mitre between them (the plane halving the corner's angle)."""
+    out = list(strips)
+    for i in range(len(out)):
+        for j in range(i + 1, len(out)):
+            c = _shared(edges[i], edges[j])
+            if c is None:
+                continue
+            a, b = _away(edges[i], c), _away(edges[j], c)
+            n = a - b
+            if n.Length < 1e-9:
+                continue                    # the edges carry straight on: no corner
+            n.normalize()
+            size = 4 * (out[i].BoundBox.DiagonalLength + out[j].BoundBox.DiagonalLength)
+            mitre = Part.Plane(c, n).toShape(-size, size, -size, size)
+            for k in (i, j):
+                try:
+                    pieces = topo.slice_by(out[k], [mitre], tag).Faces
+                except Exception:
+                    continue
+                if len(pieces) > 1:
+                    mid = edges[k].valueAt(0.5 * (edges[k].FirstParameter +
+                                                  edges[k].LastParameter))
+                    out[k] = min(pieces, key=lambda f: f.distToShape(Part.Vertex(mid))[0])
+    return out
+
+
+def _corner_fills(strips, edges):
+    """Faces filling the gap between neighbouring strips at a sharp corner: from the
+    corner out to the two strips' far edges."""
+    fills = []
+    for i in range(len(strips)):
+        for j in range(i + 1, len(strips)):
+            c = _shared(edges[i], edges[j])
+            if c is None:
+                continue
+            ends = []
+            for s in (strips[i], strips[j]):
+                far = [e for e in s.Edges if e.distToShape(Part.Vertex(c))[0] < 1e-7 and
+                       not any(e.distToShape(x)[0] < 1e-9 and abs(e.Length - x.Length) < 1e-9
+                               for x in edges)]
+                if not far:
+                    break
+                g = far[0]
+                q = [v.Point for v in g.Vertexes if (v.Point - c).Length > 1e-7]
+                if q:
+                    ends.append(q[0])
+            if len(ends) != 2 or (ends[0] - ends[1]).Length < 1e-6:
+                continue                # they already meet (or were trimmed to meet)
+            try:
+                tri = Part.Face(Part.makePolygon([c, ends[0], ends[1], c]))
+                fills.append(tri)
+            except Exception:
+                pass
+    return fills
 
 
 def radiate(p, base):
@@ -141,7 +265,10 @@ def radiate(p, base):
     n = V(p.direction).normalize()
     sign = -1.0 if p.flip else 1.0
     strips = []
-    for e in p.edges:
+    edges = list(p.edges)
+    if p.propagate:
+        edges = _tangent_chain(base, edges)
+    for e in edges:
         body, own = _body_of_edges(base, [e])
         if body is None:
             raise topo.GeometryError("Pick edges of the model.")
@@ -170,6 +297,36 @@ def radiate(p, base):
         strips.append(_strip(e, dirs))
     shape = _sew(strips, 1e-6, p.tag)
     return _new(p, base, [shape]), shape
+
+
+def _tangent_chain(base, edges):
+    """The picked edges and every edge meeting them smoothly, end to end."""
+    out = list(edges)
+    body, _own = _body_of_edges(base, edges[:1])
+    if body is None:
+        return out
+    pool = list(body.shape.Edges)
+    todo = list(edges)
+    while todo:
+        e = todo.pop()
+        for g in pool:
+            if any(g.isSame(x) or (g.distToShape(x)[0] < 1e-9 and abs(g.Length - x.Length)
+                                   < 1e-9) for x in out):
+                continue
+            c = _shared(e, g)
+            if c is None:
+                continue
+            try:
+                te = V(e.tangentAt(e.Curve.parameter(c)))
+                tg = V(g.tangentAt(g.Curve.parameter(c)))
+            except Exception:
+                continue
+            if te.Length < 1e-12 or tg.Length < 1e-12:
+                continue
+            if abs(abs(te.normalize().dot(tg.normalize())) - 1) < 1e-6:
+                out.append(g)
+                todo.append(g)
+    return out
 
 
 def untrim(p, base):
@@ -206,12 +363,73 @@ def untrim(p, base):
     return _new(p, base, [shape]), shape
 
 
+def _cylinder_pairs(faces):
+    """[(thickness, key a, key b, mid face)] for coaxial cylindrical faces (a tube's
+    inside and outside): the cylinder halfway between them, over the height and
+    the turn they share."""
+    import math
+    cyl = [(k, f) for k, f in enumerate(faces) if f.Surface.TypeId == "Part::GeomCylinder"]
+    out = []
+    for ia, (ka, a) in enumerate(cyl):
+        sa = a.Surface
+        ax = V(sa.Axis).normalize()
+        for kb, b in cyl[ia + 1:]:
+            sb = b.Surface
+            if abs(abs(V(sb.Axis).normalize().dot(ax)) - 1) > 1e-7:
+                continue
+            off = V(sb.Center) - V(sa.Center)
+            if (off - ax * off.dot(ax)).Length > 1e-6:
+                continue                            # not on one axis
+            t = abs(sa.Radius - sb.Radius)
+            if t < 1e-9:
+                continue
+            rm = 0.5 * (sa.Radius + sb.Radius)
+
+            def span(f):
+                hs = [(v.Point - V(sa.Center)).dot(ax) for v in f.Vertexes]
+                for e in f.Edges:
+                    if hasattr(e.Curve, "Center"):
+                        hs.append((V(e.Curve.Center) - V(sa.Center)).dot(ax))
+                return min(hs), max(hs)
+            lo = max(span(a)[0], span(b)[0])
+            hi = min(span(a)[1], span(b)[1])
+            if hi - lo < 1e-6:
+                continue
+            mid = Part.Cylinder()
+            mid.Center = V(sa.Center)
+            mid.Axis = ax
+            mid.Radius = rm
+            # Only where both walls are: the turn they share, in the mid cylinder's angle.
+            u0, u1 = 0.0, 2 * math.pi
+            full = True
+            for f in (a, b):
+                fu0, fu1, fv0, fv1 = f.ParameterRange
+                if fu1 - fu0 >= 2 * math.pi - 1e-6:
+                    continue
+                pa = f.Surface.value(fu0, 0.5 * (fv0 + fv1))
+                ga, _v = mid.parameter(pa)
+                ga = ga % (2 * math.pi)
+                if full:
+                    u0, u1, full = ga, ga + (fu1 - fu0), False
+                else:
+                    # Shift into the same turn, then overlap.
+                    while ga < u0 - math.pi:
+                        ga += 2 * math.pi
+                    while ga > u0 + math.pi:
+                        ga -= 2 * math.pi
+                    u0, u1 = max(u0, ga), min(u1, ga + (fu1 - fu0))
+            face = mid.toShape(u0, u1, lo, hi) if u1 - u0 > 1e-9 else None
+            if face is not None and face.Area > 1e-9:
+                out.append((t, ("c", ka), ("c", kb), face))
+    return out
+
+
 def mid_surface(p, base):
     """Surfaces midway between pairs of parallel flat faces facing each other."""
     if not p.faces:
         raise topo.GeometryError("Pick the faces (or a body) to find face pairs on.")
     planar = [f for f in p.faces if f.Surface.TypeId == "Part::GeomPlane"]
-    cands = []
+    cands = _cylinder_pairs(p.faces)
     for i, a in enumerate(planar):
         na = V(a.normalAt(0, 0))
         for j, b in enumerate(planar):
@@ -233,10 +451,11 @@ def mid_surface(p, base):
             except Exception:
                 continue
             if ov.Area > 1e-9:
-                cands.append((t, i, j, ov))
+                cands.append((t, ("p", i), ("p", j), ov))
     if not cands:
         raise topo.GeometryError("No face pairs found: pick parallel flat faces facing each "
-                                 "other (a wall's two sides).")
+                                 "other (a wall's two sides), or a tube's inside and "
+                                 "outside.")
     # The pairs a wall's thickness apart: up to the threshold, or (0) the thinnest.
     limit = p.threshold if p.threshold > 0 else min(c[0] for c in cands) * (1 + 1e-6) + 1e-9
     mids, used = [], set()

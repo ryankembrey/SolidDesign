@@ -53,6 +53,26 @@ class TestDraft(unittest.TestCase):
         self.doc.recompute()
         return d
 
+    def test_draftxpert_finds_the_faces_that_need_draft(self):
+        d = self.neutral([], DraftType="DraftXpert")
+        self.ok(d)
+        s = self.body()
+        top = 10 * 2 * math.tan(math.radians(3.0))
+        self.assertAlmostEqual(width_at(s, 9.999), 20 - top, 2)
+        self.assertAlmostEqual(width_at(s, 9.999, "y"), 10 - top, 2)
+        a = core_draft.analysis(s, V(0, 0, 1), 3.0)
+        self.assertEqual(a[core_draft.NEEDS], [])          # every wall drafted now
+        d.Angle = 1.0
+        self.doc.recompute()
+        self.ok(d)
+
+    def test_analysis(self):
+        s = self.box.Shape
+        a = core_draft.analysis(s, V(0, 0, 1), 1.0)
+        self.assertEqual(len(a[core_draft.NEEDS]), 4)
+        self.assertEqual(len(a[core_draft.POSITIVE]), 1)   # the top
+        self.assertEqual(len(a[core_draft.NEGATIVE]), 1)   # the bottom
+
     def test_neutral_plane_at_the_base_tapers_upwards(self):
         d = self.neutral(self.sides())
         self.ok(d)

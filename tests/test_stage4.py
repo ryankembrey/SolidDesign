@@ -174,6 +174,99 @@ class TestDomeWrap(Case):
         self.ok(d)
         self.assertGreater(self.bodies()[0].shape.Volume, 4000 + 600)
 
+    def test_dome_continuous_lean_and_point(self):
+        sk = sketch(self.doc, plane(self.part, "Top Plane"))
+        rect(sk, 0, 0, 20, 20)
+        self.doc.recompute()
+        box = extrude(self.doc, self.part, sk, Depth=10)
+        top = face_at(box, V(10, 10, 10), V(0, 0, 1))
+        d = more.create_dome(self.doc, self.part, Items=[top], Distance=3)
+        self.doc.recompute()
+        plain = self.bodies()[0].shape.Volume
+        d.ContinuousDome = True
+        self.doc.recompute()
+        self.ok(d)
+        s = self.bodies()[0].shape
+        self.assertTrue(s.isValid())
+        self.assertAlmostEqual(s.BoundBox.ZMax, 13, 2)
+        self.assertLess(s.Volume, plain)          # the corners round off as it rises
+        self.assertGreater(s.Volume, 4000 + 300)
+        d.ContinuousDome = False
+        # Leaning along a direction keeps the volume (a shear) and moves the top.
+        edge = sketch(self.doc, plane(self.part, "Front Plane"))
+        edge.addGeometry(Part.LineSegment(V(0, 0, 0), V(1, 1, 0)))     # 45° in XZ
+        self.doc.recompute()
+        d.DomeDirection = (edge, ["Edge1"])
+        self.doc.recompute()
+        self.ok(d)
+        s = self.bodies()[0].shape
+        self.assertAlmostEqual(s.Volume, plain, 2)
+        tip = s.common(Part.makeBox(40, 40, 0.2, V(-10, -10, 12.7)))
+        self.assertAlmostEqual(tip.Solids[0].CenterOfMass.x, 13, 0)   # the top moved 3 in x
+        d.DomeDirection = None
+        ps = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, 16), App.Rotation()))
+        ps.addGeometry(Part.Point(V(13, 10, 0)))
+        self.doc.recompute()
+        d.ConstraintPoint = (ps, ["Vertex1"])
+        self.doc.recompute()
+        self.ok(d)
+        s = self.bodies()[0].shape
+        self.assertAlmostEqual(s.BoundBox.ZMax, 16, 1)          # the top is at the point
+        self.assertTrue(s.isInside(V(13, 10, 15.9), 1e-6, True))
+
+    def test_wrap_on_a_cone(self):
+        from freecad.SolidDesign.app import revolve
+        prof = sketch(self.doc, plane(self.part, "Front Plane"))
+        prof.addGeometry(Part.LineSegment(V(0, 0, 0), V(12, 0, 0)))
+        prof.addGeometry(Part.LineSegment(V(12, 0, 0), V(8, 30, 0)))
+        prof.addGeometry(Part.LineSegment(V(8, 30, 0), V(0, 30, 0)))
+        prof.addGeometry(Part.LineSegment(V(0, 30, 0), V(0, 0, 0)))
+        self.doc.recompute()
+        cone = revolve.create(self.doc, self.part, sketch=prof)
+        cone.Axis = (prof, ["Edge4"])
+        self.doc.recompute()
+        self.ok(cone)
+        side = next(i for i, f in enumerate(cone.Shape.Faces, 1)
+                    if f.Surface.TypeId == "Part::GeomCone")
+        sk = sketch(self.doc, plane(self.part, "Right Plane"),
+                    attach_offset=App.Placement(V(0, 0, 15), App.Rotation()))
+        rect(sk, -2, 10, 2, 20)
+        self.doc.recompute()
+        v0 = self.bodies()[0].shape.Volume
+        w = more.create_wrap(self.doc, self.part, Sketch=sk, Items=["Face%d" % side],
+                             Depth=0.5)
+        self.doc.recompute()
+        self.ok(w)
+        s = self.bodies()[0].shape
+        self.assertTrue(s.isValid())
+        self.assertAlmostEqual(s.Volume - v0, 4 * 10 * 0.5, delta=1.5)   # a 4 x 10 pad
+
+    def test_wrap_spline_surface_on_a_dome(self):
+        c = self.cyl()
+        top = face_at(c, V(0, 0, 40), V(0, 0, 1))
+        d = more.create_dome(self.doc, self.part, Items=[top], Distance=4)
+        self.doc.recompute()
+        self.ok(d)
+        cap = next(i for i, f in enumerate(d.Shape.Faces, 1)
+                   if f.Surface.TypeId == "Part::GeomSphere")
+        sk = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, 50), App.Rotation()))
+        rect(sk, -2, -2, 2, 2)
+        self.doc.recompute()
+        v0 = self.bodies()[0].shape.Volume
+        w = more.create_wrap(self.doc, self.part, Sketch=sk, Items=["Face%d" % cap],
+                             Depth=0.5)
+        self.doc.recompute()
+        self.assertIn("Spline Surface", w.ErrorMessage)
+        w.WrapMethod = "Spline Surface"
+        self.doc.recompute()
+        self.ok(w)
+        s = self.bodies()[0].shape
+        self.assertTrue(s.isValid())
+        self.assertAlmostEqual(s.Volume - v0, 16 * 0.5, 0)
+        self.assertGreater(s.BoundBox.ZMax, 44.4)
+
     def test_wrap_on_a_cylinder(self):
         c = self.cyl()
         side = face_at(c, V(10, 0, 20), V(1, 0, 0))

@@ -50,11 +50,15 @@ class SweepProxy(sketchfeature.SketchFeatureProxy):
         a(obj, "App::PropertyLinkSub", "Path", g, "Path: a sketch, or connected edges")
         a(obj, "App::PropertyEnumeration", "Orientation", g, "Profile orientation",
           enum=core.ORIENTATIONS)
+        a(obj, "App::PropertyLinkSub", "DirectionVector", g,
+          "Specify Direction Vector: the way the profile keeps facing (edge, axis or plane)")
         a(obj, "App::PropertyString", "ToolBody", g, "Solid profile: the tool body, by ID")
         _enum(obj, "ProfileType", core.PROFILE_TYPES)
+        _enum(obj, "Orientation", core.ORIENTATIONS)
         g = "Twist"
         a(obj, "App::PropertyEnumeration", "ProfileTwist", g, "How the profile twists",
           enum=core.TWISTS)
+        _enum(obj, "ProfileTwist", core.TWISTS)
         a(obj, "App::PropertyEnumeration", "TwistControl", g, "Twist in degrees or turns",
           enum=core.TWIST_UNITS)
         a(obj, "App::PropertyAngle", "TwistAngle", g, "Twist along the path", 90.0)
@@ -76,12 +80,36 @@ class SweepProxy(sketchfeature.SketchFeatureProxy):
         target, subs = val
         if not subs and util.role(target) == "refgeom" and target.Proxy.KIND == "helix":
             self._axis = target.Proxy.axis_line(target)
+        self._adjacent = []
         if not subs:
             edges = topo.shape_of(target).Edges
         else:
             elems, w = refs.get_refs(obj, "Path", "path edge", obj.BaseFeature)
             warns.extend(w)
             edges = [e for el in elems for e in el.Edges]
+            whole = topo.shape_of(target)
+            count = []
+
+            def same(a, b):
+                if a.isSame(b):
+                    return True
+                if abs(a.Length - b.Length) > 1e-7:
+                    return False
+                m = b.valueAt(0.5 * (b.FirstParameter + b.LastParameter))
+                return a.distToShape(Part.Vertex(m))[0] < 1e-7
+
+            for e in edges:
+                try:
+                    for f in [g for g in whole.Faces if any(same(x, e) for x in g.Edges)]:
+                        k = next((i for i, (g, _n) in enumerate(count) if f.isSame(g)), None)
+                        if k is None:
+                            count.append((f, 1))
+                        else:
+                            count[k] = (count[k][0], count[k][1] + 1)
+                except Exception:
+                    pass
+            count.sort(key=lambda t: -t[1])
+            self._adjacent = [f for f, _n in count]
         return core.path_wire(edges)
 
     def compute(self, obj, base):
@@ -98,6 +126,14 @@ class SweepProxy(sketchfeature.SketchFeatureProxy):
         self._axis = None
         p.path = self.path(obj, warns)
         p.axis = self._axis
+        p.adjacent = self._adjacent
+        if p.orientation == core.DIRECTION_VEC:
+            s, w = refs.get_ref(obj, "DirectionVector", "direction vector", obj.BaseFeature)
+            if w:
+                warns.append(w)
+            if s is not None:
+                from ..core import refgeom as core_ref
+                p.direction = core_ref.direction_of(s, "direction vector")
         p.thin = self.thin(obj)
         p.twist = obj.ProfileTwist
         if obj.TwistControl == core.TURNS:
@@ -149,6 +185,7 @@ class LoftProxy(sketchfeature.SketchFeatureProxy):
             g = "Start/End Constraints"
             a(obj, "App::PropertyEnumeration", end + "Constraint", g,
               "{} constraint".format(end), enum=core.LOFT_TANGENCY)
+            _enum(obj, end + "Constraint", core.LOFT_TANGENCY)
             a(obj, "App::PropertyLinkSub", end + "Direction", g,
               "Direction vector: an edge, axis or plane (its normal)")
             a(obj, "App::PropertyFloat", end + "TangentLength", g,

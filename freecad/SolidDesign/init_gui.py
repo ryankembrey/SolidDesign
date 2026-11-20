@@ -13,12 +13,20 @@ class SolidDesignWorkbench(Gui.Workbench):
 
     PART = ["SD_Part"]
     SKETCH = ["SD_Sketch"]
-    REFERENCE = ["SD_Plane", "SD_Axis", "SD_CoordinateSystem", "SD_Point"]
+    REFERENCE = ["SD_Plane", "SD_Axis", "SD_CoordinateSystem", "SD_Point", "SD_BoundingBox",
+                 "SD_CenterOfMass"]
     FEATURES = ["SD_Extrude", "SD_Revolve", "SD_Sweep", "SD_Loft", "SD_Boundary", "SD_Fillet",
                 "SD_Chamfer", "SD_Rib", "SD_Wrap", "SD_Draft", "SD_Shell", "SD_Dome",
-                "SD_Intersect", "SD_HoleWizard", "SD_Thread", "SD_Patterns", "SD_Mirror"]
+                "SD_Intersect", "SD_HoleWizard", "SD_Threads", "SD_Fastening", "SD_Patterns",
+                "SD_Mirror"]
+    FEATURES_MENU = ["SD_Extrude", "SD_Revolve", "SD_Sweep", "SD_Loft", "SD_Boundary",
+                     "SD_Fillet", "SD_Chamfer", "SD_Rib", "SD_Wrap", "SD_Draft", "SD_Shell",
+                     "SD_Dome", "SD_Intersect", "SD_HoleWizard", "SD_Thread",
+                     "SD_CosmeticThread", "Separator", "SD_MountingBoss", "SD_SnapHook",
+                     "SD_LipGroove", "SD_Vent", "Separator", "SD_Mirror"]
     PATTERNS = ["SD_LinearPattern", "SD_CircularPattern", "SD_CurvePattern",
-                "SD_SketchPattern", "SD_TablePattern", "SD_FillPattern", "SD_Mirror"]
+                "SD_SketchPattern", "SD_TablePattern", "SD_FillPattern",
+                "SD_VariablePattern", "SD_Mirror"]
     CURVES = ["SD_SplitLine", "SD_ProjectedCurve", "SD_CompositeCurve", "SD_CurveXYZ",
               "SD_CurvePoints", "SD_Helix"]
     BODIES = ["SD_Combine", "SD_Split", "SD_DeleteBody", "SD_MoveCopy", "SD_DeformBodies",
@@ -71,7 +79,7 @@ class SolidDesignWorkbench(Gui.Workbench):
         # The workbench's own menu, with every tool.
         m = "&Solid Design"
         self.appendMenu(m, self.PART + self.SKETCH + ["Separator"])
-        self.appendMenu([m, "Features"], [c for c in self.FEATURES if c != "SD_Patterns"])
+        self.appendMenu([m, "Features"], self.FEATURES_MENU)
         self.appendMenu([m, "Patterns"], self.PATTERNS)
         self.appendMenu([m, "Bodies"], self.BODIES_MENU)
         self.appendMenu([m, "Reference Geometry"], self.REFERENCE)

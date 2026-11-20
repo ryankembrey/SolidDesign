@@ -40,6 +40,13 @@ def face_at(obj, point):
     raise AssertionError("no face at %s" % point)
 
 
+def face_with(obj, point):
+    for i, f in enumerate(obj.Shape.Faces, 1):
+        if f.isInside(point, 1e-6, True):
+            return "Face%d" % i
+    raise AssertionError("no face holds %s" % point)
+
+
 class Case(unittest.TestCase):
     def setUp(self):
         self.doc, self.part = new_doc("Dress")
@@ -88,6 +95,57 @@ class TestFillet(Case):
         self.ok(f)
         self.assertEqual(len(f.Shape.Solids), 1)
         self.assertLess(self.total(), 1000 - FILLET_LOSS * 60 + 1)
+
+    def test_asymmetric_and_profiles(self):
+        e = edge_at(self.box, V(20, 5, 5))           # top right edge, length 10
+        f = dressup.create_fillet(self.doc, self.part, [e])
+        f.Radius = 1
+        f.FilletMethod = "Asymmetric"
+        f.Distance2 = 2
+        self.doc.recompute()
+        self.ok(f)
+        quarter_ellipse = 1 * 2 - math.pi * 1 * 2 / 4.0
+        self.assertAlmostEqual(self.total(), 1000 - quarter_ellipse * 10, 3)
+        f.FilletMethod = "Symmetric"
+        f.Profile = "Conic Rho"
+        f.ConicRho = 0.5
+        self.doc.recompute()
+        self.ok(f)
+        self.assertAlmostEqual(self.total(), 1000 - (0.5 - 1.0 / 3.0) * 10, 3)   # a parabola
+        f.Profile = "Curvature Continuous"
+        self.doc.recompute()
+        self.ok(f)
+        self.assertLess(1000 - self.total(), FILLET_LOSS * 10)       # softer than a round
+
+    def test_variable_with_points(self):
+        e = edge_at(self.box, V(20, 5, 5))
+        f = dressup.create_fillet(self.doc, self.part, [e])
+        f.FilletType = "Variable Size"
+        f.StartRadius = 1
+        f.EndRadius = 1
+        f.VariablePoints = ["50|2"]
+        self.doc.recompute()
+        self.ok(f)
+        loss = 1000 - self.total()
+        self.assertGreater(loss, FILLET_LOSS * 10 * 1.5)
+        self.assertLess(loss, FILLET_LOSS * 10 * 4)
+
+    def test_face_fillet_hold_line_and_gap(self):
+        top = face_with(self.box, V(10, 5, 5))
+        right = face_with(self.box, V(20, 5, 2.5))
+        f = dressup.create_fillet(self.doc, self.part, [])
+        f.FilletType = "Face Fillet"
+        from freecad.SolidDesign.app import refs
+        refs.set_ref(f, "FaceSet1", self.box, [top])
+        refs.set_ref(f, "FaceSet2", self.box, [right])
+        sk = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, 5), App.Rotation()))
+        sk.addGeometry(Part.LineSegment(V(18, 0, 0), V(18, 10, 0)))
+        self.doc.recompute()
+        refs.set_ref(f, "HoldLine", sk, ["Edge1"])
+        self.doc.recompute()
+        self.ok(f)
+        self.assertAlmostEqual(self.total(), 1000 - (4 - math.pi) * 10, 3)   # R2 held at x 18
 
     def test_too_large(self):
         e = edge_at(self.box, V(20, 5, 5))
@@ -278,7 +336,23 @@ class TestChamfer(Case):
         c = dressup.create_chamfer(self.doc, self.part, [top, bottom])
         c.ChamferType = "Face Face"
         self.doc.recompute()
-        self.assertIn("don't share an edge", c.ErrorMessage)
+        self.assertIn("never meet", c.ErrorMessage)
+
+    def test_face_face_across_a_gap(self):
+        # A small chamfer first: then top and front don't touch.
+        e = [i for i, x in enumerate(self.box.Shape.Edges, 1)
+             if abs(x.CenterOfMass.y) < 1e-9 and abs(x.CenterOfMass.z - 5) < 1e-9][0]
+        c1 = dressup.create_chamfer(self.doc, self.part, ["Edge%d" % e])
+        c1.Distance = 0.5
+        self.doc.recompute()
+        self.ok(c1)
+        top, front = face_with(c1, V(10, 5, 5)), face_with(c1, V(10, 0, 2))
+        c = dressup.create_chamfer(self.doc, self.part, [top, front])
+        c.ChamferType = "Face Face"
+        c.Distance = 2
+        self.doc.recompute()
+        self.ok(c)
+        self.assertAlmostEqual(self.total(), 1000 - 0.5 * 2 * 2 * 20, 4)
 
 
 REEXPORTED = (Part,)

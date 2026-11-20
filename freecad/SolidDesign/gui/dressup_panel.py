@@ -106,9 +106,30 @@ class FilletPanel(_EdgePanel):
         self.set2 = self._faces_box(g, "FaceSet2", "Face set 2",
                                     "The second set of faces (the other side face for a full "
                                     "round)")
+        self.hold = self._faces_box(self.sec_faces, "HoldLine", "Hold line",
+                                    "Optional: edges on a face set where the round stops "
+                                    "(its size follows them)", kind="Edge")
         g = self.sec_params = self.group("Fillet Parameters")
+        self.method = parts.Switch(
+            core_fillet.METHODS,
+            tips={core_fillet.SYMMETRIC: "One radius",
+                  core_fillet.ASYMMETRIC: "A distance on each face (an elliptical round)"})
+        self.method.set_value(self.obj.FilletMethod)
+        self.method.changed.connect(lambda m: self.set_prop("FilletMethod", m))
+        self.r_method = g.wide(self.method)
         self.radius, self.r_radius = self.qty(g, "Radius", "Radius", "Radius of the rounds",
                                               step=0.5)
+        self.dist2, self.r_dist2 = self.qty(g, "Distance2", "Distance 2",
+                                            "Asymmetric: the distance on the second face",
+                                            step=0.5, flip="FlipAsymmetric",
+                                            flip_tip="Swap which face gets which distance")
+        self.profile, self.r_profile = self.choice(
+            g, "Profile", "Profile", "Circular: a round. Conic Rho: a conic, its shoulder set "
+            "by rho. Curvature Continuous: a softer round that meets the faces without a "
+            "jump in curvature.")
+        self.rho, self.r_rho = self.qty(g, "ConicRho", "Rho", "Conic Rho: 0.05 (flat) to "
+                                        "0.95 (sharp); 0.5 is a parabola", unit="",
+                                        minimum=0.05, maximum=0.95, step=0.05)
         self.r0, self.r_r0 = self.qty(g, "StartRadius", "Start radius",
                                       "Radius at the start of the edges", step=0.5,
                                       flip="ReverseVariable",
@@ -116,19 +137,22 @@ class FilletPanel(_EdgePanel):
                                                "other end")
         self.r1, self.r_r1 = self.qty(g, "EndRadius", "End radius",
                                       "Radius at the end of the edges", step=0.5)
+        self.points = _VariablePoints(self, g)
 
-    def _faces_box(self, group, prop, label, tip):
+    def _faces_box(self, group, prop, label, tip, kind="Face"):
+        what = kind.lower() + "s"
+
         def accept(sel):
-            if not util.is_body_view(sel.obj) or sel.elem_kind() != "Face":
-                return None if sel.elem_kind() not in ("Edge", "Vertex") else "Pick faces here."
-            r = selmod._from_body(sel, self.obj.BaseFeature, "Face")
+            if not util.is_body_view(sel.obj) or sel.elem_kind() != kind:
+                return None if not sel.elem_kind() else "Pick {} here.".format(what)
+            r = selmod._from_body(sel, self.obj.BaseFeature, kind)
             if r is None or isinstance(r, str):
                 return r
             return r[1], self.ref_text(r[0], r[1])
         caption = QtWidgets.QLabel(label)
         group.wide(caption, tip)
-        box = self.list(group, prop, "faces", "Click faces", accept,
-                        "{}. Click a face again to take it out.".format(tip))
+        box = self.list(group, prop, what, "Click " + what, accept,
+                        "{}. Click it again to take it out.".format(tip))
         box.caption = caption
 
         def store():
@@ -150,8 +174,9 @@ class FilletPanel(_EdgePanel):
 
     def load(self):
         self.load_items()
-        for b in (self.set1, self.centre, self.set2):
+        for b in (self.set1, self.centre, self.set2, self.hold):
             b.load()
+        self.points.load()
         self.refresh()
 
     def refresh(self):
@@ -165,10 +190,134 @@ class FilletPanel(_EdgePanel):
         self.set1.caption.setText("Side face set 1" if full else "Face set 1")
         self.set2.caption.setText("Side face set 2" if full else "Face set 2")
         var = t == core_fillet.VARIABLE
-        self.r_radius.set_visible(t in (core_fillet.CONSTANT, core_fillet.FACE))
+        const = t == core_fillet.CONSTANT
+        face = t == core_fillet.FACE
+        held = face and bool(self.obj.HoldLine and self.obj.HoldLine[0] is not None)
+        for w in (self.hold, self.hold.caption):
+            w.setVisible(face)
+        asym = const and self.obj.FilletMethod == core_fillet.ASYMMETRIC
+        self.r_method.set_visible(const)
+        self.r_radius.set_visible((const or face) and not held)
+        if self.r_radius.label is not None:
+            self.r_radius.label.setText("Distance 1" if asym else "Radius")
+        self.r_dist2.set_visible(asym)
+        self.r_profile.set_visible(const)
+        self.r_rho.set_visible(const and self.obj.Profile == core_fillet.blend.CONIC)
         self.r_r0.set_visible(var)
         self.r_r1.set_visible(var)
+        self.points.set_visible(var)
         self.sec_params.setVisible(not full)
+
+
+class _VariablePoints(object):
+    """Variable Size: radii at points along the edges (percent of the way), a list
+    with Add / Delete and the selected point's position and radius under it."""
+
+    def __init__(self, panel, group):
+        self.panel = panel
+        cap = QtWidgets.QLabel("Radii along the edges")
+        self.r_cap = group.wide(cap, "Extra radii between the start and the end")
+        self.list = QtWidgets.QListWidget()
+        self.list.setMaximumHeight(90)
+        self.r_list = group.wide(self.list, "Radii along the edges: click one to change it")
+        bar = QtWidgets.QWidget()
+        lay = QtWidgets.QHBoxLayout(bar)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.b_add = QtWidgets.QPushButton("Add")
+        self.b_add.setToolTip("Add a point halfway between its neighbours")
+        self.b_del = QtWidgets.QPushButton("Delete")
+        self.b_del.setToolTip("Delete the selected point")
+        lay.addWidget(self.b_add)
+        lay.addWidget(self.b_del)
+        self.r_bar = group.wide(bar)
+        self.pos = QtWidgets.QDoubleSpinBox()
+        self.pos.setRange(0.5, 99.5)
+        self.pos.setSuffix(" %")
+        self.pos.setKeyboardTracking(False)
+        self.r_pos = group.row("Position", self.pos, "How far along the edges, in percent")
+        self.rad = QtWidgets.QDoubleSpinBox()
+        self.rad.setRange(0.001, 1e6)
+        self.rad.setDecimals(3)
+        self.rad.setSuffix(" mm")
+        self.rad.setKeyboardTracking(False)
+        self.r_rad = group.row("Radius", self.rad, "The radius there")
+        self.b_add.clicked.connect(self.add)
+        self.b_del.clicked.connect(self.delete)
+        self.list.currentRowChanged.connect(lambda _r: self.show())
+        self.pos.valueChanged.connect(lambda _v: self.edit())
+        self.rad.valueChanged.connect(lambda _v: self.edit())
+        self.visible = True
+
+    def data(self):
+        return [(f * 100.0, r) for f, r in
+                self.panel.obj.Proxy.variable_points(self.panel.obj)]
+
+    def store(self, pts, select=None):
+        pts = sorted(pts)
+        self.panel.set_prop("VariablePoints", ["{:g}|{:g}".format(f, r) for f, r in pts])
+        self.load(select)
+
+    def load(self, select=None):
+        pts = self.data()
+        keep = self.list.currentRow() if select is None else select
+        self.list.blockSignals(True)
+        self.list.clear()
+        for f, r in pts:
+            self.list.addItem(u"{:g}% \u2014 R {:g} mm".format(f, r))
+        if pts:
+            self.list.setCurrentRow(max(0, min(keep if keep >= 0 else 0, len(pts) - 1)))
+        self.list.blockSignals(False)
+        self.show()
+
+    def row(self):
+        r = self.list.currentRow()
+        return r if 0 <= r < len(self.data()) else None
+
+    def show(self):
+        r = self.row()
+        on = self.visible and r is not None
+        self.r_pos.set_visible(on)
+        self.r_rad.set_visible(on)
+        self.b_del.setEnabled(r is not None)
+        if r is None:
+            return
+        f, rad = self.data()[r]
+        for w, v in ((self.pos, f), (self.rad, rad)):
+            w.blockSignals(True)
+            w.setValue(v)
+            w.blockSignals(False)
+
+    def add(self):
+        pts = self.data()
+        o = self.panel.obj
+        ends = [(0.0, o.StartRadius.Value)] + pts + [(100.0, o.EndRadius.Value)]
+        gaps = [(b[0] - a[0], (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+                for a, b in zip(ends, ends[1:])]
+        _w, f, r = max(gaps)
+        pts.append((round(f, 2), round(r, 3)))
+        self.store(pts, sorted(pts).index((round(f, 2), round(r, 3))))
+
+    def delete(self):
+        r = self.row()
+        if r is None:
+            return
+        pts = self.data()
+        del pts[r]
+        self.store(pts, r)
+
+    def edit(self):
+        r = self.row()
+        if r is None:
+            return
+        pts = self.data()
+        pts[r] = (self.pos.value(), self.rad.value())
+        self.store(pts, sorted(pts).index(pts[r]))
+
+    def set_visible(self, on):
+        self.visible = on
+        for row in (self.r_cap, self.r_list, self.r_bar):
+            row.set_visible(on)
+        self.show()
 
 
 class ChamferPanel(_EdgePanel):

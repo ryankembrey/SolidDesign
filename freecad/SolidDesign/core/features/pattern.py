@@ -15,14 +15,18 @@ from . import common
 
 
 class Seed(object):
-    """A feature to repeat: its tool shape, Add or Cut, and Merge result."""
+    """A feature to repeat: its tool shape, Add or Cut, and Merge result.
 
-    def __init__(self, label, tool, mode, merge=True, scope=None):
+    A fillet or chamfer has no tool shape: ``redo(base, move)`` runs it again on its
+    edges (or faces) moved into each instance's place."""
+
+    def __init__(self, label, tool, mode, merge=True, scope=None, redo=None):
         self.label = label
         self.tool = tool
         self.mode = mode
         self.merge = merge
         self.scope = scope          # common.Scope, or None for all bodies
+        self.redo = redo
 
 
 def face_seed(body_id, faces, body, tag):
@@ -323,6 +327,15 @@ def repeat(base, seeds, body_ids, moves, feature, tag, alloc, merge_bodies=False
     res = common.Result(out)
     shown = []
     for s in seeds:
+        if s.redo is not None:
+            for m in moves:
+                r, prev = s.redo(out, lambda shape, m=m: _move(shape, m, tag))
+                out = r.bodies
+                res.touched.extend(r.touched)
+                res.created.extend(r.created)
+                if prev is not None:
+                    shown.append(prev)
+            continue
         if s.tool is None or s.tool.isNull():
             raise topo.GeometryError("{} has no result to repeat (fix it first).".format(s.label))
         tools = [_move(s.tool, m, tag) for m in moves]

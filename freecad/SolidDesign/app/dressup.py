@@ -53,9 +53,52 @@ class FilletProxy(_EdgeFeature):
         a(obj, "App::PropertyLinkSub", "FaceSet2", g,
           "Face Fillet: face set 2. Full Round: side face set 2")
         a(obj, "App::PropertyLinkSub", "CenterFaces", g, "Full Round: the centre face set")
+        self._more(obj)
+
+    @staticmethod
+    def _more(obj):
+        """Properties added after the first release (kept for older files)."""
+        a = util.add_prop
+        g = "Fillet"
+        if "FilletMethod" not in obj.PropertiesList:
+            a(obj, "App::PropertyEnumeration", "FilletMethod", g,
+              "Symmetric: one radius. Asymmetric: a distance on each face",
+              enum=core_fillet.METHODS)
+            a(obj, "App::PropertyLength", "Distance2", g,
+              "Asymmetric: the distance on the second face", 2.0)
+            a(obj, "App::PropertyBool", "FlipAsymmetric", g,
+              "Asymmetric: swap which face gets which distance", False)
+            a(obj, "App::PropertyEnumeration", "Profile", g,
+              "The round's shape across the edge", enum=core_fillet.PROFILES)
+            a(obj, "App::PropertyFloatConstraint", "ConicRho", g,
+              "Conic Rho: where the shoulder sits, 0.05 (flat) to 0.95 (sharp); 0.5 is a "
+              "parabola", (0.5, 0.05, 0.95, 0.05))
+            a(obj, "App::PropertyStringList", "VariablePoints", g,
+              "Variable Size: radii along the edges, as percent|radius")
+            a(obj, "App::PropertyLinkSub", "HoldLine", g,
+              "Face Fillet: the edges the round stops at (the hold line)")
+
+    def onDocumentRestored(self, obj):
+        super(FilletProxy, self).onDocumentRestored(obj)
+        self._more(obj)
+
+    @staticmethod
+    def variable_points(obj):
+        """[(fraction, radius)] from VariablePoints."""
+        out = []
+        for t in getattr(obj, "VariablePoints", []):
+            try:
+                f, r = (float(x) for x in str(t).split("|"))
+                out.append((f / 100.0, r))
+            except ValueError:
+                continue
+        return sorted(out)
 
     def compute(self, obj, base):
-        warns = []
+        res, preview, _p = self.run(obj, base)
+        return res, preview
+
+    def params(self, obj, warns):
         p = core_fillet.Params()
         p.kind = obj.FilletType
         if p.kind in (core_fillet.CONSTANT, core_fillet.VARIABLE):
@@ -74,9 +117,25 @@ class FilletProxy(_EdgeFeature):
         p.tangent = obj.TangentPropagation
         p.feature = obj.Name
         p.tag = obj.ID
+        p.method = obj.FilletMethod
+        p.distance2 = obj.Distance2.Value
+        p.flip = obj.FlipAsymmetric
+        p.profile = obj.Profile
+        p.rho = obj.ConicRho
+        if p.kind == core_fillet.VARIABLE:
+            p.points = self.variable_points(obj)
+        if p.kind == core_fillet.FACE and obj.HoldLine and obj.HoldLine[0] is not None:
+            got, w = refs.get_refs(obj, "HoldLine", "hold line edge", obj.BaseFeature)
+            warns.extend(w)
+            p.hold = [e for g in got for e in g.Edges]
+        return p
+
+    def run(self, obj, base):
+        warns = []
+        p = self.params(obj, warns)
         res, preview = core_fillet.compute(p, base)
-        res.warnings.extend(warns)
-        return res, preview
+        res.warnings.extend(w for w in warns if w)
+        return res, preview, p
 
 
 class ChamferProxy(_EdgeFeature):
@@ -98,6 +157,12 @@ class ChamferProxy(_EdgeFeature):
 
     def compute(self, obj, base):
         warns = []
+        p = self.params(obj, warns)
+        res, preview = core_chamfer.compute(p, base)
+        res.warnings.extend(w for w in warns if w)
+        return res, preview
+
+    def params(self, obj, warns):
         p = core_chamfer.Params()
         p.kind = obj.ChamferType
         p.items = self.items(obj, warns)
@@ -110,9 +175,7 @@ class ChamferProxy(_EdgeFeature):
         p.tangent = obj.TangentPropagation
         p.feature = obj.Name
         p.tag = obj.ID
-        res, preview = core_chamfer.compute(p, base)
-        res.warnings.extend(warns)
-        return res, preview
+        return p
 
 
 class ShellProxy(feature.FeatureProxy):
@@ -178,7 +241,7 @@ class DraftProxy(feature.FeatureProxy):
         p = core_draft.Params()
         p.kind = obj.DraftType
         p.angle = obj.Angle.Value
-        if p.kind == core_draft.NEUTRAL_PLANE:
+        if p.kind in (core_draft.NEUTRAL_PLANE, core_draft.DRAFTXPERT):
             s, w = refs.get_ref(obj, "NeutralPlane", "neutral plane", obj.BaseFeature)
             warns.append(w)
             if s is not None:

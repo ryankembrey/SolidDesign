@@ -14,6 +14,7 @@ __all__ = ["SweepPanel", "LoftPanel", "ShellPanel"]
 class SweepPanel(SketchFeaturePanel):
     TITLE = "Sweep"
     ICONS = ("SweepAdd", "SweepCut", "SweepSurface")
+    ref_box = ToolPanel.ref_box
     SKETCH_TITLE = "Profile"
     SKETCH_LABEL = "Profile"
     SKETCH_TIP = "The sketch swept along the path. Press the button, then click a sketch."
@@ -43,11 +44,18 @@ class SweepPanel(SketchFeaturePanel):
         self.orient, _r = self.choice(
             g, "Orientation", "Orientation",
             "Follow Path: the profile turns with the path. Keep Normal Constant: it keeps "
-            "facing the same way.")
+            "facing the same way. Specify Direction Vector: it keeps its top towards a "
+            "direction. Tangent to Adjacent Faces: it keeps square to the faces beside a "
+            "path of model edges. Natural: it turns with the path's curvature.")
+        self.dirvec = self.ref_box(g, "DirectionVector", "Direction", "direction",
+                                   "Click an edge, axis or plane",
+                                   "The direction the profile keeps its top towards",
+                                   kinds=("Edge", "Face"))
         self.twist, self.r_twist = self.choice(
             g, "ProfileTwist", "Profile twist",
             "None: no twist. Specify Twist Value: turn the profile evenly along the path. "
-            "Follow Path and 1st Guide Curve: turn it to keep touching the guide curve.")
+            "Follow Path and 1st Guide Curve: turn it to keep touching the guide curve. "
+            "Follow 1st and 2nd Guide Curves: the line between the two guides turns it.")
         self.twist_unit, self.r_twist_unit = self.choice(
             g, "TwistControl", "Twist control", "Give the twist in degrees or in turns")
         self.twist_deg, self.r_twist_deg = self.qty(
@@ -153,6 +161,8 @@ class SweepPanel(SketchFeaturePanel):
         self.sec_contours.setVisible(kind == core.SKETCH_PROFILE)
         self.sec_thin.setVisible(not solid and self.obj.Mode != "Surface")
         self.sec_guides.setVisible(not solid)
+        self.dirvec.row.set_visible(self.orient.currentText() == core.DIRECTION_VEC and
+                                    not solid)
         twisting = self.twist.currentText() == core.TWIST_VALUE
         self.r_twist.set_visible(not solid)
         for f in (self.twist_deg, self.turns):
@@ -191,7 +201,9 @@ class LoftPanel(SketchFeaturePanel):
             c, _r = self.choice(
                 g, end + "Constraint", "{} constraint".format(end),
                 "None: no constraint. Normal To Profile: the loft leaves the profile square to "
-                "it. Direction Vector: it leaves along a direction you pick.")
+                "it. Direction Vector: it leaves along a direction you pick. Tangency To "
+                "Face: a profile drawn along a face's edges; the loft carries on the faces "
+                "beside it.")
             d = self.ref_box(g, end + "Direction", "Direction", "direction",
                              "Click an edge, axis or plane",
                              "The direction the loft leaves the profile in: an edge or axis, "

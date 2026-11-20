@@ -213,41 +213,9 @@ class ExtrudePanel(SketchFeaturePanel):
         self.d1.load()
         self.d2.load()
 
-    # ------------------------------------------------------------ drag handles
-    def _handles(self):
-        if getattr(self, "_h", None) is None:
-            from .handles import DragArrow, Handles
-            self._handle_set = Handles()
-            self._h = (self._handle_set.add(DragArrow(lambda v: self._dragged(self.d1, v))),
-                       self._handle_set.add(DragArrow(lambda v: self._dragged(self.d2, v))))
-            self._handle_set.listen()
-        return self._h
-
-    def _dragged(self, widgets, v):
-        widgets.depth.spin.setProperty("rawValue", float(v))
-
     def place_handles(self):
-        """Arrows on the sketch, along each direction with a depth (Instant3D)."""
-        if self._closing:
-            return
-        from .handles import extrude_specs
-        h1, h2 = self._handles()
-        shown = {}
-        for prop, origin, d, value, factor, scale in extrude_specs(self.obj, self.part):
-            h = h1 if prop == "Depth" else h2
-            h.factor = factor
-            h.place(origin, d, value, scale)
-            h.attach()
-            shown[prop] = True
-        if "Depth" not in shown:
-            h1.detach()
-        if "Depth2" not in shown:
-            h2.detach()
-
-    def on_close(self):
-        if getattr(self, "_handle_set", None) is not None:
-            self._handle_set.stop()
-        super(ExtrudePanel, self).on_close()
+        """The depth arrows (the shared draggers)."""
+        self.place_drag_handles()
 
     def refresh_parameters(self):
         obj = self.obj

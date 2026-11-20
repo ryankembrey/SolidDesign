@@ -82,7 +82,7 @@ class TestFilletTypes(unittest.TestCase):
         back_bottom = face_at(self.box, V(20, 3, 0), V(0, 0, -1))
         refs.set_ref(f, "FaceSet2", self.box, [back_bottom])
         self.doc.recompute()
-        self.assertIn("don't meet", f.ErrorMessage)
+        self.assertIn("never meet", f.ErrorMessage)
 
     def test_full_round(self):
         top = face_at(self.box, V(20, 3, 20), V(0, 0, 1))

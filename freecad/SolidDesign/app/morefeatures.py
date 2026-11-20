@@ -89,6 +89,12 @@ class DomeProxy(_SurfaceTool):
         a(obj, "App::PropertyBool", "ReverseDirection", g, "A dent instead of a dome", False)
         a(obj, "App::PropertyBool", "EllipticalDome", g,
           "Half an ellipsoid (round faces) or square to the face at its edge", False)
+        a(obj, "App::PropertyBool", "ContinuousDome", g,
+          "Faces that aren't round: round the outline off as it rises (no creases)", False)
+        a(obj, "App::PropertyLinkSub", "DomeDirection", g,
+          "Lean the dome along this direction (edge, axis or plane); empty: square to the face")
+        a(obj, "App::PropertyLinkSub", "ConstraintPoint", g,
+          "The dome's top goes through this point (sets the height and the lean)")
 
     def compute(self, obj, base):
         warns = []
@@ -100,6 +106,22 @@ class DomeProxy(_SurfaceTool):
         p.height = obj.Distance.Value
         p.reverse = obj.ReverseDirection
         p.elliptical = obj.EllipticalDome
+        p.continuous = getattr(obj, "ContinuousDome", False)
+        from ..core import refgeom as core_ref
+        v = getattr(obj, "DomeDirection", None)
+        if v and v[0] is not None:
+            s, w = refs.get_ref(obj, "DomeDirection", "dome direction", obj.BaseFeature)
+            if w:
+                warns.append(w)
+            if s is not None:
+                p.direction = core_ref.direction_of(s, "dome direction")
+        v = getattr(obj, "ConstraintPoint", None)
+        if v and v[0] is not None:
+            s, w = refs.get_ref(obj, "ConstraintPoint", "constraint point", obj.BaseFeature)
+            if w:
+                warns.append(w)
+            if s is not None:
+                p.point = core_ref.point_of(s, "constraint point")
         res, preview = core_dome.compute(p, base)
         self.done(obj, p, res, warns)
         return res, preview
@@ -120,10 +142,14 @@ class WrapProxy(_SurfaceTool):
         a(obj, "App::PropertyLinkSub", "Items", g, "The face to wrap onto")
         a(obj, "App::PropertyLength", "Depth", g, "How far it stands up or sinks in", 1.0)
         a(obj, "App::PropertyBool", "ReverseDirection", g, "The other way", False)
+        a(obj, "App::PropertyEnumeration", "WrapMethod", g,
+          "Analytical: rolled round a cylinder or cone (flat faces: projected). Spline "
+          "Surface: projected onto any face", enum=core_wrap.METHODS)
 
     def compute(self, obj, base):
         warns = []
         p = core_wrap.Params()
+        p.method = getattr(obj, "WrapMethod", core_wrap.ANALYTICAL)
         q = self.params(obj, base)
         p.feature, p.tag, p.alloc = q.feature, q.tag, q.alloc
         sk = obj.Sketch

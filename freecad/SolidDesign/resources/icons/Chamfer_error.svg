@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
 <!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
-<path d="M23.92 27.33 L6.13 17.07 L28.77 4.00 L46.55 14.27 Z" fill="#f3f4f1" fill-rule="evenodd" stroke="#f3f4f1" stroke-width="0.6" stroke-linejoin="round"/>
-<path d="M23.92 27.33 L6.13 17.07 M6.13 17.07 L28.77 4.00 M28.77 4.00 L46.55 14.27 M46.55 14.27 L23.92 27.33" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M35.23 60.00 L35.23 46.93 L57.87 33.87 L57.87 46.93 Z" fill="#9ca197" fill-rule="evenodd" stroke="#9ca197" stroke-width="0.6" stroke-linejoin="round"/>
-<path d="M35.23 60.00 L35.23 46.93 M35.23 46.93 L57.87 33.87 M57.87 33.87 L57.87 46.93 M57.87 46.93 L35.23 60.00" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M6.13 17.07 L23.92 27.33 L35.23 46.93 L35.23 60.00 L6.13 43.20 Z" fill="#c9cdc5" fill-rule="evenodd" stroke="#c9cdc5" stroke-width="0.6" stroke-linejoin="round"/>
-<path d="M6.13 17.07 L23.92 27.33 M23.92 27.33 L35.23 46.93 M35.23 46.93 L35.23 60.00 M35.23 60.00 L6.13 43.20 M6.13 43.20 L6.13 17.07" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M35.23 46.93 L23.92 27.33 L46.55 14.27 L57.87 33.87 Z" fill="#94b7e2" fill-rule="evenodd" stroke="#94b7e2" stroke-width="0.6" stroke-linejoin="round"/>
-<path d="M35.23 46.93 L23.92 27.33 M23.92 27.33 L46.55 14.27 M46.55 14.27 L57.87 33.87 M57.87 33.87 L35.23 46.93" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/><circle cx="49" cy="49" r="13" fill="#d93025" stroke="#ffffff" stroke-width="3"/><path d="M49 41 L49 51" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round"/><circle cx="49" cy="56.5" r="2.4" fill="#ffffff"/>
+<path d="M23.92 27.33 L6.13 17.07 L28.77 4.00 L46.55 14.27 Z" fill="#f5f6f8" fill-rule="evenodd" stroke="#f5f6f8" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M23.92 27.33 L6.13 17.07 M6.13 17.07 L28.77 4.00 M28.77 4.00 L46.55 14.27 M46.55 14.27 L23.92 27.33" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M35.23 60.00 L35.23 46.93 L57.87 33.87 L57.87 46.93 Z" fill="#a7aeb8" fill-rule="evenodd" stroke="#a7aeb8" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M35.23 60.00 L35.23 46.93 M35.23 46.93 L57.87 33.87 M57.87 33.87 L57.87 46.93 M57.87 46.93 L35.23 60.00" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M6.13 17.07 L23.92 27.33 L35.23 46.93 L35.23 60.00 L6.13 43.20 Z" fill="#d3d8de" fill-rule="evenodd" stroke="#d3d8de" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M6.13 17.07 L23.92 27.33 M23.92 27.33 L35.23 46.93 M35.23 46.93 L35.23 60.00 M35.23 60.00 L6.13 43.20 M6.13 43.20 L6.13 17.07" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M35.23 46.93 L23.92 27.33 L46.55 14.27 L57.87 33.87 Z" fill="#a9c7f5" fill-rule="evenodd" stroke="#a9c7f5" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M35.23 46.93 L23.92 27.33 M23.92 27.33 L46.55 14.27 M46.55 14.27 L57.87 33.87 M57.87 33.87 L35.23 46.93" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/><circle cx="49" cy="49" r="13" fill="#d93025" stroke="#ffffff" stroke-width="3"/><path d="M49 41 L49 51" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round"/><circle cx="49" cy="56.5" r="2.4" fill="#ffffff"/>
 </svg>

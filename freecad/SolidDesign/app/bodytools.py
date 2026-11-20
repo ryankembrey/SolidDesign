@@ -75,6 +75,9 @@ class SplitProxy(_BodyTool):
         a(obj, "App::PropertyLinkList", "TrimTools", g, "Planes and sketches that cut")
         a(obj, "App::PropertyLinkSub", "TrimFaces", g, "Faces of the model that cut")
         a(obj, "App::PropertyStringList", "TrimBodies", g, "Surface bodies that cut, by ID")
+        a(obj, "App::PropertyBool", "ExtendFaces", g,
+          "Faces and surfaces cut wherever their whole surface would go, not only within "
+          "their edges", False)
         a(obj, "App::PropertyStringList", "TargetBodies", g, "Bodies to split (empty: all)")
         a(obj, "App::PropertyBool", "ConsumeCutBodies", g, "Consume the bodies that are cut",
           True)
@@ -102,10 +105,12 @@ class SplitProxy(_BodyTool):
             surfaces.append(b.shape)
         targets = [i for i in obj.TargetBodies if i not in obj.TrimBodies]
         big = topo.big_length(*[b.shape for b in base])
-        tools = bodyops.trim_shapes(planes, faces, sketches, surfaces, big)
+        extend = getattr(obj, "ExtendFaces", False)
+        tools = bodyops.trim_shapes(planes, faces, sketches, surfaces, big, extend)
         alloc = self.alloc(obj, base)
         keep = None if obj.KeepAll else list(obj.KeepPieces)
-        patched = any(len(f.Wires) > 1 for f in faces)     # leaves the patch's outline
+        patched = not extend and any(len(f.Wires) > 1 or f.Surface.TypeId in
+                                     bodyops.CLOSED_SURFACES for f in faces)
         res, preview = bodyops.split(base, tools, targets, obj.ConsumeCutBodies, keep,
                                      obj.Name, obj.ID, alloc, refine=patched)
         self.done(obj, res, alloc, warns)

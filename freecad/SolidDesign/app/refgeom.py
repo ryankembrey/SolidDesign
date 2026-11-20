@@ -250,6 +250,181 @@ class HelixProxy(_RefGeomProxy):
                             taper)
 
 
+def _base_bodies(obj):
+    """The bodies just before a piece of reference geometry."""
+    from ..core.bodies import BodySet
+    base = obj.BaseFeature
+    if base is None or "BodyIds" not in base.PropertiesList:
+        return BodySet()
+    return BodySet.from_columns(base.Shape, list(base.BodyIds), list(base.BodyKinds),
+                                list(base.BodyFeatures))
+
+
+class _MeasuredProxy(_RefGeomProxy):
+    """Reference geometry measured from the bodies (Bounding Box, Center of Mass):
+    it follows them as they change."""
+    PANEL = None
+    ICON = None
+
+    def setup(self, obj):
+        super(_MeasuredProxy, self).setup(obj)
+        a = util.add_prop
+        a(obj, "App::PropertyStringList", "Bodies", "Reference",
+          "The bodies it measures, by ID (empty: every solid body)")
+        for i in (2, 3):
+            util.hide_prop(obj, "Reference%d" % i)
+        util.hide_prop(obj, "Flip")
+
+    def bodies(self, obj, surfaces=False):
+        from ..core.bodies import SOLID
+        bs = _base_bodies(obj)
+        want = [i for i in obj.Bodies if i]
+        missing = [i for i in want if i not in bs]
+        if missing:
+            raise topo.GeometryError("A body it measures no longer exists. Pick the bodies "
+                                     "again.")
+        out = []
+        for b in bs:
+            if want and b.id not in want:
+                continue
+            if b.kind == SOLID or surfaces:
+                out.append(b.shape)
+        return out
+
+
+class BoundingBoxProxy(_MeasuredProxy):
+    """SolidWorks' Bounding Box: the smallest box round the bodies (Best Fit), or one
+    square to a reference plane. Its sizes are read-only properties."""
+    KIND = "bbox"
+    TYPES = core.BOX_TYPES
+    LABEL = "Bounding Box"
+    PANEL = "bbox"
+    ICON = "BoundingBox"
+
+    def setup(self, obj):
+        super(BoundingBoxProxy, self).setup(obj)
+        a = util.add_prop
+        g = "Reference"
+        a(obj, "App::PropertyBool", "IncludeSurfaces", g, "Put the surface bodies in it too",
+          False)
+        g = "Size"
+        a(obj, "App::PropertyLength", "Length", g, "The box's longest side", 0.0)
+        a(obj, "App::PropertyLength", "Width", g, "The box's middle side", 0.0)
+        a(obj, "App::PropertyLength", "Thickness", g, "The box's shortest side", 0.0)
+        a(obj, "App::PropertyVolume", "BoxVolume", g, "The box's volume", 0.0)
+        for p in ("Length", "Width", "Thickness", "BoxVolume"):
+            util.readonly_prop(obj, p)
+
+    def make(self, obj, shapes):
+        plane = shapes[0] if shapes else None
+        if obj.Type != core.REFERENCE_PLANE:
+            plane = None
+        pl, size = core.bounding_box(self.bodies(obj, obj.IncludeSurfaces), obj.Type, plane)
+        l, w, t = sorted(size, reverse=True)
+        for p, v in (("Length", l), ("Width", w), ("Thickness", t),
+                     ("BoxVolume", l * w * t)):
+            if abs(getattr(obj, p).Value - v) > 1e-9:
+                setattr(obj, p, v)
+        return core.box_edges(pl, size)
+
+
+class CenterOfMassProxy(_MeasuredProxy):
+    """SolidWorks' Center of Mass: a point at the solid bodies' centre of mass (one
+    density), usable wherever a point is."""
+    KIND = "point"
+    TYPES = ["Center of Mass"]
+    LABEL = "Center of Mass"
+    PANEL = "com"
+    ICON = "CenterOfMass"
+
+    def setup(self, obj):
+        super(CenterOfMassProxy, self).setup(obj)
+        util.hide_prop(obj, "Reference1")
+        util.hide_prop(obj, "Type")
+
+    def make(self, obj, shapes):
+        return Part.Vertex(core.centre_of_mass([s for sh in self.bodies(obj) for s in sh.Solids]))
+
+
+class CosmeticThreadProxy(_RefGeomProxy):
+    """SolidWorks' Cosmetic Thread: a thread shown on a shaft or in a hole without
+    modelling it. It draws the thread's minor (shaft) or major (hole) diameter as
+    dashed lines, and carries the callout."""
+    KIND = "cosmetic"
+    TYPES = ["Blind", "Up To Next"]
+    LABEL = "Cosmetic Thread"
+    PANEL = "cosmetic"
+    ICON = "CosmeticThread"
+
+    def setup(self, obj):
+        super(CosmeticThreadProxy, self).setup(obj)
+        from ..core import threads
+        a = util.add_prop
+        g = "Thread"
+        a(obj, "App::PropertyEnumeration", "Series", g, "Thread standard and series",
+          enum=threads.SERIES)
+        a(obj, "App::PropertyString", "Size", g, "Thread size (empty: the nearest one)", "")
+        a(obj, "App::PropertyLength", "Length", g, "Thread length (Blind)", 10.0)
+        a(obj, "App::PropertyString", "ThreadClass", g, "Tolerance class, for the callout", "")
+        a(obj, "App::PropertyLength", "Diameter", g,
+          "The diameter shown: the minor diameter on a shaft, the major one in a hole", 0.0)
+        a(obj, "App::PropertyString", "Callout", g, "The thread's callout", "")
+        for p in ("Reference2", "Reference3"):
+            util.hide_prop(obj, p)
+        for p in ("Diameter", "Callout"):
+            util.readonly_prop(obj, p)
+
+    def make(self, obj, shapes):
+        from ..core import threads
+        from ..core.features import thread as core_thread
+        if not shapes or shapes[0] is None or not shapes[0].Edges:
+            raise topo.GeometryError("Pick the circular edge where the thread starts: a "
+                                     "shaft's end or a hole's rim.")
+        edge = shapes[0].Edges[0]
+        site = core_thread.site(_base_bodies(obj), edge, obj.Flip)
+        size = obj.Size
+        if size not in threads.sizes(obj.Series):
+            size = threads.nearest(obj.Series, 2 * site.radius, site.internal)
+            obj.Size = size
+        major, pitch, _tap = threads.spec(obj.Series, size)
+        shown = major if site.internal else threads.minor(major, pitch)
+        if obj.Type == "Blind":
+            length = obj.Length.Value
+        else:
+            length = _cylinder_length(_base_bodies(obj), site)
+        if length <= 1e-6:
+            raise topo.GeometryError("The thread has no length.")
+        cls = (" - " + obj.ThreadClass.strip()) if obj.ThreadClass.strip() else ""
+        callout = u"{}{}  \u2193 {:g} mm".format(size, cls, round(length, 4))
+        if obj.Callout != callout:
+            obj.Callout = callout
+        if abs(obj.Diameter.Value - shown) > 1e-9:
+            obj.Diameter = shown
+        return core.cosmetic_thread(site.centre, site.axis, shown / 2.0, length)
+
+
+def _cylinder_length(bodies, site):
+    """How far the cylindrical face goes from the edge along the thread's axis."""
+    b = bodies.get(site.bid)
+    best = 0.0
+    for f in b.shape.Faces:
+        s = f.Surface
+        if s.TypeId != "Part::GeomCylinder" or abs(s.Radius - site.radius) > 1e-6:
+            continue
+        if abs(abs(s.Axis.dot(site.axis)) - 1) > 1e-6:
+            continue
+        if (s.Center - site.centre).cross(site.axis).Length > 1e-6:
+            continue
+        for v in f.Vertexes:
+            best = max(best, (v.Point - site.centre).dot(site.axis))
+        for e in f.Edges:
+            try:
+                best = max(best, (e.Curve.Center - site.centre).dot(site.axis))
+            except AttributeError:
+                pass
+    return best
+
+
 def _create(cls, doc, part, name, kind=None, references=()):
     obj = doc.addObject("Part::FeaturePython", name)
     cls(obj)
@@ -285,6 +460,29 @@ def create_csys(doc, part, kind=None, references=()):
     """``references``: [origin point, X direction, Y direction], each optional
     (None keeps its place)."""
     return _create(RefCSysProxy, doc, part, "CoordinateSystem", kind, references)
+
+
+def create_bounding_box(doc, part, kind=None, references=(), bodies=()):
+    obj = _create(BoundingBoxProxy, doc, part, "BoundingBox", kind, references)
+    if bodies:
+        obj.Bodies = list(bodies)
+    return obj
+
+
+def create_centre_of_mass(doc, part, bodies=()):
+    obj = _create(CenterOfMassProxy, doc, part, "CenterOfMass")
+    if bodies:
+        obj.Bodies = list(bodies)
+    return obj
+
+
+def create_cosmetic_thread(doc, part, edge=None, **props):
+    """``edge``: (object, "EdgeN") or None."""
+    obj = _create(CosmeticThreadProxy, doc, part, "CosmeticThread", None,
+                  [edge] if edge is not None else [])
+    for k, v in props.items():
+        setattr(obj, k, v)
+    return obj
 
 
 def create_helix(doc, part, kind=None, references=()):

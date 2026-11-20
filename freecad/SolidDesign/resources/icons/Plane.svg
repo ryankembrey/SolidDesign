@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
 <!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
-<path d="M32.00 15.83 L60.00 32.00 L32.00 48.17 L4.00 32.00 Z" fill="#fbc274" fill-rule="evenodd" stroke="#fbc274" stroke-width="0.6" stroke-linejoin="round"/>
-<path d="M32.00 15.83 L60.00 32.00 M60.00 32.00 L32.00 48.17 M32.00 48.17 L4.00 32.00 M4.00 32.00 L32.00 15.83" fill="none" stroke="#2e3436" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M32.00 15.83 L60.00 32.00 L32.00 48.17 L4.00 32.00 Z" fill="#fbca76" fill-rule="evenodd" stroke="#fbca76" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M32.00 15.83 L60.00 32.00 M60.00 32.00 L32.00 48.17 M32.00 48.17 L4.00 32.00 M4.00 32.00 L32.00 15.83" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

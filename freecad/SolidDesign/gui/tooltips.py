@@ -13,7 +13,7 @@ import FreeCADGui as Gui
 from PySide import QtCore, QtWidgets
 
 GROUPS = ("SD_ReferenceGeometry", "SD_Patterns", "SD_Curves", "SD_MoreSurfaces",
-          "SD_DeformBodies")
+          "SD_DeformBodies", "SD_Fastening", "SD_Threads")
 _NAME = re.compile(r"<i>(SD_\w+)</i>")
 
 

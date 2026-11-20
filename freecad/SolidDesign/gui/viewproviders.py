@@ -441,13 +441,18 @@ def panel_class(obj):
     if t == "Thread":
         from .thread_panel import ThreadPanel
         return ThreadPanel
-    if t in ("CurvePattern", "SketchPattern", "TablePattern", "FillPattern"):
+    if t in ("CurvePattern", "SketchPattern", "TablePattern", "FillPattern", "VariablePattern"):
         from . import pattern_panels as pp
         return {"CurvePattern": pp.CurvePatternPanel, "SketchPattern": pp.SketchPatternPanel,
-                "TablePattern": pp.TablePatternPanel, "FillPattern": pp.FillPatternPanel}[t]
+                "TablePattern": pp.TablePatternPanel, "FillPattern": pp.FillPatternPanel,
+                "VariablePattern": pp.VariablePatternPanel}[t]
     if t in ("Scale", "Flex"):
         from . import surface_panel as su
         return {"Scale": su.ScalePanel, "Flex": su.FlexPanel}[t]
+    if t in ("MountingBoss", "SnapHook", "LipGroove", "Vent"):
+        from . import fastening_panel as fp
+        return {"MountingBoss": fp.MountingBossPanel, "SnapHook": fp.SnapHookPanel,
+                "LipGroove": fp.LipGroovePanel, "Vent": fp.VentPanel}[t]
     if t in ("Indent", "Deform", "Freeform", "Flatten"):
         from . import deform_panel as dp
         return {"Indent": dp.IndentPanel, "Deform": dp.DeformPanel,
@@ -779,6 +784,7 @@ class RefGeomVP(_Stateless):
         kind = getattr(getattr(obj, "Proxy", None), "KIND", "plane")
         base = {"plane": "Plane", "axis": "Axis", "point": "Point",
                 "csys": "CoordinateSystem", "helix": "Helix"}.get(kind, "Plane")
+        base = getattr(getattr(obj, "Proxy", None), "ICON", None) or base
         if kind == "curve":
             base = {"projected": "ProjectedCurve", "composite": "CompositeCurve",
                     "xyz": "CurveXYZ", "points": "CurvePoints"}.get(obj.Proxy.CURVE, "Helix")
@@ -797,7 +803,11 @@ class RefGeomVP(_Stateless):
     def setEdit(self, vobj, mode=0):
         if mode != 0:
             return None
-        if getattr(vobj.Object.Proxy, "KIND", "") == "curve":
+        if getattr(vobj.Object.Proxy, "PANEL", None):
+            from .measure_panels import panel_for as measured
+            Gui.Control.showDialog(measured(vobj.Object)(vobj.Object,
+                                                         getattr(self, "_new", False)))
+        elif getattr(vobj.Object.Proxy, "KIND", "") == "curve":
             from .curve_panel import panel_for
             Gui.Control.showDialog(panel_for(vobj.Object)(vobj.Object,
                                                           getattr(self, "_new", False)))
@@ -844,6 +854,14 @@ def attach_refgeom(obj, new=False):
         if kind in ("helix", "curve"):
             vo.LineWidth = 2.5
             vo.LineColor = (0.85, 0.45, 0.05, 0.0)
+        if kind == "cosmetic":
+            vo.LineWidth = 1.5
+            vo.LineColor = (0.15, 0.15, 0.15, 0.0)
+            vo.DrawStyle = "Dashed"
+        if kind == "bbox":
+            vo.LineWidth = 1.5
+            vo.LineColor = AXIS_COLOR + (0.0,)
+            vo.DrawStyle = "Dashed"
     except Exception:
         pass
 

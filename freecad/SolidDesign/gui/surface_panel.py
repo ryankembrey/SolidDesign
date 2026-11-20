@@ -244,7 +244,18 @@ class ExtendPanel(_SurfacePanel):
         self.edges = self.elements_list(g, "Items", "The open edges of a surface to carry on",
                                         "Edge", check=_open_edge)
         g = self.group("End Condition")
-        self.dist, _r = self.qty(g, "Distance", "Distance", "How far to extend")
+        self.end = parts.Switch(
+            core.EXTEND_ENDS,
+            tips={core.DISTANCE: "Extend by a distance",
+                  core.UP_TO_POINT: "Extend until it reaches a point",
+                  core.UP_TO_SURFACE: "Extend until it meets a surface or plane"})
+        self.end.set_value(getattr(self.obj, "EndCondition", core.DISTANCE))
+        self.end.changed.connect(lambda m: self.set_prop("EndCondition", m))
+        g.wide(self.end)
+        self.dist, self.r_dist = self.qty(g, "Distance", "Distance", "How far to extend")
+        self.upto = self.ref_box(g, "UpTo", "Up to", "target", "Click a point, face or plane",
+                                 "The point, or the surface or plane, to extend up to",
+                                 kinds=("Vertex", "Face"))
         g = self.group("Extension Type")
         self.etype = parts.Switch(
             core.EXTEND_TYPES,
@@ -254,6 +265,11 @@ class ExtendPanel(_SurfacePanel):
         self.etype.set_value(self.obj.ExtensionType)
         self.etype.changed.connect(lambda m: self.set_prop("ExtensionType", m))
         g.wide(self.etype)
+
+    def refresh(self):
+        end = self.obj.EndCondition
+        self.r_dist.set_visible(end == core.DISTANCE)
+        self.upto.row.set_visible(end != core.DISTANCE)
 
 
 class DeleteFacePanel(_SurfacePanel):
@@ -307,8 +323,15 @@ class ThickenPanel(_SurfacePanel):
                                     "A closed surface: the solid inside it")
         self.merge, self.r_merge = self.check(g, "MergeResult", "Merge result",
                                               "Fuse with the solids it touches")
+        g = self.sec_scope = self.group("Feature Scope", "Which solids it works on")
+        self.all_b, _r = self.check(g, "AllBodies", "All bodies",
+                                    "Work on every solid it reaches; untick to choose them")
+        self.sec_scope_b = self.group("Bodies in Scope")
+        self.scope_b = self.bodies_box(self.sec_scope_b, "ScopeBodies",
+                                       "The solids it works on", hint="Click solids")
 
     def refresh(self):
+        self.sec_scope_b.setVisible(not self.obj.AllBodies)
         solid = self.obj.CreateSolid
         self.side.setVisible(not solid)
         self.r_t.set_visible(not solid)
@@ -432,6 +455,16 @@ class DomePanel(_SurfacePanel):
         self.ell, _r = self.check(g, "EllipticalDome", "Elliptical dome",
                                   "Half an ellipsoid on a round face; square to the face at "
                                   "its edge on others")
+        self.cont, self.r_cont = self.check(g, "ContinuousDome", "Continuous dome",
+                                            "Faces that aren't round: the outline rounds off "
+                                            "as it rises, with no creases from the corners")
+        self.ref_box(g, "DomeDirection", "Direction", "direction",
+                     "Click an edge, axis or plane",
+                     "Lean the dome this way; empty: straight up from the face",
+                     kinds=("Edge", "Face"), empty="Normal to face")
+        self.ref_box(g, "ConstraintPoint", "Top at", "point", "Click a point or vertex",
+                     "The dome's top goes through this point (it sets the height and lean)",
+                     kinds=("Vertex",), empty="None")
 
 
 class WrapPanel(_SurfacePanel):
@@ -458,6 +491,10 @@ class WrapPanel(_SurfacePanel):
         self.depth, self.r_depth = self.qty(g, "Depth", "Depth", "How far it stands up or "
                                             "sinks in", flip="ReverseDirection",
                                             flip_tip="The other way")
+        self.method, _r = self.choice(g, "WrapMethod", "Method",
+                                      "Analytical: rolled round a cylinder or cone without "
+                                      "stretching (flat faces: projected). Spline Surface: "
+                                      "projected onto any face along the sketch's normal")
 
     def refresh(self):
         self.r_depth.set_visible(self.obj.WrapType != "Scribe")
@@ -473,7 +510,8 @@ class RuledPanel(_SurfacePanel):
             g, "RuledType", "Type",
             "Tangent to Surface: carries on from the face beside the edge. Normal to Surface: "
             "stands square off it. Tapered / Perpendicular to Vector: at an angle to, or square "
-            "to, a direction you pick.")
+            "to, a direction you pick. Sweep: one smooth surface swept along the edges, "
+            "leaving the first at the face's tangent (or the vector).")
         g = self.group("Distance/Direction")
         self.dist, _r = self.qty(g, "Distance", "Distance", "How far the strips reach",
                                  flip="AlternateSide", flip_tip="The other side")
@@ -485,9 +523,16 @@ class RuledPanel(_SurfacePanel):
                                         unit="deg", minimum=-89.0, maximum=89.0, step=5.0)
         g = self.group("Edge Selection")
         self.edges = self.elements_list(g, "Items", "The edges the strips stand off", "Edge")
+        g = self.sec_opts = self.group("Options")
+        self.tk, self.r_tk = self.check(g, "TrimAndKnit", "Trim and knit",
+                                        "Cut the strips back where they cross at corners, "
+                                        "and knit them into one surface")
+        self.cs, self.r_cs = self.check(g, "ConnectingSurface", "Connecting surface",
+                                        "Fill the gaps between strips at sharp corners")
 
     def refresh(self):
-        vec = self.obj.RuledType in ("Tapered to Vector", "Perpendicular to Vector")
+        self.sec_opts.setVisible(self.obj.RuledType != "Sweep")
+        vec = self.obj.RuledType in ("Tapered to Vector", "Perpendicular to Vector", "Sweep")
         self.vec.row.set_visible(vec)
         self.r_ang.set_visible(self.obj.RuledType == "Tapered to Vector")
 
@@ -504,6 +549,8 @@ class RadiatePanel(_SurfacePanel):
         self.edges = self.elements_list(g, "Items", "The edges to radiate from", "Edge")
         self.dist, _r = self.qty(g, "Distance", "Distance", "How far it reaches",
                                  flip="Reverse", flip_tip="Towards the faces instead")
+        self.prop, _r = self.check(g, "PropagateTangent", "Propagate to tangent faces",
+                                   "Carry on along the edges meeting the picked ones smoothly")
 
 
 class UntrimPanel(_SurfacePanel):

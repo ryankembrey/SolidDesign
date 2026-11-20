@@ -6,10 +6,12 @@ import math
 import unittest
 
 import FreeCAD as App
+import Part
+import Sketcher
 
 from freecad.SolidDesign.app import dressup, pattern, refgeom
 from freecad.SolidDesign.core import refgeom as core_ref
-from helpers import circle, extrude, new_doc, plane, rect, sketch, volumes
+from helpers import V, circle, extrude, new_doc, plane, rect, sketch, volumes
 
 PI = math.pi
 
@@ -80,15 +82,39 @@ class TestLinear(Case):
         self.assertEqual(len(self.part.BodyIds), 3)
 
     def test_unrepeatable_feature(self):
-        fil = dressup.create_fillet(self.doc, self.part, [])
+        sh = dressup.create_shell(self.doc, self.part, [])
         self.doc.recompute()
-        f = pattern.create_linear(self.doc, self.part, Features=[fil])
+        f = pattern.create_linear(self.doc, self.part, Features=[sh])
         f.Direction1Ref = self.axis("X Axis")
         self.doc.recompute()
         self.assertIn("can't be repeated", f.ErrorMessage)
 
+    def test_fillet_and_chamfer_repeat(self):
+        bs = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(App.Vector(0, 0, 5), App.Rotation()))
+        rect(bs, 30, 10, 40, 20)
+        self.doc.recompute()
+        boss = extrude(self.doc, self.part, bs, Depth=10)
+        e = [i for i, x in enumerate(boss.Shape.Edges, 1)
+             if abs(x.CenterOfMass.z - 15) < 1e-9 and abs(x.CenterOfMass.x - 40) < 1e-9][0]
+        fil = dressup.create_fillet(self.doc, self.part, ["Edge%d" % e])
+        fil.Radius = 2
+        self.doc.recompute()
+        self.ok(fil)
+        one = self.total()
+        f = pattern.create_linear(self.doc, self.part, Features=[boss, fil], Spacing=20,
+                                  Instances=3)
+        f.Direction1Ref = self.axis("X Axis")
+        self.doc.recompute()
+        self.ok(f)
+        loss = (4 - PI) * 10
+        self.assertAlmostEqual(self.total(), one + 2 * (1000 - loss), 2)
+        m = pattern.create_mirror(self.doc, self.part, Features=[boss, fil],
+                                  MirrorPlane=(plane(self.part, "Right Plane"), []))
+        self.doc.recompute()
+        self.ok(m)
+        self.assertAlmostEqual(self.total(), one + 3 * (1000 - loss), 2)
 
-class TestCircular(Case):
     def test_holes_round_a_boss_axis(self):
         sk = sketch(self.doc, plane(self.part, "Top Plane"))
         circle(sk, 50, 20, 1)
@@ -234,6 +260,44 @@ class TestMorePatterns(Case):
         self.ok(f)
         self.assertAlmostEqual(self.total(), 20000 - 3 * self.hole_v, 3)
 
+    def test_curve_driven_two_directions(self):
+        from helpers import V
+        import Part
+        sk = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, 5), App.Rotation()))
+        sk.addGeometry(Part.LineSegment(V(10, 10, 0), V(90, 10, 0)))
+        sk2 = sketch(self.doc, plane(self.part, "Top Plane"),
+                     attach_offset=App.Placement(V(0, 0, 5), App.Rotation()))
+        sk2.addGeometry(Part.LineSegment(V(10, 10, 0), V(10, 30, 0)))
+        self.doc.recompute()
+        f = pattern.create_curve(self.doc, self.part, Features=[self.hole], CurveSketch=sk,
+                                 Instances=3, EqualSpacing=False, Spacing=30, Direction2=True,
+                                 CurveSketch2=sk2, Instances2=2)
+        self.doc.recompute()
+        self.ok(f)
+        self.assertAlmostEqual(self.total(), 20000 - 6 * self.hole_v, 3)
+        f.InstancesToSkip = ["2,2"]
+        self.doc.recompute()
+        self.ok(f)
+        self.assertAlmostEqual(self.total(), 20000 - 5 * self.hole_v, 3)
+
+    def test_table_files(self):
+        text = "Point\tX\tY\n0\t10\t10\n1\t50\t20\n2 70 30\n80;5.5\n"
+        self.assertEqual(pattern.read_table(text), ["10,10", "50,20", "70,30", "80,5.5"])
+        self.assertEqual(pattern.read_table(pattern.table_text(["1,2", "-3.5,4"])),
+                         ["1,2", "-3.5,4"])
+
+    def test_instance_centres_are_stored(self):
+        import json
+        f = pattern.create_linear(self.doc, self.part, Features=[self.hole], Spacing=20,
+                                  Instances=3, InstancesToSkip=["2,1"])
+        f.Direction1Ref = self.axis("X Axis")
+        self.doc.recompute()
+        self.ok(f)
+        cs = json.loads(f.InstanceCentres)
+        self.assertEqual([c[0] for c in cs], ["2,1", "3,1"])          # skipped ones too
+        self.assertAlmostEqual(cs[1][1] - cs[0][1], 20, 6)
+
     def test_curve_driven_round_an_arc_turns(self):
         from helpers import V
         import Part
@@ -302,3 +366,54 @@ class TestMorePatterns(Case):
         # A 20 mm grid from the hole at (10, 10), 3 + 1 mm clear of the edges.
         n = round((20000 - self.total()) / self.hole_v)
         self.assertEqual(n, 10)
+
+
+class TestVariablePattern(unittest.TestCase):
+    def setUp(self):
+        self.doc, self.part = new_doc("VP")
+        sk = sketch(self.doc, plane(self.part, "Top Plane"))
+        rect(sk, 0, 0, 100, 20)
+        self.doc.recompute()
+        extrude(self.doc, self.part, sk, Depth=5)
+        top = sketch(self.doc, plane(self.part, "Top Plane"),
+                     attach_offset=App.Placement(V(0, 0, 5), App.Rotation()))
+        top.addGeometry(Part.Circle(V(10, 10, 0), V(0, 0, 1), 3))
+        top.addConstraint(Sketcher.Constraint("DistanceX", -1, 1, 0, 3, 10))
+        top.renameConstraint(0, "X")
+        top.addConstraint(Sketcher.Constraint("DistanceY", -1, 1, 0, 3, 10))
+        top.addConstraint(Sketcher.Constraint("Diameter", 0, 6))
+        top.renameConstraint(2, "D")
+        self.doc.recompute()
+        self.pin = extrude(self.doc, self.part, top, Depth=4)
+        self.doc.recompute()
+
+    def tearDown(self):
+        App.closeDocument(self.doc.Name)
+
+    def test_each_row_is_an_instance(self):
+        dims = [k for k, _l, _v in pattern.variable_dimensions(self.pin)]
+        self.assertIn("Depth", dims)
+        self.assertIn("Sketch:X", dims)
+        self.assertIn("Sketch:D", dims)
+        before = sum(s.Volume for s in self.part.Shape.Solids)
+        vp = pattern.create_variable(self.doc, self.part, Features=[self.pin],
+                                     Dimensions=["Sketch:X", "Sketch:D", "Depth"],
+                                     Instances=["30;8;6", "60;10;8"])
+        self.doc.recompute()
+        self.assertEqual(vp.ErrorMessage, "", vp.ErrorMessage)
+        after = sum(s.Volume for s in self.part.Shape.Solids)
+        added = PI * 16 * 6 + PI * 25 * 8
+        self.assertAlmostEqual(after - before, added, 3)
+        s = self.part.Shape.Solids[0]
+        self.assertTrue(s.isInside(V(60, 10, 12.5), 1e-6, True))      # the second, 8 tall
+        self.assertFalse(s.isInside(V(30, 10, 11.5), 1e-6, True))     # the first, 6 tall
+        # The seed itself is untouched.
+        self.assertAlmostEqual(self.pin.Depth.Value, 4, 9)
+        self.assertEqual(self.pin.Sketch.getDatum(0).Value, 10)
+        vp.Instances = ["30;8"]
+        self.doc.recompute()
+        self.assertIn("3 dimensions", vp.ErrorMessage)
+
+
+if __name__ == "__main__":
+    unittest.main()

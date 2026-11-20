@@ -32,6 +32,8 @@ STANDARD, MUTUAL = "Standard", "Mutual"
 TRIM_TYPES = [STANDARD, MUTUAL]
 SAME_SURFACE, LINEAR = "Same Surface", "Linear"
 EXTEND_TYPES = [SAME_SURFACE, LINEAR]
+DISTANCE, UP_TO_POINT, UP_TO_SURFACE = "Distance", "Up To Point", "Up To Surface"
+EXTEND_ENDS = [DISTANCE, UP_TO_POINT, UP_TO_SURFACE]
 CONTACT, TANGENT, CURVATURE = "Contact", "Tangent", "Curvature"
 CONTINUITY = [CONTACT, TANGENT, CURVATURE]
 _ORDER = {CONTACT: 0, TANGENT: 1, CURVATURE: 3}          # GeomAbs_C0, G1, G2
@@ -489,10 +491,63 @@ def _same_surface_strip(face, e, dist):
     return None
 
 
+def _reach(face, e, end, target):
+    """How far an edge's extension must go to reach a point (Up To Point) or a
+    surface (Up To Surface, the farthest point of the edge's)."""
+    mid = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
+    o = _outward(face, e, mid)
+    if o is None:
+        raise topo.GeometryError("Couldn't find which way the surface goes on at an edge.")
+    if end == UP_TO_POINT:
+        d = (target - mid).dot(o)
+        if d <= 1e-9:
+            raise topo.GeometryError("The point is behind the edge: pick one the surface "
+                                     "would reach going on.")
+        return d
+    big = 10 * (face.BoundBox.DiagonalLength + target.BoundBox.DiagonalLength +
+                (target.BoundBox.Center - mid).Length)
+    far = 0.0
+    for k in range(9):
+        u = e.FirstParameter + (e.LastParameter - e.FirstParameter) * k / 8.0
+        q = e.valueAt(u)
+        ok = _outward(face, e, q) or o
+        seg = Part.LineSegment(q, q + ok * big).toShape()
+        try:
+            hits = [(v.Point - q).dot(ok) for v in seg.section(target).Vertexes]
+        except Exception:
+            hits = []
+        hits = [h for h in hits if h > 1e-9]
+        if not hits:
+            raise topo.GeometryError("The surface doesn't reach the picked surface going on "
+                                     "from the edge.")
+        far = max(far, min(hits))
+    return far
+
+
+def _trimmed_to(strip, e, target, tag):
+    """The strip cut back to where it meets the target surface (the part by the edge)."""
+    from .. import bodyops
+    try:
+        tool = bodyops.extended(target.Faces[0], 4 * strip.BoundBox.DiagonalLength) \
+            if len(target.Faces) == 1 else target
+        pieces = topo.slice_by(strip, [tool], tag).Faces
+    except Exception:
+        return strip
+    if len(pieces) < 2:
+        return strip
+    mid = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
+    return min(pieces, key=lambda f: f.distToShape(Part.Vertex(mid))[0])
+
+
 def extend(p, base):
     if not p.edges:
         raise topo.GeometryError("Pick the surface edges to extend.")
-    if p.distance <= 0:
+    end = getattr(p, "end", DISTANCE)
+    if end == UP_TO_POINT and getattr(p, "target", None) is None:
+        raise topo.GeometryError("Pick the point to extend up to.")
+    if end == UP_TO_SURFACE and getattr(p, "target", None) is None:
+        raise topo.GeometryError("Pick the surface or plane to extend up to.")
+    if end == DISTANCE and p.distance <= 0:
         raise topo.GeometryError("The distance must be greater than zero.")
     groups = {}
     for e in p.edges:
@@ -511,14 +566,19 @@ def extend(p, base):
             if face is None or len(shape.ancestorsOfType(e, Part.Face)) != 1:
                 raise topo.GeometryError("Only open edges of a surface can be extended.")
             strip = None
+            dist = p.distance if end == DISTANCE else _reach(face, e, end, p.target)
+            if end == UP_TO_SURFACE:
+                dist *= 1.2                 # past it, then cut back to it
             if p.kind == SAME_SURFACE:
-                strip = _same_surface_strip(face, e, p.distance)
+                strip = _same_surface_strip(face, e, dist)
                 if strip is None and face.Surface.TypeId not in ("Part::GeomPlane",):
                     res.warnings.append("An edge couldn't continue on the same surface (it "
                                         "isn't one of the surface's own boundaries); it was "
                                         "extended straight on (Linear).")
             if strip is None:
-                strip = _linear_strip(face, e, p.distance)
+                strip = _linear_strip(face, e, dist)
+            if end == UP_TO_SURFACE:
+                strip = _trimmed_to(strip, e, p.target, p.tag)
             strips.append(strip)
         shown.extend(strips)
         sewn = _sew([f.copy() for f in shape.Faces] + strips, p.tolerance, p.tag)

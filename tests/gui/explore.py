@@ -999,7 +999,7 @@ def deform_tools_through_panels():
     p.radius.spin.setProperty("rawValue", 8.0)
     wait(900)
     expect(ok_enabled(), "deform OK: %s" % p.error.value())
-    arrows = p._drag.arrows() if p._drag else []
+    arrows = p._drag.draggers() if p._drag else []
     expect(len(arrows) == 1 and arrows[0].prop == "Distance", "a distance arrow")
     p.kind.setCurrentText("Curve to curve")
     wait(400)
@@ -1022,7 +1022,7 @@ def deform_tools_through_panels():
     p.height.setValue(4.0)
     wait(900)
     expect(ok_enabled(), "freeform OK: %s" % p.error.value())
-    arrows = p._drag.arrows() if p._drag else []
+    arrows = p._drag.draggers() if p._drag else []
     expect(len(arrows) == 1, "an arrow on the point")
     if arrows:
         arrows[0].on_drag(5.0)
@@ -1408,7 +1408,7 @@ def flex_and_scale_through_panels():
     wait(700)
     expect(shown(p.r_taper) and not shown(p.r_ang), "Tapering shows the taper factor")
     expect(ok_enabled(), "flex OK: %s" % p.error.value())
-    arrows = sorted(p._drag.arrows(), key=lambda a: a.prop) if p._drag else []
+    arrows = sorted(p._drag.draggers(), key=lambda a: a.prop) if p._drag else []
     expect([a.prop for a in arrows] == ["TrimPlane1", "TrimPlane2"],
            "the trim planes have arrows (%s)" % [a.prop for a in arrows])
     if len(arrows) == 2:
@@ -1899,9 +1899,9 @@ def draft_neutral_plane():
     v = body_views(part)[0]
     w0, w1 = _width_at(v.Shape, 0.01), _width_at(v.Shape, 19.99)
     expect(abs(w0 - 40) < 0.05 and w1 < w0 - 1.5, "it tapers upwards (%.3f to %.3f)" % (w0, w1))
-    expect(set(App.listDocuments()) == {doc.Name} | {d for d in App.listDocuments()
-                                                    if not d.startswith("SDScratch")},
-           "no scratch documents left")
+    scratch = [d for n, d in App.listDocuments().items() if n.startswith("SDScratch")]
+    expect(len(scratch) <= 1 and all(not d.Objects for d in scratch),
+           "one scratch document at most, left empty")
     expect(App.ActiveDocument is doc, "the document stays active")
     Gui.ActiveDocument.ActiveView.viewIsometric()
     Gui.SendMsgToActiveView("ViewFit")
@@ -2139,10 +2139,10 @@ def instant3d_on_a_selected_feature():
     wait(400)
     from freecad.SolidDesign.gui import instant3d
     i3 = instant3d.current()
-    expect(i3.set is not None and len(i3.set.arrows) == 1, "selecting an Extrude shows its "
+    expect(i3.set is not None and len(i3.set.draggers()) == 1, "selecting an Extrude shows its "
            "depth arrow")
     shot("selected")
-    mouse_drag(i3.set.arrows[0], 5.0)
+    mouse_drag(i3.set.draggers()[0], 5.0)
     wait(900)
     expect(abs(f.Depth.Value - 15.0) < 1e-6, "dragging it changes the feature (%s)" %
            f.Depth.Value)
@@ -2158,9 +2158,9 @@ def instant3d_on_a_selected_feature():
     # Typing: click the value, type, Enter.
     select(doc, f)
     wait(400)
-    a = i3.set.arrows[0]
-    i3.set.edit_value(a)
-    ed = i3.set.editor
+    a = i3.set.draggers()[0]
+    i3.set.set.edit_value(a)
+    ed = i3.set.set.editor
     expect(ed is not None and ed.isVisible(), "clicking the value opens a box")
     ed.setText("22")
     ed.returnPressed.emit()
@@ -2194,7 +2194,7 @@ def handles_on_more_features():
     p = run_cmd("SD_Fillet")
     p.radius.spin.setProperty("rawValue", 2.0)
     wait(900)
-    arrows = p._drag.arrows() if p._drag else []
+    arrows = p._drag.draggers() if p._drag else []
     expect(len(arrows) == 1 and arrows[0].prop == "Radius", "the fillet shows a radius arrow")
     if arrows:
         a = arrows[0]
@@ -2216,7 +2216,7 @@ def handles_on_more_features():
     wait(400)
     from freecad.SolidDesign.gui import instant3d
     i3 = instant3d.current()
-    expect(i3.set is not None and len(i3.set.arrows) == 1, "a selected fillet shows its arrow")
+    expect(i3.set is not None and len(i3.set.draggers()) == 1, "a selected fillet shows its arrow")
     Gui.Selection.clearSelection()
     wait(300)
     v = body_views(part)[0]
@@ -2224,7 +2224,7 @@ def handles_on_more_features():
     p = run_cmd("SD_Shell")
     p.t.spin.setProperty("rawValue", 2.0)
     wait(900)
-    arrows = p._drag.arrows() if p._drag else []
+    arrows = p._drag.draggers() if p._drag else []
     expect(len(arrows) == 1 and arrows[0].direction.z < -0.99, "the shell's arrow goes into "
            "the wall")
     close_panel(False)
@@ -2234,11 +2234,11 @@ def handles_on_more_features():
     p.activate(p.positions)
     pick(p, v, face_at(v, V(20, 15, 20)), V(20, 15, 20))
     wait(700)
-    arrows = p._drag.arrows() if p._drag else []
+    arrows = p._drag.draggers() if p._drag else []
     expect(len(arrows) == 1 and arrows[0].prop == "Depth", "a blind hole shows its depth")
     p.end.setCurrentText("Through All")
     wait(800)
-    expect(not (p._drag.arrows() if p._drag else []), "Through All has no depth arrow")
+    expect(not (p._drag.draggers() if p._drag else []), "Through All has no depth arrow")
     close_panel(True)
     expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
 
@@ -2377,7 +2377,8 @@ def revolve_angle_ring():
     expect(not p.obj.ErrorMessage, "revolve about Z: %s" % p.obj.ErrorMessage)
     p.d1.angle.spin.setProperty("rawValue", 90.0)
     wait(900)
-    r1, _r2 = p._handles()
+    r1 = p.draggers().get("Angle")
+    expect(r1 is not None and type(r1).__name__ == "RingDragger", "the angle is a ring")
     expect(r1.shown() and abs(r1.value - 90.0) < 1e-6, "a ring shows the angle (%s)" % r1.value)
     Gui.ActiveDocument.ActiveView.viewTop()
     Gui.SendMsgToActiveView("ViewFit")
@@ -2398,8 +2399,13 @@ def extrude_drag_handles():
     sk = plate_sketch(doc, part)
     select(doc, sk)
     p = run_cmd("SD_Extrude")
-    h1, h2 = p._handles()
-    expect(h1.shown() and not h2.shown(), "an arrow shows for Direction 1")
+    dr = p.draggers()
+    h1 = dr.get("Depth")
+    expect(h1 is not None and h1.shown() and dr.get("Depth2") is None,
+           "an arrow shows for Direction 1")
+    from freecad.SolidDesign.gui import handles as hm
+    expect(isinstance(h1, hm.Dragger) and isinstance(h1, hm.ArrowDragger),
+           "it is one of the shared draggers")
     Gui.ActiveDocument.ActiveView.viewIsometric()
     Gui.SendMsgToActiveView("ViewFit")
     wait(600)
@@ -2418,7 +2424,8 @@ def extrude_drag_handles():
     expect(abs(h1.value - 12.0) < 1e-6, "typing a depth moves the arrow (%s)" % h1.value)
     p.sec_d2.setChecked(True)
     wait(700)
-    expect(h2.shown(), "Direction 2 gets its own arrow")
+    h2 = dr.get("Depth2")
+    expect(h2 is not None and h2.shown(), "Direction 2 gets its own arrow")
     mouse_drag(h2, -1.0)
     wait(900)
     expect(abs(p.obj.Depth2.Value - 9.0) < 1e-6, "dragging it sets Depth 2 (%s)" %
@@ -2474,6 +2481,292 @@ def sweep_and_loft():
     expect(ok_enabled(), "loft OK: %s" % p.error.value())
     close_panel(True)
     expect(len(body_views(part)) == 2, "two bodies")
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
+def stage10_through_panels():
+    """Fillet methods and profiles, Bounding Box, Center of Mass, Mounting Boss, Snap
+    Hook, Cosmetic Thread, Vent, Variable Pattern, Lip/Groove, and the new Freeform,
+    Deform and Flatten rows, through their panels."""
+    import Sketcher
+    doc, part = new_doc("S10")
+    sk = plate_sketch(doc, part, 60, 40)
+    extrude_ui(doc, part, sk, 4)
+    plate = body_views(part)[0]
+
+    # Fillet: asymmetric, conic, variable with a point.
+    select(doc, plate, edge_at(plate, V(0, 0, 4), V(60, 0, 4)))
+    p = run_cmd("SD_Fillet")
+    expect(p is not None and p.items.items, "Fillet with the edge")
+    p.radius.spin.setProperty("rawValue", 1.0)
+    p.method.buttons["Asymmetric"].click()
+    wait(600)
+    expect(shown(p.r_dist2), "Asymmetric shows Distance 2")
+    p.profile.setCurrentText("Conic Rho")
+    wait(600)
+    expect(shown(p.r_rho), "Conic shows Rho")
+    expect(ok_enabled(), "asymmetric conic fillet OK: %s" % p.error.value())
+    p.method.buttons["Symmetric"].click()
+    p.ftype.setCurrentText("Variable Size")
+    wait(600)
+    p.points.b_add.click()
+    wait(900)
+    expect(len(p.obj.VariablePoints) == 1, "a variable point (%s)" % list(p.obj.VariablePoints))
+    expect(ok_enabled(), "variable fillet OK: %s" % p.error.value())
+    close_panel(False)
+
+    # Bounding Box and Center of Mass.
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_BoundingBox", 1000)
+    expect(p is not None and abs(p.obj.Length.Value - 60) < 1e-6, "a 60 long box")
+    expect("60" in p.result.text(), "the size shows (%s)" % p.result.text())
+    shot("bounding_box")
+    close_panel(True)
+    p = run_cmd("SD_CenterOfMass", 1000)
+    expect(p is not None and "X 30" in p.result.text(), "the centre shows (%s)"
+           % (p.result.text() if p else ""))
+    close_panel(True)
+
+    # Mounting Boss and Snap Hook: click where they go.
+    plate = body_views(part)[0]
+    top = face_at(plate, V(30, 20, 4))
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_MountingBoss")
+    expect(p is not None, "Mounting Boss opens")
+    p.activate(p.position)
+    pick(p, plate, top, V(15, 20, 4))
+    p.set_prop("Draft", 0.0)
+    wait(900)
+    expect(ok_enabled(), "boss OK: %s" % p.error.value())
+    arrows = p._drag.draggers() if p._drag else []
+    expect([a.prop for a in arrows] == ["Height"], "a height arrow (%s)"
+           % [a.prop for a in arrows])
+    p.set_prop("Fins", 3)
+    wait(900)
+    expect(ok_enabled(), "boss with fins OK: %s" % p.error.value())
+    shot("mounting_boss")
+    close_panel(True)
+    plate = body_views(part)[0]
+    expect(abs(plate.Shape.BoundBox.ZMax - 14) < 1e-6, "a 10 mm boss (%.3f)"
+           % plate.Shape.BoundBox.ZMax)
+    top = face_at(plate, V(45, 30, 4))
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_SnapHook")
+    p.activate(p.position)
+    pick(p, plate, top, V(45, 30, 4))
+    wait(900)
+    expect(ok_enabled(), "snap hook OK: %s" % p.error.value())
+    close_panel(True)
+
+    # Cosmetic Thread on the boss's top edge.
+    plate = body_views(part)[0]
+    rim = next(("Edge%d" % i for i, e in enumerate(plate.Shape.Edges, 1)
+                if hasattr(e.Curve, "Radius") and abs(e.Curve.Radius - 4) < 1e-6 and
+                abs(e.Curve.Center.z - 14) < 1e-6), None)
+    expect(rim is not None, "the boss's rim")
+    select(doc, plate, rim)
+    p = run_cmd("SD_CosmeticThread", 1000)
+    expect(p is not None and p.obj.Callout.startswith("M8"), "an M8 callout (%s)"
+           % (p.obj.Callout if p else ""))
+    shot("cosmetic_thread")
+    close_panel(True)
+
+    # Vent: a slot with a rib.
+    vs = sketch(doc, plane(part, "Top Plane"), attach_offset=App.Placement(V(0, 0, 4),
+                                                                           App.Rotation()))
+    rect(vs, 22, 4, 40, 14)
+    vs.addGeometry(Part.LineSegment(V(31, 4, 0), V(31, 14, 0)))
+    app_part.add_to_part(part, vs)
+    doc.recompute()
+    select(doc, vs)
+    p = run_cmd("SD_Vent", 1000)
+    expect(p is not None and p.obj.Sketch is vs, "Vent with the sketch")
+    expect(ok_enabled(), "vent OK: %s" % p.error.value())
+    close_panel(True)
+    plate = body_views(part)[0]
+    expect(not plate.Shape.isInside(V(26, 9, 2), 1e-6, True) and
+           plate.Shape.isInside(V(31, 9, 2), 1e-6, True), "the vent's open, its rib stays")
+
+    # Variable Pattern: a pin, repeated with its position and depth changed.
+    ps = sketch(doc, plane(part, "Top Plane"), attach_offset=App.Placement(V(0, 0, 4),
+                                                                           App.Rotation()))
+    ps.addGeometry(Part.Circle(V(5, 35, 0), V(0, 0, 1), 1.5))
+    ps.addConstraint(Sketcher.Constraint("DistanceX", -1, 1, 0, 3, 5))
+    ps.renameConstraint(0, "X")
+    ps.addConstraint(Sketcher.Constraint("DistanceY", -1, 1, 0, 3, 35))
+    app_part.add_to_part(part, ps)
+    doc.recompute()
+    pin = extrude_ui(doc, part, ps, 3)
+    v0 = sum(s.Volume for s in part.Shape.Solids)
+    select(doc, pin)
+    p = run_cmd("SD_VariablePattern", 1000)
+    expect(p is not None and p.obj.Features == [pin], "Variable Pattern with the pin")
+    i = p.dim_pick.findData("Sketch:X")
+    expect(i >= 0, "the sketch's X is offered")
+    p.dim_pick.setCurrentIndex(i)
+    p._add_dim()
+    p.dim_pick.setCurrentIndex(p.dim_pick.findData("Depth"))
+    p._add_dim()
+    p._add_row()
+    wait(300)
+    p.table.item(0, 0).setText("12")
+    p.table.item(0, 1).setText("6")
+    wait(1200)
+    expect(list(p.obj.Instances) == ["12;6"], "the row (%s)" % list(p.obj.Instances))
+    expect(ok_enabled(), "variable pattern OK: %s" % p.error.value())
+    shot("variable_pattern")
+    close_panel(True)
+    added = sum(s.Volume for s in part.Shape.Solids) - v0
+    expect(abs(added - math.pi * 2.25 * 6) < 1e-3, "one more pin, 6 tall (%.4f)" % added)
+
+    # Lip/Groove opens and asks for its bodies.
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_LipGroove")
+    expect(p is not None and p.error.value(), "Lip/Groove asks for bodies")
+    close_panel(False)
+    expect(not [o for o in doc.Objects if "LipGroove" in o.Name], "cancel removes it")
+
+    # Freeform sideways, Deform's new rows, Flatten's tear edges.
+    plate = body_views(part)[0]
+    top = face_at(plate, V(50, 8, 4))
+    select(doc, plate, top)
+    p = run_cmd("SD_Freeform")
+    p.activate(p.points)
+    pick(p, plate, top, V(50, 8, 4))
+    p.side[0].setValue(1.0)
+    wait(600)
+    expect(any(str(t).endswith("|1,0,0") for t in p.obj.ControlPoints),
+           "a sideways move (%s)" % list(p.obj.ControlPoints))
+    close_panel(False)
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Deform")
+    p.kind.setCurrentText("Surface push")
+    wait(300)
+    expect(shown(p.r_dev), "Surface push shows Deviation")
+    p.kind.setCurrentText("Curve to curve")
+    wait(300)
+    expect(p.fixed.isVisible(), "Curve to curve shows fixed curves")
+    close_panel(False)
+    select(doc, plate, top)
+    p = run_cmd("SD_SurfaceFlatten")
+    expect(p is not None and p.tears.isVisible(), "Flatten shows tear edges")
+    close_panel(False)
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
+def stage11_through_panels():
+    """Split's face reach, DraftXpert, the new sweep, loft, dome, wrap, pattern, thicken,
+    extend, ruled, radiate and legacy hole options, through their panels."""
+    doc, part = new_doc("S11")
+    sk = plate_sketch(doc, part, 40, 30)
+    extrude_ui(doc, part, sk, 10)
+    plate = body_views(part)[0]
+
+    # Split: picking a face asks how far it should cut.
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Split")
+    expect(p is not None and not p.reach.isVisible(), "no question before a face is picked")
+    top = face_at(plate, V(20, 15, 10))
+    p.activate(p.tools)
+    pick(p, plate, top, V(20, 15, 10))
+    wait(500)
+    expect(p.reach.isVisible() and p.reach_q.isVisible(), "the face-reach question shows")
+    p.reach.buttons[p.EXTENDED].click()
+    wait(600)
+    expect(p.obj.ExtendFaces, "Past their edges sets Extend Faces")
+    close_panel(False)
+
+    # DraftXpert: the analysis and the button that picks the faces needing draft.
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Draft")
+    p.kind.setCurrentText("DraftXpert")
+    wait(400)
+    expect(p.sec_analysis.isVisible(), "DraftXpert shows its analysis")
+    bottom = face_at(plate, V(20, 15, 0))
+    p.activate(p.plane)
+    pick(p, plate, bottom, V(20, 15, 0))
+    wait(900)
+    expect("4 need draft" in p.analysis.text(), "four walls need draft (%s)" % p.analysis.text())
+    p.add_needed.click()
+    wait(1200)
+    expect(len(p.obj.Items[1]) == 4 if p.obj.Items else False, "the four walls picked")
+    expect(ok_enabled(), "DraftXpert OK: %s" % p.error.value())
+    close_panel(False)
+
+    # Dome: the new rows.
+    select(doc, plate, top)
+    p = run_cmd("SD_Dome")
+    expect(p is not None and shown(p.r_cont), "Continuous dome row")
+    p.cont.setChecked(True)
+    wait(900)
+    expect(ok_enabled(), "continuous dome OK: %s" % p.error.value())
+    close_panel(False)
+
+    # Thicken scope, Extend end condition, Ruled options, Radiate propagate: rows show.
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Thicken")
+    p.all_b.setChecked(False)
+    wait(400)
+    expect(p.sec_scope_b.isVisible(), "Thicken asks for the bodies in scope")
+    close_panel(False)
+    p = run_cmd("SD_ExtendSurface")
+    p.end.buttons["Up To Surface"].click()
+    wait(400)
+    expect(p.upto.row.widget.isVisible() and not shown(p.r_dist), "Up To Surface shows Up to")
+    close_panel(False)
+    p = run_cmd("SD_RuledSurface")
+    expect(p.sec_opts.isVisible(), "Ruled shows trim and knit")
+    p.kind.setCurrentText("Sweep")
+    wait(400)
+    expect(not p.sec_opts.isVisible() and p.vec.row.widget.isVisible(), "Sweep's rows")
+    close_panel(False)
+    p = run_cmd("SD_RadiateSurface")
+    expect(p.prop.isVisible(), "Radiate shows propagate")
+    close_panel(False)
+
+    # Legacy hole: its own rows, the custom sizes always shown.
+    select(doc, plate, top)
+    p = run_cmd("SD_HoleWizard")
+    p.kind.setCurrentText("Legacy")
+    wait(500)
+    expect(p.sec_legacy.isVisible() and not p.sec_spec.isVisible() and
+           not p.sec_custom.isCheckable(), "Legacy hole rows")
+    p.legacy.setCurrentText("Counterdrilled")
+    wait(500)
+    expect(shown(p.r_cdrill) and shown(p.r_cbd), "counterdrill rows")
+    close_panel(False)
+
+    # Curve pattern Direction 2 and click-to-skip on a linear pattern.
+    hs = sketch(doc, plane(part, "Top Plane"), attach_offset=App.Placement(V(0, 0, 10),
+                                                                           App.Rotation()))
+    circle(hs, 5, 5, 1.5)
+    app_part.add_to_part(part, hs)
+    doc.recompute()
+    hole = extrude_ui(doc, part, hs, 4, mode="Cut")
+    select(doc, hole)
+    p = run_cmd("SD_LinearPattern", 1000)
+    x = [o for o in part.Origin if o.Label.startswith("X")][0]
+    p.obj.Direction1Ref = (x, [])
+    p.set_prop("Instances", 3)
+    p.set_prop("Spacing", 10.0)
+    wait(1200)
+    expect(ok_enabled(), "linear pattern OK: %s" % p.error.value())
+    p.skip.pick_btn.setChecked(True)
+    plate = body_views(part)[0]
+    pick(p, plate, face_at(plate, V(25, 5, 10)) or "", V(25, 5, 10))
+    wait(1200)
+    expect(list(p.obj.InstancesToSkip) == ["3,1"], "clicked the third instance off (%s)"
+           % list(p.obj.InstancesToSkip))
+    pick(p, plate, face_at(plate, V(25, 5, 10)) or "", V(25, 5, 10))
+    wait(1200)
+    expect(list(p.obj.InstancesToSkip) == [], "and back on")
+    close_panel(False)
+    select(doc, hole)
+    p = run_cmd("SD_CurvePattern", 1000)
+    expect(p is not None and hasattr(p, "sec_d2"), "Curve pattern has Direction 2")
+    close_panel(False)
     expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
 
 

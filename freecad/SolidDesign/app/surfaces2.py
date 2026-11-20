@@ -71,12 +71,23 @@ class RuledProxy(_Tool2):
           "Tapered / Perpendicular to Vector: an edge, axis or plane (its normal)")
         a(obj, "App::PropertyAngle", "Angle", g, "Tapered to Vector: the angle", 10.0)
         a(obj, "App::PropertyBool", "AlternateSide", g, "The other side", False)
+        a(obj, "App::PropertyBool", "TrimAndKnit", g,
+          "Several edges: cut the strips back where they cross at corners, and knit them",
+          True)
+        a(obj, "App::PropertyBool", "ConnectingSurface", g,
+          "Several edges: fill the gaps between strips at sharp corners", False)
+        if list(obj.getEnumerationsOfProperty("RuledType")) != core.RULED_TYPES:
+            old = obj.RuledType
+            obj.RuledType = core.RULED_TYPES
+            obj.RuledType = old
 
     def compute(self, obj, base):
         warns = []
         p = self.p2(obj, base)
         p.edges = [e for s in self.elems(obj, "Items", "edge", warns) for e in s.Edges]
         p.kind = obj.RuledType
+        p.trim_knit = getattr(obj, "TrimAndKnit", False)
+        p.connect = getattr(obj, "ConnectingSurface", False)
         p.distance = obj.Distance.Value
         p.angle = obj.Angle.Value
         p.direction = self.vector(obj, "ReferenceVector", "reference vector", warns)
@@ -99,11 +110,14 @@ class RadiateProxy(_Tool2):
         a(obj, "App::PropertyLinkSub", "Items", g, "Edges to radiate from")
         a(obj, "App::PropertyLength", "Distance", g, "How far it reaches", 10.0)
         a(obj, "App::PropertyBool", "Reverse", g, "Towards the faces instead", False)
+        a(obj, "App::PropertyBool", "PropagateTangent", g,
+          "Carry on along the edges meeting the picked ones smoothly", False)
 
     def compute(self, obj, base):
         warns = []
         p = self.p2(obj, base)
         p.edges = [e for s in self.elems(obj, "Items", "edge", warns) for e in s.Edges]
+        p.propagate = getattr(obj, "PropagateTangent", False)
         val = obj.ReferencePlane
         if val and val[0] is not None:
             s, w = refs.get_ref(obj, "ReferencePlane", "reference plane", obj.BaseFeature)

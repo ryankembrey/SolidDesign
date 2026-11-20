@@ -48,7 +48,9 @@ class DraftPanel(ToolPanel):
                                     "Neutral Plane: faces turn about where they meet a plane. "
                                     "Parting Line: faces turn about the edges you pick. Step "
                                     "Draft: parting lines at several heights, each step "
-                                    "turning about its own lines.")
+                                    "turning about its own lines. DraftXpert: a neutral plane; "
+                                    "the faces that need draft are found for you, and faces "
+                                    "that can't be drafted are left out and listed.")
         g = self.group("Draft Angle")
         self.angle, _r = self.qty(g, "Angle", "Angle",
                                   "How far the faces lean. The part gets narrower along the "
@@ -97,6 +99,80 @@ class DraftPanel(ToolPanel):
         self.prop2_row = self.sec_lines.row("Face propagation", self.prop2,
                                             "Along Tangent: also the faces meeting them "
                                             "smoothly")
+        # DraftXpert: what the faces have now.
+        g = self.sec_analysis = self.group("Draft Analysis",
+                                           "How much draft the faces have now, for this "
+                                           "angle and direction of pull")
+        from PySide import QtWidgets
+        self.analysis = QtWidgets.QLabel("")
+        self.analysis.setWordWrap(True)
+        g.wide(self.analysis, "Faces with enough draft towards the pull (positive), away "
+                              "from it (negative), too little (need draft), or some of each "
+                              "(straddle)")
+        self.add_needed = QtWidgets.QPushButton("Pick the Faces That Need Draft")
+        self.add_needed.setToolTip("Put every face with too little draft in Faces to Draft")
+        self.add_needed.clicked.connect(self._pick_needed)
+        g.wide(self.add_needed)
+
+    def _xpert_state(self):
+        """(base BodySet, pull) for the analysis, or None."""
+        from ..core import refgeom as core_ref
+        obj = self.obj
+        try:
+            base = obj.Proxy.base_bodies(obj)
+            p = core.Params()
+            s, _w = refs.get_ref(obj, "NeutralPlane", "neutral plane", obj.BaseFeature)
+            if s is None:
+                return None
+            pt, n, _x = core_ref.plane_of(s, "neutral plane")
+            p.plane = (pt, n)
+            p.reverse = obj.ReverseDirection
+            p.faces, _w = refs.get_refs(obj, "Items", "face", obj.BaseFeature)
+            return base, core.xpert_pull(p, base)[2]
+        except Exception:
+            return None
+
+    def _show_analysis(self):
+        st = self._xpert_state()
+        if st is None:
+            self.analysis.setText("Pick the neutral plane to see the faces' draft.")
+            self.add_needed.setEnabled(False)
+            return
+        base, pull = st
+        counts = {core.POSITIVE: 0, core.NEGATIVE: 0, core.NEEDS: 0, core.STRADDLE: 0}
+        for b in base:
+            if b.kind != "solid":
+                continue
+            for k, v in core.analysis(b.shape, pull, self.obj.Angle.Value).items():
+                counts[k] += len(v)
+        self.analysis.setText(u"{} positive \u00b7 {} negative \u00b7 {} need draft \u00b7 "
+                              u"{} straddle".format(counts[core.POSITIVE],
+                                                    counts[core.NEGATIVE],
+                                                    counts[core.NEEDS],
+                                                    counts[core.STRADDLE]))
+        self.add_needed.setEnabled(counts[core.NEEDS] > 0)
+
+    def _pick_needed(self):
+        st = self._xpert_state()
+        base_obj = self.obj.BaseFeature
+        if st is None or base_obj is None:
+            return
+        base, pull = st
+        whole = base_obj.Shape.Faces
+        subs = list(self.faces.payloads())
+        for b in base:
+            if b.kind != "solid":
+                continue
+            for i in core.analysis(b.shape, pull, self.obj.Angle.Value)[core.NEEDS]:
+                f = b.shape.Faces[i - 1]
+                j = next((k for k, g in enumerate(whole, 1) if g.isSame(f) or
+                          (abs(g.Area - f.Area) < 1e-9 and
+                           g.CenterOfMass.distanceToPoint(f.CenterOfMass) < 1e-9)), None)
+                if j is not None and "Face%d" % j not in subs:
+                    subs.append("Face%d" % j)
+        refs.set_ref(self.obj, "Items", base_obj if subs else None, subs)
+        self.faces.set_items([(sub, self.ref_text(base_obj, sub)) for sub in subs])
+        self.changed()
 
     def _items_box(self, group, prop, kind, what, hint, tip, empty=None):
         def accept(sel):
@@ -133,8 +209,15 @@ class DraftPanel(ToolPanel):
 
     def refresh(self):
         parting = self.kind.currentText() in (core.PARTING_LINE, core.STEP_DRAFT)
+        xpert = self.kind.currentText() == core.DRAFTXPERT
         self.sec_plane.setVisible(not parting)
         self.sec_faces.setVisible(not parting)
+        self.sec_analysis.setVisible(xpert)
+        self.prop_row.set_visible(not xpert)
+        if xpert:
+            self._show_analysis()
+            self.faces.set_placeholder(empty="The faces that need draft")
+            return
         self.sec_pull.setVisible(parting)
         self.sec_lines.setVisible(parting)
         # With All, Inner or Outer faces no pick is needed.
@@ -145,7 +228,8 @@ class DraftPanel(ToolPanel):
         layers = [("result", pv.result_node(self.obj.AddSubShape, True))]
         picks = []
         base = self.obj.BaseFeature
-        box = self.faces if self.kind.currentText() == core.NEUTRAL_PLANE else self.lines
+        box = self.faces if self.kind.currentText() in (core.NEUTRAL_PLANE, core.DRAFTXPERT) \
+            else self.lines
         for s in box.payloads():
             try:
                 picks.append(Part.getShape(base, s, needSubElement=True))

@@ -9,6 +9,7 @@ import Part
 
 from freecad.SolidDesign.app import deform as app_deform
 from freecad.SolidDesign.app import part as app_part
+from freecad.SolidDesign.app import refs
 from helpers import V, circle, extrude, face_at, new_doc, plane, rect, sketch
 
 PI = math.pi
@@ -131,10 +132,52 @@ class TestDeform(Case):
         self.ok(f)
         t = self.body(0)
         self.assertTrue(t.isValid())
-        # Pushed out of the tool, to within the control net's spacing (it overlapped
-        # PI * 25 * 2 = 157 mm^3).
-        self.assertLess(t.common(self.body(1)).Volume, 0.05 * PI * 25 * 2)
+        # Pushed out of the tool, to within the control net's spacing: probe the
+        # overlap there was (the tool's inside, z 2..4).
+        probes = [V(30 + x, 20 + y, 2.1 + z * 0.6)
+                  for x in range(-4, 5) for y in range(-4, 5) for z in range(4)
+                  if x * x + y * y < 4.7 ** 2]
+
+        def left(shape):
+            return sum(1 for q in probes if shape.isInside(q, 1e-6, False)) / float(len(probes))
+        self.assertLess(left(t), 0.06)
         self.assertAlmostEqual(self.body(1).Volume, PI * 25 * 10, 3)
+        # Deviation spreads the dent round the tool: a wider, softer dent.
+        v0 = t.Volume
+        f.DeformDeviation = 4
+        self.doc.recompute()
+        self.ok(f)
+        t = self.body(0)
+        self.assertTrue(t.isValid())
+        self.assertLess(left(t), 0.02)
+        self.assertLess(t.Volume, v0 - 10)
+
+    def test_fixed_curves_hold_the_body(self):
+        a = sketch(self.doc, plane(self.part, "Top Plane"),
+                   attach_offset=App.Placement(V(0, 0, 4), App.Rotation()))
+        a.addGeometry(Part.LineSegment(V(10, 20, 0), V(50, 20, 0)))
+        b = sketch(self.doc, plane(self.part, "Top Plane"),
+                   attach_offset=App.Placement(V(0, 0, 9), App.Rotation()))
+        b.addGeometry(Part.LineSegment(V(10, 20, 0), V(50, 20, 0)))
+        c = sketch(self.doc, plane(self.part, "Top Plane"),
+                   attach_offset=App.Placement(V(0, 0, 4), App.Rotation()))
+        c.addGeometry(Part.LineSegment(V(0, 32, 0), V(60, 32, 0)))
+        self.doc.recompute()
+        f = app_deform.create_deform(self.doc, self.part, DeformType="Curve to curve",
+                                     InitialCurves=[a], TargetCurves=[b], Radius=30)
+        self.doc.recompute()
+        self.ok(f)
+
+        def top_at(y):
+            s = self.body()
+            return s.common(Part.makeBox(0.01, 0.01, 100, V(30, y, -50))).BoundBox.ZMax
+        self.assertGreater(top_at(32), 6.0)          # free: the change spreads past y 32
+        f.FixedCurves = [c]
+        self.doc.recompute()
+        self.ok(f)
+        self.assertTrue(self.body().isValid())
+        self.assertAlmostEqual(top_at(20), 9.0, 2)
+        self.assertLess(top_at(32), 4.1)              # held at the fixed curve
 
 
 class TestFreeform(Case):
@@ -152,6 +195,39 @@ class TestFreeform(Case):
         self.doc.recompute()
         self.ok(f)
         self.assertAlmostEqual(self.body().BoundBox.ZMax, 4.0, 6)
+
+    def test_sideways_move(self):
+        top = face_at(self.plate, V(30, 20, 4))
+        f = app_deform.create_freeform(self.doc, self.part, Items=[top],
+                                       ControlPoints=["30,20,4|5|0,0,0"])
+        self.doc.recompute()
+        self.ok(f)
+        c0 = self.body().common(Part.makeBox(60, 40, 10, V(0, 0, 4))).Solids[0].CenterOfMass
+        self.assertEqual(f.Proxy.moves(f)[0][2].Length, 0)
+        f.ControlPoints = ["30,20,4|5|6,0,3"]       # the normal part (z 3) is dropped
+        self.doc.recompute()
+        self.ok(f)
+        s = self.body()
+        self.assertTrue(s.isValid())
+        self.assertAlmostEqual(s.BoundBox.XLength, 60, 6)
+        c1 = s.common(Part.makeBox(60, 40, 10, V(0, 0, 4))).Solids[0].CenterOfMass
+        self.assertGreater(c1.x - c0.x, 1.0)         # the bump leans along +x
+        self.assertAlmostEqual(s.BoundBox.ZMax, 9.0, 0)
+
+    def test_control_curve(self):
+        top = face_at(self.plate, V(30, 20, 4))
+        sk = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, 7), App.Rotation()))
+        sk.addGeometry(Part.LineSegment(V(20, 20, 0), V(40, 20, 0)))
+        self.doc.recompute()
+        f = app_deform.create_freeform(self.doc, self.part, Items=[top], ControlCurves=[sk])
+        self.doc.recompute()
+        self.ok(f)
+        s = self.body()
+        self.assertTrue(s.isValid())
+        z = s.common(Part.makeBox(0.01, 0.01, 100, V(30, 20, -50))).BoundBox.ZMax
+        self.assertAlmostEqual(z, 7.0, 0)            # the face passes through the curve
+        self.assertAlmostEqual(s.BoundBox.XLength, 60, 6)
 
     def test_point_on_the_edge_is_refused(self):
         top = face_at(self.plate, V(30, 20, 4))
@@ -177,6 +253,23 @@ class TestFlatten(Case):
         self.assertAlmostEqual(srf[0].shape.Area, 2 * PI * 10 * 20, 0)
         self.assertEqual(f.WarningMessage, "")
         self.assertIsNotNone(srf[0].shape.findPlane())
+
+    def test_closed_set_needs_tear_edges(self):
+        names = ["Face%d" % (i + 1) for i in range(len(self.plate.Shape.Faces))]
+        f = app_deform.create_flatten(self.doc, self.part, Items=names)
+        self.doc.recompute()
+        self.assertIn("Tear edges", f.ErrorMessage)
+        # A net: cut the four upright edges and three of the top's.
+        sh = self.plate.Shape
+        upright = [i for i, e in enumerate(sh.Edges, 1) if e.BoundBox.ZLength > 1]
+        top = [i for i, e in enumerate(sh.Edges, 1) if e.BoundBox.ZMin > 3.9]
+        refs.set_ref(f, "TearEdges", f.BaseFeature,
+                     ["Edge%d" % i for i in upright + top[:3]])
+        self.doc.recompute()
+        self.ok(f)
+        srf = [b for b in self.bodies() if b.kind == "surface"]
+        self.assertEqual(len(srf), 1)
+        self.assertAlmostEqual(srf[0].shape.Area, sh.Area, 1)
 
 
 if __name__ == "__main__":

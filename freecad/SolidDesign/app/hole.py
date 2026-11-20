@@ -71,6 +71,13 @@ class HoleProxy(feature.FeatureProxy):
         a(obj, "App::PropertyLength", "CboreDepth", g, "Counterbore depth", 6.4)
         a(obj, "App::PropertyLength", "CskDiameter", g, "Countersink diameter", 13.44)
         a(obj, "App::PropertyAngle", "CskAngle", g, "Countersink angle", 90.0)
+        g = "Legacy"
+        a(obj, "App::PropertyEnumeration", "LegacyType", g,
+          "Legacy hole: Simple, Tapered, Counterbored, Countersunk or Counterdrilled",
+          enum=core.LEGACY_TYPES)
+        a(obj, "App::PropertyAngle", "TaperAngle", g, "Legacy Tapered: the wall's angle", 2.0)
+        a(obj, "App::PropertyAngle", "CdrillAngle", g,
+          "Legacy Counterdrilled: the cone from the counterdrill down to the hole", 118.0)
         g = "Options"
         a(obj, "App::PropertyBool", "NearSideCsk", g, "Near side countersink", False)
         a(obj, "App::PropertyLength", "NearCskDiameter", g, "Near side countersink diameter",
@@ -145,16 +152,26 @@ class HoleProxy(feature.FeatureProxy):
         p.size = obj.Size
         p.fit = obj.Fit
         p.thread = obj.ThreadOption
-        if p.kind == core.TAPERED_TAP and p.thread == core.MODELLED:
-            warns.append("A modelled thread isn't available for Tapered Tap in this version: "
-                         "the tap drill is used.")
-            p.thread = core.TAP_DRILL
         if p.kind == core.ADVANCED:
             p.near = [core.Element.loads(t) for t in obj.NearElements]
             p.far = [core.Element.loads(t) for t in obj.FarElements]
         std = core.sizing(p.kind, p.standard, p.size, p.fit, p.thread)
         if p.kind == core.ADVANCED:
             pass
+        elif p.kind == core.LEGACY:
+            import math
+            p.legacy = obj.LegacyType
+            p.cdrill_angle = obj.CdrillAngle.Value
+            lt = p.legacy
+            cb = (obj.CboreDiameter.Value, obj.CboreDepth.Value) \
+                if lt in (core.L_CBORE, core.L_CDRILL) else None
+            csk = obj.CskDiameter.Value if lt == core.L_CSK else None
+            taper = 2 * math.tan(math.radians(obj.TaperAngle.Value)) if lt == core.L_TAPERED \
+                else 0.0
+            if lt == core.L_TAPERED and not 0 < obj.TaperAngle.Value < 45:
+                raise topo.GeometryError("The taper angle must be between 0° and 45°.")
+            p.custom = core.Sizing(obj.HoleDiameter.Value, cb, csk, obj.CskAngle.Value,
+                                   taper=taper)
         elif obj.CustomSizing:
             cb = (obj.CboreDiameter.Value, obj.CboreDepth.Value) if std.cbore else None
             csk = obj.CskDiameter.Value if std.csk else None

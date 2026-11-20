@@ -4,6 +4,8 @@ pure functions of resolved shapes. A plane is an App.Placement whose Z axis is
 the normal; an axis is (point, unit direction); a point is a vector; a
 coordinate system is an App.Placement."""
 
+import math
+
 import FreeCAD as App
 import Part
 
@@ -419,3 +421,168 @@ def csys_shape(size):
     return Part.makeCompound([Part.LineSegment(App.Vector(), App.Vector(size, 0, 0)).toShape(),
                               Part.LineSegment(App.Vector(), App.Vector(0, size, 0)).toShape(),
                               Part.LineSegment(App.Vector(), App.Vector(0, 0, size)).toShape()])
+
+
+# ------------------------------------------------------------------ Bounding Box
+
+BEST_FIT = "Best Fit"
+REFERENCE_PLANE = "Reference Plane"
+BOX_TYPES = [BEST_FIT, REFERENCE_PLANE]
+
+
+def _cloud(shapes):
+    """Points on the shapes (vertices and a tessellation): for searching orientations."""
+    import numpy as np
+    pts = []
+    for s in shapes:
+        tol = max(s.BoundBox.DiagonalLength / 400.0, 1e-4)
+        try:
+            pts.extend(s.tessellate(tol)[0])
+        except Exception:
+            pass
+        pts.extend(v.Point for v in s.Vertexes)
+        for e in s.Edges:
+            try:
+                pts.extend(e.discretize(Deflection=tol))
+            except Exception:
+                pass
+    if not pts:
+        raise topo.GeometryError("There is nothing to put a box round.")
+    return np.array([[p.x, p.y, p.z] for p in pts])
+
+
+def _frame(z, x=None):
+    z = _unit(z)
+    if x is None or abs(x.dot(z)) > 1 - 1e-9:
+        x = _any_perp(z)
+    x = _unit(x - z * x.dot(z))
+    return x, z.cross(x), z
+
+
+def _best_turn(P, x, y, z):
+    """The turn about z (0..90 degrees) that makes the box's footprint smallest."""
+    import numpy as np
+    X = np.array([x.x, x.y, x.z])
+    Y = np.array([y.x, y.y, y.z])
+    u, v = P.dot(X), P.dot(Y)
+
+    def area(a):
+        c, s = math.cos(a), math.sin(a)
+        uu, vv = c * u + s * v, -s * u + c * v
+        return (uu.max() - uu.min()) * (vv.max() - vv.min())
+    best = min((area(math.radians(d)), math.radians(d)) for d in range(0, 90, 2))[1]
+    step = math.radians(1.0)
+    while step > math.radians(0.01):
+        cands = [best - step, best, best + step]
+        best = min(cands, key=area)
+        step *= 0.5
+    c, s = math.cos(best), math.sin(best)
+    return x * c + y * s, y * c - x * s
+
+
+def _directions(shapes, P):
+    """Directions worth trying as a box side: the bodies' principal axes, and the
+    normals of their biggest flat faces."""
+    import numpy as np
+    out = [App.Vector(1, 0, 0), App.Vector(0, 1, 0), App.Vector(0, 0, 1)]
+    c = P.mean(axis=0)
+    w, vecs = np.linalg.eigh(np.cov((P - c).T))
+    out.extend(App.Vector(*vecs[:, i]) for i in range(3))
+    flat = []
+    for s in shapes:
+        for f in s.Faces:
+            if f.Surface.TypeId == "Part::GeomPlane":
+                flat.append((f.Area, f.normalAt(0, 0)))
+            elif f.Surface.TypeId in ("Part::GeomCylinder", "Part::GeomCone"):
+                flat.append((f.Area, f.Surface.Axis))
+    flat.sort(key=lambda t: -t[0])
+    out.extend(n for _a, n in flat[:12])
+    return out
+
+
+def bounding_box(shapes, kind=BEST_FIT, plane=None):
+    """(placement of the box's corner, (dx, dy, dz)) round the shapes. Best fit: the
+    smallest box over the bodies' natural directions; Reference plane: square to the
+    plane, turned in it to the smallest footprint."""
+    shapes = [s for s in shapes if s is not None and not s.isNull()]
+    if not shapes:
+        raise topo.GeometryError("There are no bodies to put a box round.")
+    P = _cloud(shapes)
+    if kind == REFERENCE_PLANE:
+        if plane is None:
+            raise topo.GeometryError("Pick the reference plane the box sits square to.")
+        _p, n, _x = plane_of(plane, "reference plane")
+        cands = [n]
+    else:
+        cands = _directions(shapes, P)
+    best = None
+    import numpy as np
+    for n in cands:
+        x, y, z = _frame(App.Vector(n))
+        x, y = _best_turn(P, x, y, z)
+        M = np.array([[x.x, x.y, x.z], [y.x, y.y, y.z], [z.x, z.y, z.z]])
+        L = P.dot(M.T)
+        size = L.max(axis=0) - L.min(axis=0)
+        vol = float(size[0] * size[1] * size[2])
+        if best is None or vol < best[0] - 1e-9 * max(vol, 1.0):
+            best = (vol, x, y, z)
+    _v, x, y, z = best
+    # Exact extents for the chosen frame (the cloud is a little inside curved faces).
+    pl = App.Placement(App.Matrix(x.x, y.x, z.x, 0, x.y, y.y, z.y, 0, x.z, y.z, z.z, 0,
+                                  0, 0, 0, 1))
+    inv = pl.inverse().toMatrix()
+    lo, hi = None, None
+    for s in shapes:
+        t = s.copy()
+        t.transformShape(inv, True)
+        try:
+            bb = t.optimalBoundingBox(True, False)
+        except Exception:
+            bb = t.BoundBox
+        lo = App.Vector(bb.XMin, bb.YMin, bb.ZMin) if lo is None else \
+            App.Vector(min(lo.x, bb.XMin), min(lo.y, bb.YMin), min(lo.z, bb.ZMin))
+        hi = App.Vector(bb.XMax, bb.YMax, bb.ZMax) if hi is None else \
+            App.Vector(max(hi.x, bb.XMax), max(hi.y, bb.YMax), max(hi.z, bb.ZMax))
+    corner = pl.multVec(lo)
+    return App.Placement(corner, pl.Rotation), (hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)
+
+
+def box_edges(placement, size):
+    """The 12 edges of a box: what the bounding box shows."""
+    dx, dy, dz = size
+    pts = [App.Vector(x, y, z) for z in (0, dz) for y in (0, dy) for x in (0, dx)]
+    pairs = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7),
+             (0, 4), (1, 5), (2, 6), (3, 7)]
+    edges = []
+    for a, b in pairs:
+        if (pts[a] - pts[b]).Length > 1e-9:
+            edges.append(Part.LineSegment(placement.multVec(pts[a]),
+                                          placement.multVec(pts[b])).toShape())
+    if not edges:
+        raise topo.GeometryError("The bodies have no size.")
+    return Part.makeCompound(edges)
+
+
+def centre_of_mass(solids):
+    """The centre of mass of solids of one density."""
+    solids = [s for s in solids if s is not None and s.Volume > 1e-12]
+    if not solids:
+        raise topo.GeometryError("There is no solid body: the centre of mass needs one.")
+    total = sum(s.Volume for s in solids)
+    c = App.Vector()
+    for s in solids:
+        c += s.CenterOfMass * (s.Volume / total)
+    return c
+
+
+def cosmetic_thread(centre, axis, radius, length):
+    """What a cosmetic thread shows: its diameter as circles at both ends and four
+    lines along it."""
+    a = _unit(axis)
+    end = centre + a * length
+    x = _any_perp(a)
+    y = a.cross(x)
+    edges = [Part.makeCircle(radius, centre, a), Part.makeCircle(radius, end, a)]
+    for d in (x, y, -x, -y):
+        edges.append(Part.LineSegment(centre + d * radius, end + d * radius).toShape())
+    return Part.makeCompound(edges)

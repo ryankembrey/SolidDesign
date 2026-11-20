@@ -2,10 +2,13 @@
 """Fillet (SolidWorks' Fillet): Constant Size, Variable Size, Face Fillet and
 Full Round Fillet.
 
-- **Constant Size:** one radius on the picked edges (a face fillets all its edges).
+- **Constant Size:** one radius on the picked edges (a face fillets all its edges);
+  Symmetric or Asymmetric (a distance on each face), with a Circular, Conic Rho or
+  Curvature Continuous profile.
 - **Variable Size:** the radius runs from a start to an end radius along each chain
-  of tangent edges.
-- **Face Fillet:** rounds where two sets of faces meet.
+  of tangent edges, through radii set at points along it.
+- **Face Fillet:** rounds where two sets of faces meet (planar faces that don't
+  touch too, across the gap), optionally held to a hold line.
 - **Full Round Fillet:** replaces a centre face with a round that meets the two
   side faces tangentially (a rib's top); straight ribs between parallel planar
   sides in this version.
@@ -17,13 +20,17 @@ import FreeCAD as App
 import Part
 
 from .. import topo
-from . import common, edges as edgemod
+from . import blend, common, edges as edgemod
 
 CONSTANT = "Constant Size"
 VARIABLE = "Variable Size"
 FACE = "Face Fillet"
 FULL_ROUND = "Full Round Fillet"
 TYPES = [CONSTANT, VARIABLE, FACE, FULL_ROUND]
+SYMMETRIC = "Symmetric"
+ASYMMETRIC = "Asymmetric"
+METHODS = [SYMMETRIC, ASYMMETRIC]
+PROFILES = blend.PROFILES
 
 
 class Params(object):
@@ -38,6 +45,13 @@ class Params(object):
         self.faces2 = []            # Face Fillet: face set 2; Full Round: side face set 2
         self.centre = []            # Full Round: centre face set
         self.tangent = True         # Tangent propagation
+        self.method = SYMMETRIC     # Constant Size
+        self.distance2 = 1.0        # Asymmetric: the distance on the second face
+        self.flip = False           # Asymmetric: swap which face gets which distance
+        self.profile = blend.CIRCULAR
+        self.rho = 0.5              # Conic Rho
+        self.points = []            # Variable Size: [(fraction 0..1, radius)] between the ends
+        self.hold = []              # Face Fillet: hold line edges
         self.feature = "Fillet"
         self.tag = 1
 
@@ -47,6 +61,9 @@ def compute(p, base):
     if p.kind == FULL_ROUND:
         return _full_round(p, base)
     if p.kind == FACE:
+        gap = _gap_fillet(p, base)
+        if gap is not None:
+            return gap
         groups = _shared_edges(p, base)
     else:
         if not p.items:
@@ -57,6 +74,8 @@ def compute(p, base):
             raise topo.GeometryError("Both radii must be greater than zero.")
     elif p.radius <= 0:
         raise topo.GeometryError("The radius must be greater than zero.")
+    if p.kind == CONSTANT and p.method == ASYMMETRIC and p.distance2 <= 0:
+        raise topo.GeometryError("Both distances must be greater than zero.")
     out = base.copy()
     res = common.Result(out)
     changed = []
@@ -68,8 +87,14 @@ def compute(p, base):
         if p.tangent:
             es = edgemod.tangent_chain(body.shape, es)
         shape = topo.tagged(body.shape, p.tag)
+        if shape is not body.shape:     # tagging copied it: its own edges, then
+            es = [x for x in (edgemod.find_in(shape, e) for e in es) if x is not None]
         try:
-            if p.kind == VARIABLE:
+            law = _section_law(p)
+            if law is not None:
+                r = blend.blend(shape, es, law, p.profile if p.kind == CONSTANT else
+                                blend.CIRCULAR, p.rho, p.tag, _size(p))
+            elif p.kind == VARIABLE:
                 r = _variable(shape, es, p)
             else:
                 r = shape.makeFillet(p.radius, es)
@@ -91,6 +116,31 @@ def compute(p, base):
         changed.append(r)
     preview = topo.compound(changed, p.tag) if changed else None
     return res, preview
+
+
+def _section_law(p):
+    """The section construction's law when OpenCASCADE's fillet can't do it, else None."""
+    if p.kind == CONSTANT:
+        if p.method == ASYMMETRIC:
+            d1, d2 = (p.distance2, p.radius) if p.flip else (p.radius, p.distance2)
+            return blend.Law.constant_distances(d1, d2)
+        if p.profile != blend.CIRCULAR:
+            return blend.Law.constant_radius(p.radius)
+        return None
+    if p.kind == VARIABLE and p.points:
+        r0, r1 = (p.end_radius, p.start_radius) if p.reverse else (p.start_radius, p.end_radius)
+        pts = [(0.0, r0)] + [(min(max(f, 0.0), 1.0), r) for f, r in p.points] + [(1.0, r1)]
+        if any(r <= 0 for _f, r in pts):
+            raise topo.GeometryError("Every radius must be greater than zero.")
+        return blend.Law.radius_points(pts)
+    if p.kind == FACE and p.hold:
+        return blend.Law(hold=list(p.hold))
+    return None
+
+
+def _size(p):
+    vals = [p.radius, p.distance2, p.start_radius, p.end_radius] + [r for _f, r in p.points]
+    return max(vals)
 
 
 def _name(bid):
@@ -170,6 +220,32 @@ def _variable(shape, es, p):
 
 # ------------------------------------------------------------------ face fillet
 
+def _gap_fillet(p, base):
+    """Face Fillet between two faces that don't touch (one each, flat): across the
+    gap. None when the sets meet (the ordinary face fillet)."""
+    if not p.faces1 or not p.faces2 or len(p.faces1) != 1 or len(p.faces2) != 1:
+        return None
+    g1 = edgemod.faces_by_body(base, p.faces1)
+    g2 = edgemod.faces_by_body(base, p.faces2)
+    (b1, fs1), = g1.items()
+    (b2, fs2), = g2.items()
+    if b1 != b2:
+        raise topo.GeometryError("Both face sets must be on the same body.")
+    f1, f2 = fs1[0], fs2[0]
+    if any(e.isSame(x) for e in f1.Edges for x in f2.Edges):
+        return None
+    if p.radius <= 0:
+        raise topo.GeometryError("The radius must be greater than zero.")
+    body = base.get(b1)
+    r = blend.across_gap(topo.tagged(body.shape, p.tag), f1, f2, p.radius,
+                         profile=blend.CIRCULAR, tag=p.tag)
+    out = base.copy()
+    res = common.Result(out)
+    out.replace(b1, r.Solids[0] if len(r.Solids) == 1 else r, p.feature)
+    res.touched.append(b1)
+    return res, r
+
+
 def _shared_edges(p, base):
     """Face Fillet: the edges where face set 1 meets face set 2, by body."""
     if not p.faces1 or not p.faces2:
@@ -188,8 +264,8 @@ def _shared_edges(p, base):
         if es:
             out[bid] = es
     if not out:
-        raise topo.GeometryError("The two face sets don't meet. A face fillet across a gap "
-                                 "isn't supported yet: pick faces that share edges.")
+        raise topo.GeometryError("The two face sets don't meet. Across a gap, pick one flat "
+                                 "face in each set.")
     return out
 
 

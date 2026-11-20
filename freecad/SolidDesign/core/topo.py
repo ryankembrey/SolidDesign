@@ -87,19 +87,39 @@ def shape_of(obj, subname=None):
 
 # ---------------------------------------------------------------- booleans
 
-def fuse(base, tools, tag):
+def fuse(base, tools, tag, fuzzy=0.0):
+    """``fuzzy``: a tolerance for shapes that touch tangentially (a fillet's tool)."""
     base = tagged(base, tag)
     tools = [tagged(t, tag) for t in tools]
     if not tools:
         return base
-    return _run("fuse", tag, lambda: base.fuse(tools))
+    if fuzzy:
+        out = _run("fuse", tag, lambda: base.fuse(tools, fuzzy))
+    else:
+        out = _run("fuse", tag, lambda: base.fuse(tools))
+    had = sum(len(x.Solids) for x in [base] + tools)
+    if had and not out.Solids:
+        # OpenCASCADE sometimes loses everything when faces only touch (a ring sitting
+        # on a cylinder's rim): try again with a little tolerance, else say so.
+        size = max(base.BoundBox.DiagonalLength, 1.0)
+        try:
+            out = _run("fuse", tag, lambda: base.fuse(tools, 1e-6 * size))
+        except GeometryError:
+            out = None
+        if out is None or not out.Solids:
+            raise GeometryError("Joining the bodies failed: they only touch along an edge or "
+                                "a face. Overlap them a little, or keep them as separate "
+                                "bodies (Merge result off).")
+    return out
 
 
-def cut(base, tools, tag):
+def cut(base, tools, tag, fuzzy=0.0):
     base = tagged(base, tag)
     tools = [tagged(t, tag) for t in tools]
     if not tools:
         return base
+    if fuzzy:
+        return _run("cut", tag, lambda: base.cut(tools, fuzzy))
     return _run("cut", tag, lambda: base.cut(tools))
 
 
@@ -270,24 +290,56 @@ def offset_faces(shape, offsets, tag):
     return _run("offsetfaces", tag, go)
 
 
+SCRATCH = "SDScratch"
+
+
+def scratch_doc():
+    """A hidden document for operations FreeCAD only offers as document objects.
+    It stays open for the session and is emptied after each use: closing a
+    document ends the transaction the user has open in theirs (their Cancel and
+    Undo would stop working)."""
+    for d in App.listDocuments().values():
+        if d.Name == SCRATCH:
+            return d
+    active = App.ActiveDocument
+    d = App.newDocument(SCRATCH, "Solid Design scratch", True, True)
+    try:
+        d.UndoMode = 0
+    except Exception:
+        pass
+    if active is not None and App.ActiveDocument is not active:
+        try:
+            App.setActiveDocument(active.Name)
+        except Exception:
+            pass
+    return d
+
+
+def clear_scratch(doc):
+    for _round in range(3):
+        names = [o.Name for o in doc.Objects]
+        if not names:
+            return
+        for n in reversed(names):
+            try:
+                if doc.getObject(n) is not None:
+                    doc.removeObject(n)
+            except Exception:
+                pass
+
+
 class _Scratch(object):
-    """A hidden, temporary document for operations FreeCAD only offers as
-    document objects. The active document is put back afterwards."""
-    _n = [0]
+    """The scratch document, emptied afterwards; the active document is put back."""
 
     def __enter__(self):
         self.active = App.ActiveDocument
-        _Scratch._n[0] += 1
-        self.doc = App.newDocument("SDScratch%d" % _Scratch._n[0], "Solid Design scratch",
-                                   True, True)
+        self.doc = scratch_doc()
+        clear_scratch(self.doc)
         return self.doc
 
     def __exit__(self, *exc):
-        try:
-            App.closeDocument(self.doc.Name)
-        except Exception:
-            pass
-        if self.active is not None:
+        clear_scratch(self.doc)
+        if self.active is not None and App.ActiveDocument is not self.active:
             try:
                 App.setActiveDocument(self.active.Name)
             except Exception:

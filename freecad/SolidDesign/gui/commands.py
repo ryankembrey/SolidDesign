@@ -394,6 +394,15 @@ REFGEOM = {
     "csys": ("Coordinate System", "CoordinateSystem",
              "Adds a coordinate system from an origin and X and Y directions (all optional). "
              "Sketches can be attached to it."),
+    "bbox": ("Bounding Box", "BoundingBox",
+             "Adds a box round the bodies: the smallest one, or one square to a plane. Its "
+             "length, width and thickness follow the model."),
+    "cosmetic": ("Cosmetic Thread", "CosmeticThread",
+                 "Shows a thread on a shaft or in a hole without modelling it: pick the "
+                 "circular edge where it starts."),
+    "com": ("Center of Mass", "CenterOfMass",
+            "Adds a point at the solid bodies' centre of mass; it follows the model and can "
+            "be used like any point."),
 }
 
 
@@ -413,6 +422,7 @@ class RefGeomTool(object):
 
     def Activated(self):
         from ..app import refgeom as app_refgeom
+        from ..core import refgeom as core_ref
         doc = _doc()
         part = active.active_part(doc)
         picks = []
@@ -437,6 +447,20 @@ class RefGeomTool(object):
             obj = app_refgeom.create_helix(doc, part, None, [circle] if circle else [])
             if circle and circle[0].TypeId.startswith("Sketcher::SketchObject"):
                 circle[0].ViewObject.Visibility = False
+        elif self.kind == "cosmetic":
+            edge = next((r for k, r in picks if k == "curve" and
+                         hasattr(r[0].getSubObject(r[1]).Curve, "Radius")), None) \
+                if picks else None
+            obj = app_refgeom.create_cosmetic_thread(doc, part, edge)
+        elif self.kind in ("bbox", "com"):
+            ids = _selected_bodies(part)
+            plane = next((r for k, r in picks if k == "plane"), None)
+            if self.kind == "bbox":
+                obj = app_refgeom.create_bounding_box(
+                    doc, part, core_ref.REFERENCE_PLANE if plane else None,
+                    [plane] if plane else [], ids)
+            else:
+                obj = app_refgeom.create_centre_of_mass(doc, part, ids)
         elif self.kind == "csys":
             # The first point is the origin; the first two directions are X and Y.
             origin = next((r for k, r in picks if k == "point"), None)
@@ -631,6 +655,84 @@ def _deform_prefill(part):
     return out
 
 
+def _variable_prefill(part):
+    feats = _selected_features(part)
+    return {"Features": feats[:1]} if feats else {}
+
+
+def _fastening(name):
+    def fn(doc, part, **props):
+        from ..app import fastening
+        return getattr(fastening, name)(doc, part, **props)
+    return fn
+
+
+def _placed_prefill(part):
+    """A face clicked on a body places a boss or hook where it was clicked."""
+    out = {}
+    for se in Gui.Selection.getSelectionEx("", 0):
+        pts = list(getattr(se, "PickedPoints", []) or [])
+        subs = list(se.SubElementNames)
+        if pts and subs and subs[-1].startswith("Face") and util.is_body_view(se.Object):
+            items = _picked_items(part, ("Face",))
+            if items:
+                from ..app.surfaces import vec_text
+                out["Items"] = items[:1]
+                out["Position"] = vec_text(pts[-1])
+            break
+    return out
+
+
+def _lip_prefill(part):
+    ids = _selected_bodies(part)
+    out = {}
+    if ids:
+        out["GrooveBody"] = ids[0]
+    if len(ids) > 1:
+        out["LipBody"] = ids[1]
+    return out
+
+
+def _vent_prefill(part):
+    sk = next((s for s in Gui.Selection.getSelection()
+               if s.TypeId.startswith("Sketcher::SketchObject")), None)
+    return {"Sketch": sk} if sk is not None else {}
+
+
+class FasteningGroup(object):
+    """Fastening Features: one toolbar button with a drop-down (SolidWorks' flyout)."""
+
+    def GetCommands(self):
+        return ("SD_MountingBoss", "SD_SnapHook", "SD_LipGroove", "SD_Vent")
+
+    def GetDefaultCommand(self):
+        return 0
+
+    def GetResources(self):
+        return {"Pixmap": icon("MountingBoss"), "MenuText": "Fastening Features",
+                "ToolTip": "Mounting boss, snap hook, lip/groove or vent.",
+                "DropDownMenu": True, "Exclusive": False}
+
+    def IsActive(self):
+        return _doc() is not None and not Gui.Control.activeDialog()
+
+
+class ThreadGroup(object):
+    def GetCommands(self):
+        return ("SD_Thread", "SD_CosmeticThread")
+
+    def GetDefaultCommand(self):
+        return 0
+
+    def GetResources(self):
+        return {"Pixmap": icon("Thread"), "MenuText": "Threads",
+                "ToolTip": "A modelled thread, or a cosmetic one.",
+                "DropDownMenu": True, "Exclusive": False}
+
+    def IsActive(self):
+        return _doc() is not None and not Gui.Control.activeDialog()
+
+
 def _deform(name):
     def fn(doc, part, **props):
         from ..app import deform
@@ -813,15 +915,16 @@ class RefGeomGroup(object):
     Plane first and the default."""
 
     def GetCommands(self):
-        return ("SD_Plane", "SD_Axis", "SD_CoordinateSystem", "SD_Point")
+        return ("SD_Plane", "SD_Axis", "SD_CoordinateSystem", "SD_Point", "SD_BoundingBox",
+                "SD_CenterOfMass")
 
     def GetDefaultCommand(self):
         return 0
 
     def GetResources(self):
         return {"Pixmap": icon("Plane"), "MenuText": "Reference Geometry",
-                "ToolTip": "Adds reference geometry: a plane, an axis, a coordinate system or "
-                           "a point.",
+                "ToolTip": "Adds reference geometry: a plane, an axis, a coordinate system, "
+                           "a point, a bounding box or the centre of mass.",
                 "DropDownMenu": True, "Exclusive": False}
 
     def IsActive(self):
@@ -854,7 +957,7 @@ class PatternGroup(object):
 
     def GetCommands(self):
         return ("SD_LinearPattern", "SD_CircularPattern", "SD_CurvePattern",
-                "SD_SketchPattern", "SD_TablePattern", "SD_FillPattern")
+                "SD_SketchPattern", "SD_TablePattern", "SD_FillPattern", "SD_VariablePattern")
 
     def GetDefaultCommand(self):
         return 0
@@ -963,6 +1066,9 @@ def register():
         ("SD_FillPattern", "FillPattern", "Fill Pattern", "Fills a face with features, or "
          "with cuts of a simple shape, in rows or rings.", pattern.create_fill,
          _fill_prefill),
+        ("SD_VariablePattern", "VariablePattern", "Variable Pattern", "Repeats a feature "
+         "with its dimensions changed per instance, from a table: position, size or depth.",
+         pattern.create_variable, _variable_prefill),
         ("SD_HoleWizard", "HoleWizard", "Hole Wizard", "Inserts holes of a standard type "
          "and size at points on a face or a sketch.", _hole_create, _hole_prefill),
     ]
@@ -1037,6 +1143,18 @@ def register():
          "on it; its edges stay put.", _deform("create_freeform"), _items_prefill("Face")),
         ("SD_SurfaceFlatten", "SurfaceFlatten", "Surface Flatten", "Lays faces out flat as "
          "a new surface body.", _deform("create_flatten"), _items_prefill("Face")),
+        ("SD_MountingBoss", "MountingBoss", "Mounting Boss", "Adds a round boss on a face, "
+         "with a hole or a pin and optional fins: click where it goes.",
+         _fastening("create_mounting_boss"), _placed_prefill),
+        ("SD_SnapHook", "SnapHook", "Snap Hook", "Adds a snap hook (a beam with a catch on its "
+         "tip) on a face: click where it goes.", _fastening("create_snap_hook"),
+         _placed_prefill),
+        ("SD_LipGroove", "LipGroove", "Lip/Groove", "Where two bodies meet on a flat face, "
+         "grows a lip out of one and cuts a matching groove in the other.",
+         _fastening("create_lip_groove"), _lip_prefill),
+        ("SD_Vent", "Vent", "Vent", "Cuts a vent from a sketch: its outer loop opens the "
+         "wall, its lines stay as ribs and its inner loops as spars.",
+         _fastening("create_vent"), _vent_prefill),
         ("SD_Thicken", "Thicken", "Thicken", "Thickens a surface body into a solid, or cuts "
          "the solids with it (Add | Cut in the panel).",
          app_surf.create_thicken, _thicken_prefill("Add")),
@@ -1048,8 +1166,13 @@ def register():
     Gui.addCommand("SD_Point", RefGeomTool("point"))
     Gui.addCommand("SD_CoordinateSystem", RefGeomTool("csys"))
     Gui.addCommand("SD_Helix", RefGeomTool("helix"))
+    Gui.addCommand("SD_BoundingBox", RefGeomTool("bbox"))
+    Gui.addCommand("SD_CosmeticThread", RefGeomTool("cosmetic"))
+    Gui.addCommand("SD_CenterOfMass", RefGeomTool("com"))
     Gui.addCommand("SD_ReferenceGeometry", RefGeomGroup())
     Gui.addCommand("SD_Patterns", PatternGroup())
     Gui.addCommand("SD_Curves", CurvesGroup())
     Gui.addCommand("SD_MoreSurfaces", MoreSurfacesGroup())
     Gui.addCommand("SD_DeformBodies", DeformGroup())
+    Gui.addCommand("SD_Fastening", FasteningGroup())
+    Gui.addCommand("SD_Threads", ThreadGroup())

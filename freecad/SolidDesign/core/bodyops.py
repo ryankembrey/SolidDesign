@@ -2,6 +2,8 @@
 """Body tools (spec 3.3): Combine, Delete/Keep Body, Split, Move/Copy Body.
 Pure functions of a BodySet; IDs follow core/bodies.py."""
 
+import math
+
 import FreeCAD as App
 import Part
 
@@ -96,25 +98,96 @@ def delete_keep(base, kind, ids):
 
 # ------------------------------------------------------------------ Split
 
-def filled(face):
-    """The face with its holes patched on its own surface."""
+CLOSED_SURFACES = ("Part::GeomSphere", "Part::GeomToroid")
+
+
+def filled(face, big=1000.0):
+    """The face with its holes patched on its own surface. A sphere or torus face
+    that is all of the surface but its holes (a sphere a cylinder pokes out of)
+    is patched to the whole sphere or torus."""
+    s = face.Surface
+    if s.TypeId in CLOSED_SURFACES and len(face.Wires) < 3:
+        whole = extended(face, big)
+        # One loop on a closed surface: the face is either the part with a hole or
+        # the small cap inside it; the bigger side is the one with the hole.
+        if len(face.Wires) == 1 and face.Area > 0.5 * whole.Area:
+            return whole
     if len(face.Wires) < 2:
         return face
+    if s.TypeId in ("Part::GeomCylinder", "Part::GeomCone"):
+        # A face all the way round: the band between its lowest and highest points
+        # along the axis, holes and all.
+        u0, u1, v0, v1 = face.ParameterRange
+        if u1 - u0 > 2 * math.pi - 1e-6:
+            try:
+                out = s.toShape(0.0, 2 * math.pi, v0, v1)
+                if out.isValid() and out.Area > face.Area - 1e-9:
+                    return out
+            except Exception:
+                pass
     try:
-        out = Part.Face(face.Surface, face.OuterWire)
+        out = Part.Face(s, face.OuterWire)
         out.validate()
         if out.isValid() and out.Area > face.Area - 1e-9:
             return out
     except Exception:
         pass
-    raise topo.GeometryError("Split: couldn't patch the holes in a curved trim face. "
-                             "Use a plane or a surface body instead.")
+    raise topo.GeometryError("Split: couldn't patch the holes in a curved trim face. Use "
+                             "Extend Faces, a plane or a surface body instead.")
 
 
-def trim_shapes(planes=(), faces=(), sketches=(), surfaces=(), big=1000.0):
+def extended(face, big=1000.0):
+    """The face's whole surface, not bound by its edges: a plane or a cylinder
+    reaching ``big`` either way, a whole sphere or torus, a cone up to its apex,
+    a B-spline's whole patch."""
+    s = face.Surface
+    t = s.TypeId
+    if t == "Part::GeomPlane" and face.BoundBox.DiagonalLength > 1e8:
+        # A datum plane (unbounded): its own position and normal.
+        return Part.Plane(App.Vector(s.Position), App.Vector(s.Axis)).toShape(
+            -big, big, -big, big)
+    try:
+        c = face.CenterOfMass
+    except Exception:
+        c = face.BoundBox.Center
+    try:
+        uc, vc = s.parameter(c)
+    except Exception:
+        uc, vc = 0.0, 0.0
+    tau = 2 * math.pi
+    try:
+        if t == "Part::GeomPlane":
+            n = face.normalAt(*face.Surface.parameter(c))
+            return Part.Plane(c, n).toShape(-big, big, -big, big)
+        if t == "Part::GeomCylinder":
+            return s.toShape(0.0, tau, vc - big, vc + big)
+        if t == "Part::GeomCone":
+            apex = -s.Radius / math.sin(s.SemiAngle) if abs(math.sin(s.SemiAngle)) > 1e-12 \
+                else -big
+            eps = 1e-6 * big
+            if vc > apex:
+                return s.toShape(0.0, tau, apex + eps, max(vc + big, apex + 2 * eps))
+            return s.toShape(0.0, tau, min(vc - big, apex - 2 * eps), apex - eps)
+        if t == "Part::GeomSphere":
+            return s.toShape(0.0, tau, -math.pi / 2, math.pi / 2)
+        if t == "Part::GeomToroid":
+            return s.toShape(0.0, tau, 0.0, tau)
+        if t == "Part::GeomSurfaceOfExtrusion":
+            u0, u1, _v0, _v1 = s.bounds()
+            return s.toShape(u0, u1, vc - big, vc + big)
+        u0, u1, v0, v1 = s.bounds()
+        if all(abs(x) < 1e50 for x in (u0, u1, v0, v1)):
+            return s.toShape(u0, u1, v0, v1)
+    except Exception:
+        pass
+    raise topo.GeometryError("Split: couldn't extend a trim face past its edges.")
+
+
+def trim_shapes(planes=(), faces=(), sketches=(), surfaces=(), big=1000.0, extend=False):
     """Turn trim tools into cutting faces: planes become large faces, sketches are
     swept both ways along their normal (as SolidWorks does), surface bodies are
-    used as they are. A face has its inner loops filled: a protrusion whose
+    used as they are (``extend``: every face is grown over its whole surface, so it
+    cuts wherever that surface would). A face has its inner loops filled: a protrusion whose
     every edge on the face is bounded by the face (a cylinder standing on a cube
     top) is cut off as if the face were a plane there. Loops that touch the
     face's outer boundary aren't inner loops, so they are not filled."""
@@ -131,8 +204,13 @@ def trim_shapes(planes=(), faces=(), sketches=(), surfaces=(), big=1000.0):
         moved.translate(normal * (-big))
         for e in moved.Edges:
             out.append(e.extrude(normal * (2 * big)))
-    out.extend(filled(f) for f in faces)
-    out.extend(surfaces)
+    if extend:
+        # Each face (and each face of a surface body) cuts wherever its surface goes.
+        out.extend(extended(f, big) for f in faces)
+        out.extend(extended(f, big) for s in surfaces for f in s.Faces)
+    else:
+        out.extend(filled(f, big) for f in faces)
+        out.extend(surfaces)
     if not out:
         raise topo.GeometryError("Split: pick trim tools (planes, faces, surface bodies or "
                                  "sketches).")

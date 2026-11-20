@@ -97,40 +97,9 @@ class RevolvePanel(SketchFeaturePanel):
                                  checkable=True, prop="Direction2")
         self.d2 = RevolveDirection(self, self.sec_d2, "2")
 
-    # ------------------------------------------------------------ drag handles
-    def _handles(self):
-        if getattr(self, "_h", None) is None:
-            from .handles import Handles, RingHandle
-            self._handle_set = Handles()
-            self._h = (self._handle_set.add(RingHandle(lambda v: self._dragged(self.d1, v))),
-                       self._handle_set.add(RingHandle(lambda v: self._dragged(self.d2, v))))
-            self._handle_set.listen()
-        return self._h
-
-    def _dragged(self, widgets, v):
-        widgets.angle.spin.setProperty("rawValue", float(v))
-
     def place_handles(self):
-        """Rings round the axis, one per direction with an angle (Instant3D)."""
-        if self._closing:
-            return
-        from .handles import revolve_specs
-        r1, r2 = self._handles()
-        shown = set()
-        for prop, centre, axis, ref, radius, value in revolve_specs(self.obj, self.part):
-            r = r1 if prop == "Angle" else r2
-            r.place(centre, axis, ref, radius, value)
-            r.attach()
-            shown.add(prop)
-        if "Angle" not in shown:
-            r1.detach()
-        if "Angle2" not in shown:
-            r2.detach()
-
-    def on_close(self):
-        if getattr(self, "_handle_set", None) is not None:
-            self._handle_set.stop()
-        super(RevolvePanel, self).on_close()
+        """The angle rings (the shared draggers)."""
+        self.place_drag_handles()
 
     def _accept_axis(self, sel):
         o = sel.obj

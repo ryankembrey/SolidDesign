@@ -99,7 +99,8 @@ class ToolPanel(FeaturePanel):
             if o is self.obj or (o in feats and self.obj in feats and
                                  feats.index(o) > feats.index(self.obj)):
                 return "Pick a feature above this one."
-            if "ToolShape" not in o.PropertiesList:
+            if "ToolShape" not in o.PropertiesList and \
+                    getattr(getattr(o, "Proxy", None), "TYPE", "") not in ("Fillet", "Chamfer"):
                 return "{} can't be repeated; pattern the bodies instead.".format(o.Label)
             return o.Name, o.Label
 
@@ -247,6 +248,8 @@ class DeleteBodyPanel(ToolPanel):
 
 class SplitPanel(ToolPanel):
     TITLE = "Split"
+    WITHIN = "Within their edges"
+    EXTENDED = "Past their edges"
 
     def build(self):
         obj = self.obj
@@ -271,6 +274,21 @@ class SplitPanel(ToolPanel):
                                "What the bodies are split with: planes, faces, surface bodies "
                                "or sketches")
         self.tools.changed.connect(self._tools_changed)
+        # Asked as soon as a face or surface is picked: how far does it cut?
+        self.reach_q = QtWidgets.QLabel("How far should the picked faces and surfaces cut?")
+        self.reach_q.setWordWrap(True)
+        g.wide(self.reach_q)
+        self.reach = parts.Switch(
+            [self.WITHIN, self.EXTENDED],
+            tips={self.WITHIN: "Only where the face is. Holes in it are patched, so a "
+                               "bit poking through it (a cylinder out of a sphere) is "
+                               "cut off",
+                  self.EXTENDED: "Grow each face over its whole surface (a plane without "
+                                 "edges, a whole cylinder or sphere) and cut everything "
+                                 "that would cross it"})
+        self.reach.changed.connect(
+            lambda m: self.set_prop("ExtendFaces", m == self.EXTENDED))
+        self.r_reach = g.wide(self.reach, "How far the faces and surfaces cut")
         self.sec_targets = self.group("Target Bodies")
         self.targets = self.bodies_box(self.sec_targets, "TargetBodies",
                                        "The bodies to split. Empty: every body the tools cut.",
@@ -306,6 +324,7 @@ class SplitPanel(ToolPanel):
         self.obj.TrimTools = objs
         refs.set_ref(self.obj, "TrimFaces", self.obj.BaseFeature if faces else None, faces)
         self.obj.TrimBodies = bodies
+        self._show_reach()
         self.changed()
 
     def _piece_changed(self, it):
@@ -326,7 +345,15 @@ class SplitPanel(ToolPanel):
         self.obj.KeepPieces = [] if all_kept else keep
         self.changed()
 
+    def _show_reach(self):
+        faced = any(k in ("face", "body") for k, _v in self.tools.payloads())
+        self.reach_q.setVisible(faced)
+        self.reach.setVisible(faced)
+        self.reach.set_value(self.EXTENDED if getattr(self.obj, "ExtendFaces", False)
+                             else self.WITHIN)
+
     def refresh(self):
+        self._show_reach()
         try:
             pieces = json.loads(self.obj.Pieces or "[]")
         except ValueError:
@@ -781,6 +808,17 @@ class HolePanel(ToolPanel):
                                                   "Slot direction, from the sketch's X axis",
                                                   unit="deg", minimum=-360.0, maximum=360.0,
                                                   step=15.0)
+        g = self.sec_legacy = self.group("Legacy Hole", "An older hole type, sized by its "
+                                         "own dimensions")
+        self.legacy, _r = self.choice(g, "LegacyType", "Type",
+                                      "Simple, Tapered, Counterbored, Countersunk or "
+                                      "Counterdrilled")
+        self.taper, self.r_taper = self.qty(g, "TaperAngle", "Taper angle",
+                                            "Tapered: how far the wall leans", unit="deg",
+                                            maximum=44.0, step=0.5)
+        self.cdrill, self.r_cdrill = self.qty(g, "CdrillAngle", "Counterdrill angle",
+                                              "Counterdrilled: the cone down to the hole",
+                                              unit="deg", maximum=179.0, step=1.0)
         c = self.sec_custom = self.group("Custom Sizing", "Use your own dimensions instead of "
                                          "the standard's", checkable=True, prop="CustomSizing")
         self.c_d, _r = self.qty(c, "HoleDiameter", "Hole diameter", "Diameter of the hole",
@@ -958,11 +996,23 @@ class HolePanel(ToolPanel):
         tap = t in H.TAPS
         slot = t in H.SLOTS
         adv = t == H.ADVANCED
-        self.sec_spec.setVisible(not adv)
+        legacy = t == H.LEGACY
+        lt = self.obj.LegacyType
+        self.sec_legacy.setVisible(legacy)
+        self.r_taper.set_visible(lt == H.L_TAPERED)
+        self.r_cdrill.set_visible(lt == H.L_CDRILL)
+        self.sec_spec.setVisible(not adv and not legacy)
         self.sec_custom.setVisible(not adv)
+        # A legacy hole is always sized by its own dimensions: no check box then.
+        if legacy and self.sec_custom.isCheckable():
+            self.sec_custom.setCheckable(False)
+            self.sec_custom._show_body(True)
+        elif not legacy and not self.sec_custom.isCheckable():
+            self.sec_custom.setCheckable(True)
+            self.sec_custom.set_checked(self.obj.CustomSizing)
         self.sec_adv.setVisible(adv)
         self.sec_adv_far.setVisible(adv)
-        self.r_std.set_visible(not adv)
+        self.r_std.set_visible(not adv and not legacy)
         for tbl, prop in ((self.near_els, "NearElements"), (self.far_els, "FarElements")):
             if adv and tbl.count() != len(getattr(self.obj, prop)):
                 tbl.load()      # filled by the type change (Advanced starts from the hole)
@@ -970,8 +1020,8 @@ class HolePanel(ToolPanel):
         self.r_thread.set_visible(tap)
         self.r_slot_len.set_visible(slot)
         self.r_slot_ang.set_visible(slot)
-        cb = t in (H.COUNTERBORE, H.CBORE_SLOT)
-        cs = t in (H.COUNTERSINK, H.CSK_SLOT)
+        cb = t in (H.COUNTERBORE, H.CBORE_SLOT) or (legacy and lt in (H.L_CBORE, H.L_CDRILL))
+        cs = t in (H.COUNTERSINK, H.CSK_SLOT) or (legacy and lt == H.L_CSK)
         self.r_cbd.set_visible(cb)
         self.r_cbh.set_visible(cb)
         self.r_csd.set_visible(cs)
@@ -980,7 +1030,7 @@ class HolePanel(ToolPanel):
         blind = e == H.BLIND
         self.r_depth.set_visible(blind)
         self.r_tip.set_visible(blind and not slot)
-        self.r_tdepth.set_visible(t == H.STRAIGHT_TAP and blind and
+        self.r_tdepth.set_visible(t in H.TAPS and blind and
                                   self.obj.ThreadOption == H.MODELLED)
         self.up_to.row.set_visible(e in (H.UP_TO_VERTEX, H.UP_TO_SURFACE,
                                          H.OFFSET_FROM_SURFACE))

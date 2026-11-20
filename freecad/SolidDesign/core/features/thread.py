@@ -165,9 +165,10 @@ def compute(p, base):
     return res, tool, s
 
 
-def _tool(s, start, L, pitch, h, sign, left, starts, tag):
+def _tool(s, start, L, pitch, h, sign, left, starts, tag, taper=0.0):
     """The thread's material (to cut or add): profiles swept along helices, trimmed
-    square to [start, start + L]."""
+    square to [start, start + L]. ``taper``: diameter lost per unit of length along the
+    axis (a tapered pipe thread follows a cone)."""
     r = s.radius
     d = s.axis
     x = _perp(d)
@@ -181,7 +182,9 @@ def _tool(s, start, L, pitch, h, sign, left, starts, tag):
     far = r + sign * h
     near = r - sign * over
     z0 = -lead                  # start a turn early; trimmed below
-    pts2d = [(far, -flat / 2.0), (far, flat / 2.0), (near, w_over), (near, -w_over)]
+    grow = 0.5 * taper * lead           # the radius at z0 is this much wider
+    pts2d = [(far + grow, -flat / 2.0), (far + grow, flat / 2.0), (near + grow, w_over),
+             (near + grow, -w_over)]
     height = L + 2 * lead
     frame = App.Placement(_matrix(start, x, d))
     pieces = []
@@ -190,7 +193,10 @@ def _tool(s, start, L, pitch, h, sign, left, starts, tag):
         rot = App.Rotation(App.Vector(0, 0, 1), ang)
         pts = [rot.multVec(App.Vector(rr, 0, z0 + zz)) for rr, zz in pts2d]
         prof = Part.makePolygon(pts + [pts[0]])
-        helix = Part.makeHelix(lead, height, r, 0.0, bool(left))
+        if taper:
+            helix = _narrowing_helix(lead, height, r + grow, taper, bool(left))
+        else:
+            helix = Part.makeHelix(lead, height, r, 0.0, bool(left))
         helix.rotate(App.Vector(), App.Vector(0, 0, 1), ang)
         helix.translate(App.Vector(0, 0, z0))
         prof.transformShape(frame.toMatrix(), True)
@@ -207,6 +213,26 @@ def _tool(s, start, L, pitch, h, sign, left, starts, tag):
     if not trimmed.Solids:
         raise topo.GeometryError("The thread came out empty.")
     return trimmed
+
+
+def _narrowing_helix(lead, height, r0, taper, left):
+    """A helix up +Z from (r0, 0, 0) whose radius shrinks by taper / 2 per unit of
+    height. OCC's helix only widens, so a widening one is mirrored, turned round and
+    turned so it starts on +X."""
+    r1 = r0 - 0.5 * taper * height
+    if r1 <= 0:
+        raise topo.GeometryError("The tapered thread closes up; make it shorter.")
+    half = math.degrees(math.atan(0.5 * taper))
+    h = Part.makeHelix(lead, height, r1, half, not left)     # r1 at z 0, r0 at the top
+    h = h.mirror(App.Vector(0, 0, 0), App.Vector(0, 0, 1))
+    h.translate(App.Vector(0, 0, height))                    # r0 at z 0, r1 at the top
+    edges = [e.reversed() for e in reversed(Part.__sortEdges__(h.Edges))]
+    w = Part.Wire(Part.__sortEdges__(edges))
+    p0 = min((v.Point for v in w.Vertexes), key=lambda q: q.z)
+    w.rotate(App.Vector(), App.Vector(0, 0, 1), -math.degrees(math.atan2(p0.y, p0.x)))
+    if w.OrderedVertexes[0].Point.z > w.OrderedVertexes[-1].Point.z:
+        w = Part.Wire([e.reversed() for e in reversed(w.OrderedEdges)])
+    return w
 
 
 def _perp(d):

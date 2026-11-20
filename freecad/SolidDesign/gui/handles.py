@@ -1,15 +1,24 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-"""Drag handles in the 3D view (SolidWorks' Instant3D): arrows you drag to change
-a length and rings you drag to change an angle, with the value shown beside
-them. Clicking the value opens a box to type a new one.
+"""Draggers in the 3D view (SolidWorks' Instant3D), one system for every feature.
 
-An arrow sits where the length ends and points along it. Pressing on it and
-dragging sets the length (snapped: 0.5 mm steps, 0.1 mm under 5 mm); the panel's
-field follows, and the preview with it. Typing in the field moves the arrow.
+- ``Dragger`` is the one base class: a Coin graph drawn on top of the model, a
+  value with its text beside it, the property it sets, and the grab / start /
+  move / stop protocol a drag goes through. ``ArrowDragger`` (a length: an arrow
+  sitting where the length ends) and ``RingDragger`` (an angle: an arc round an
+  axis with a knob) are its two kinds.
+- ``Spec`` says where one dragger goes and what it shows; ``SPECS`` maps each
+  feature type to the function that lists its specs.
+- ``DragSet`` holds the draggers shown together and reads the mouse: press on
+  one and drag, or click its value and type.
+- ``FeatureDraggers`` is what panels and Instant3D use: a feature's draggers,
+  made and placed from its specs. In a panel a drag sets the panel's field
+  (and so the preview); on a selected feature (Instant3D) the feature changes
+  when the drag ends.
 
-The arrows are plain Coin geometry. The drag is read from FreeCAD's own view
-event callbacks: Coin dragger callbacks called through pivy crash FreeCAD when a
-real mouse drives them (they run without Python's lock).
+Dragging snaps lengths to 0.5 mm steps (0.1 mm under 5 mm) and angles to 5
+degrees (1 degree under 30). The drag is read from FreeCAD's own view event
+callbacks: Coin dragger callbacks called through pivy crash FreeCAD when a real
+mouse drives them (they run without Python's lock).
 """
 
 import FreeCAD as App
@@ -17,7 +26,7 @@ import FreeCADGui as Gui
 
 ARROW_COLOR = (0.15, 0.40, 0.85)
 HOT_COLOR = (0.95, 0.55, 0.10)
-GRAB_PX = 9.0           # how near the pointer must be to the arrow to grab it
+GRAB_PX = 9.0           # how near the pointer must be to a dragger to grab it
 
 
 def snap(v):
@@ -25,46 +34,110 @@ def snap(v):
     return round(v / step) * step
 
 
-class DragArrow(object):
-    """One arrow. ``on_drag(value)`` is called as it is dragged (value >= 0)."""
+# ================================================================== draggers
 
-    def __init__(self, on_drag, label="", factor=1.0):
+class Dragger(object):
+    """The base of every dragger. Subclasses build their geometry in ``build()``
+    and implement ``apply(spec)``, ``grab``, ``start``, ``move`` and ``_show``."""
+
+    KIND = ""
+
+    def __init__(self, on_drag, label=""):
         from pivy import coin
         self.coin = coin
-        self.on_drag = on_drag
+        self.on_drag = on_drag          # called with the new value as it is dragged
         self.label = label
-        self.factor = factor            # the value is factor x the arrow's distance
-        self.scale = 1.0
-        self.origin = App.Vector()
-        self.direction = App.Vector(0, 0, 1)
-        self.graph = None
+        self.prop = ""                  # the property it sets
         self.value = 0.0
         self.dragging = False
+        self.graph = None
         self.root = coin.SoAnnotation()     # on top of the model and the preview
         pick = coin.SoPickStyle()
         pick.style = coin.SoPickStyle.UNPICKABLE
         self.root.addChild(pick)
-        self.xf = coin.SoTransform()
-        self.root.addChild(self.xf)
         self.mat = coin.SoMaterial()
         self._colour(ARROW_COLOR)
-        self.root.addChild(self.mat)
-        self.slide = coin.SoTranslation()   # along the arrow: the value
-        self.root.addChild(self.slide)
-        self.root.addChild(self._arrow())
-        self.text_xf = coin.SoTranslation()
-        self.text_xf.translation.setValue(1.15, 0, 0)
-        self.text = coin.SoText2()
-        col = coin.SoBaseColor()
+        self.build()
+
+    def build(self):
+        raise NotImplementedError
+
+    def _text(self, parent, offset=None):
+        """The value's text node, under ``parent``."""
+        c = self.coin
+        self.text_xf = c.SoTranslation()
+        if offset is not None:
+            self.text_xf.translation.setValue(*offset)
+        self.text = c.SoText2()
+        col = c.SoBaseColor()
         col.rgb.setValue(0.1, 0.1, 0.1)
-        font = coin.SoFont()
+        font = c.SoFont()
         font.size = 14
         for n in (col, font, self.text_xf, self.text):
-            self.root.addChild(n)
+            parent.addChild(n)
+
+    def _set_text(self, txt):
+        self.text.string.setValue("{}: {}".format(self.label, txt) if self.label else txt)
 
     def _colour(self, c):
         self.mat.diffuseColor.setValue(*c)
         self.mat.emissiveColor.setValue(*[x * 0.4 for x in c])
+
+    def set_value(self, value):
+        if self.dragging:
+            return
+        self._show(value)
+
+    def stop(self):
+        self.dragging = False
+        self._colour(ARROW_COLOR)
+
+    def attach(self):
+        if self.graph is not None:
+            return
+        try:
+            self.graph = Gui.ActiveDocument.ActiveView.getSceneGraph()
+            self.graph.addChild(self.root)
+        except Exception:
+            self.graph = None
+
+    def detach(self):
+        if self.dragging:
+            self.stop()
+        if self.graph is not None:
+            try:
+                self.graph.removeChild(self.root)
+            except Exception:
+                pass
+        self.graph = None
+
+    def shown(self):
+        return self.graph is not None
+
+
+class ArrowDragger(Dragger):
+    """A length: an arrow whose base sits at origin + value along its direction
+    (``factor``: the value is factor x that distance, 2 for Mid Plane)."""
+
+    KIND = "arrow"
+
+    def build(self):
+        coin = self.coin
+        self.factor = 1.0
+        self.scale = 1.0
+        self.origin = App.Vector()
+        self.direction = App.Vector(0, 0, 1)
+        self.xf = coin.SoTransform()
+        self.root.addChild(self.xf)
+        self.root.addChild(self.mat)
+        self.slide = coin.SoTranslation()   # along the arrow: the value
+        self.root.addChild(self.slide)
+        self.root.addChild(self._arrow())
+        self._text(self.root, (1.15, 0, 0))
+
+    def apply(self, spec):
+        self.factor = spec.factor
+        self.place(spec.origin, spec.direction, spec.value, spec.scale)
 
     def _arrow(self):
         """An arrow along +X: a shaft from 0 to 0.8 and a cone to 1."""
@@ -107,16 +180,10 @@ class DragArrow(object):
         self.xf.scaleFactor.setValue(self.scale, self.scale, self.scale)
         self.set_value(value)
 
-    def set_value(self, value):
-        if self.dragging:
-            return
-        self._show(value)
-
     def _show(self, value):
         self.value = value
         self.slide.translation.setValue(value / self.factor / self.scale, 0, 0)
-        txt = "{:g} mm".format(round(value, 4))
-        self.text.string.setValue("{}: {}".format(self.label, txt) if self.label else txt)
+        self._set_text("{:g} mm".format(round(value, 4)))
 
     def label_point(self):
         """Where the value is written (the start of its text)."""
@@ -182,55 +249,19 @@ class DragArrow(object):
         self._show(v)
         self.on_drag(v)
 
-    def stop(self):
-        self.dragging = False
-        self._colour(ARROW_COLOR)
 
-    # ------------------------------------------------------------ showing
-    def attach(self):
-        if self.graph is not None:
-            return
-        try:
-            self.graph = Gui.ActiveDocument.ActiveView.getSceneGraph()
-            self.graph.addChild(self.root)
-        except Exception:
-            self.graph = None
+class RingDragger(Dragger):
+    """An angle round an axis: an arc from the start to the value, and a knob at its
+    end to drag (degrees, 0 < value <= 360)."""
 
-    def detach(self):
-        if self.dragging:
-            self.stop()
-        if self.graph is not None:
-            try:
-                self.graph.removeChild(self.root)
-            except Exception:
-                pass
-        self.graph = None
+    KIND = "ring"
 
-    def shown(self):
-        return self.graph is not None
-
-
-class RingHandle(object):
-    """A ring for an angle round an axis: an arc from the start to the value, and a
-    knob at its end to drag. ``on_drag(value)`` gets degrees (0 < value <= 360)."""
-
-    def __init__(self, on_drag, label=""):
-        from pivy import coin
-        self.coin = coin
-        self.on_drag = on_drag
-        self.label = label
-        self.graph = None
-        self.value = 0.0
-        self.dragging = False
+    def build(self):
+        coin = self.coin
         self.centre = App.Vector()
         self.axis = App.Vector(0, 0, 1)
         self.ref = App.Vector(1, 0, 0)
         self.radius = 10.0
-        self.root = coin.SoAnnotation()
-        pick = coin.SoPickStyle()
-        pick.style = coin.SoPickStyle.UNPICKABLE
-        self.root.addChild(pick)
-        self.mat = coin.SoMaterial()
         self.root.addChild(self.mat)
         style = coin.SoDrawStyle()
         style.lineWidth = 2.5
@@ -246,20 +277,11 @@ class RingHandle(object):
         knob.addChild(self.sphere)
         self.root.addChild(knob)
         tsep = coin.SoSeparator()
-        self.text_xf = coin.SoTranslation()
-        self.text = coin.SoText2()
-        col = coin.SoBaseColor()
-        col.rgb.setValue(0.1, 0.1, 0.1)
-        font = coin.SoFont()
-        font.size = 14
-        for n in (col, font, self.text_xf, self.text):
-            tsep.addChild(n)
+        self._text(tsep)
         self.root.addChild(tsep)
-        self._colour(ARROW_COLOR)
 
-    def _colour(self, c):
-        self.mat.diffuseColor.setValue(*c)
-        self.mat.emissiveColor.setValue(*[x * 0.4 for x in c])
+    def apply(self, spec):
+        self.place(spec.origin, spec.direction, spec.ref, spec.radius, spec.value)
 
     def place(self, centre, axis, ref, radius, value):
         if self.dragging:
@@ -274,11 +296,6 @@ class RingHandle(object):
         self.radius = max(radius, 1e-6)
         self.sphere.radius = self.radius * 0.06
         self.set_value(value)
-
-    def set_value(self, value):
-        if self.dragging:
-            return
-        self._show(value)
 
     def at(self, deg):
         rot = App.Rotation(self.axis, deg)
@@ -302,8 +319,7 @@ class RingHandle(object):
         self.knob_xf.translation.setValue(k.x, k.y, k.z)
         lp = self.label_point()
         self.text_xf.translation.setValue(lp.x, lp.y, lp.z)
-        txt = u"{:g}\u00b0".format(round(value, 3))
-        self.text.string.setValue("{}: {}".format(self.label, txt) if self.label else txt)
+        self._set_text(u"{:g}\u00b0".format(round(value, 3)))
 
     # ------------------------------------------------------------ dragging
     def grab(self, view, x, y):
@@ -354,27 +370,25 @@ class RingHandle(object):
         self._show(v)
         self.on_drag(v)
 
-    def stop(self):
-        self.dragging = False
-        self._colour(ARROW_COLOR)
-
-    attach = DragArrow.attach
-    detach = DragArrow.detach
-    shown = DragArrow.shown
 
 
-class Handles(object):
-    """The arrows of one panel, and the mouse handling that drags them."""
+DRAGGERS = {ArrowDragger.KIND: ArrowDragger, RingDragger.KIND: RingDragger}
+
+
+# ================================================================== the set
+
+class DragSet(object):
+    """The draggers shown together, and the mouse handling that drags them."""
 
     def __init__(self):
-        self.arrows = []
+        self.draggers = []
         self.active = None
         self.view = None
         self._cbs = []
 
-    def add(self, arrow):
-        self.arrows.append(arrow)
-        return arrow
+    def add(self, dragger):
+        self.draggers.append(dragger)
+        return dragger
 
     def listen(self):
         if self._cbs:
@@ -431,7 +445,7 @@ class Handles(object):
                 pass
             self._gl = None
         self.close_editor()
-        for a in self.arrows:
+        for a in self.draggers:
             a.detach()
         if self.view is not None:
             for t, cb in self._cbs:
@@ -451,12 +465,12 @@ class Handles(object):
             return
         x, y = ev.getPosition().getValue()
         if ev.getState() == coin.SoButtonEvent.DOWN:
-            for a in self.arrows:
+            for a in self.draggers:
                 if a.shown() and self.on_label(a, x, y):
                     node.setHandled()
                     self.edit_value(a)
                     return
-            for a in self.arrows:
+            for a in self.draggers:
                 if a.shown() and a.grab(self.view, x, y) and a.start(self.view, x, y):
                     self.active = a
                     node.setHandled()
@@ -560,7 +574,34 @@ def _EscapeCloses(handles):
     return f
 
 
-# ------------------------------------------------------------------ where they go
+# ================================================================== where they go
+
+class Spec(object):
+    """Where one dragger goes. ``kind`` "arrow": ``origin``, ``direction``,
+    ``value`` (a length), ``scale`` (its size), ``factor``. "ring": ``origin`` (the
+    centre), ``direction`` (the axis), ``ref`` (where 0 is), ``radius``, ``value``
+    (degrees)."""
+
+    def __init__(self, kind, prop, origin, direction, value, scale=1.0, factor=1.0,
+                 ref=None, radius=0.0):
+        self.kind = kind
+        self.prop = prop
+        self.origin = App.Vector(origin)
+        self.direction = App.Vector(direction)
+        self.value = value
+        self.scale = scale
+        self.factor = factor
+        self.ref = App.Vector(ref) if ref is not None else None
+        self.radius = radius
+
+    @classmethod
+    def arrow(cls, prop, origin, direction, value, scale, factor=1.0):
+        return cls("arrow", prop, origin, direction, value, scale, factor)
+
+    @classmethod
+    def ring(cls, prop, centre, axis, ref, radius, value):
+        return cls("ring", prop, centre, axis, value, ref=ref, radius=radius)
+
 
 def _scale(obj, part):
     from ..app import part as part_mod
@@ -578,8 +619,8 @@ def _scale(obj, part):
 
 
 def extrude_specs(obj, part):
-    """[(property, origin, direction, value, factor, scale)] for an Extrude's
-    depth arrows (Blind and Mid Plane, from the sketch plane or an offset)."""
+    """An Extrude's depth arrows (Blind and Mid Plane, from the sketch plane or an
+    offset)."""
     from ..core import regions
     from ..core.features import extrude as core
     sk = getattr(obj, "Sketch", None)
@@ -601,17 +642,16 @@ def extrude_specs(obj, part):
     out = []
     c1 = obj.EndCondition
     if c1 in (core.BLIND, core.MID_PLANE):
-        out.append(("Depth", start, d1, obj.Depth.Value, 2.0 if c1 == core.MID_PLANE else 1.0,
-                    scale))
+        out.append(Spec.arrow("Depth", start, d1, obj.Depth.Value, scale,
+                              2.0 if c1 == core.MID_PLANE else 1.0))
     if obj.Direction2 and c1 not in (core.MID_PLANE, core.THROUGH_ALL_BOTH) and \
             obj.EndCondition2 == core.BLIND:
-        out.append(("Depth2", start, -d1, obj.Depth2.Value, 1.0, scale))
+        out.append(Spec.arrow("Depth2", start, -d1, obj.Depth2.Value, scale))
     return out
 
 
 def revolve_specs(obj, part):
-    """[(property, centre, axis, ref, radius, value)] for a Revolve's angle rings
-    (Blind, both directions; Mid-Plane has none)."""
+    """A Revolve's angle rings (Blind, both directions; Mid-Plane has none)."""
     from ..core.features import revolve as core
     sk = getattr(obj, "Sketch", None)
     if sk is None:
@@ -632,14 +672,14 @@ def revolve_specs(obj, part):
         return []
     out = []
     if obj.EndCondition == core.BLIND:
-        out.append(("Angle", foot, d, ref, radius, obj.Angle.Value))
+        out.append(Spec.ring("Angle", foot, d, ref, radius, obj.Angle.Value))
     if obj.Direction2 and obj.EndCondition != core.MID_PLANE and \
             obj.EndCondition2 == core.BLIND:
-        out.append(("Angle2", foot, -d, ref, radius, obj.Angle2.Value))
+        out.append(Spec.ring("Angle2", foot, -d, ref, radius, obj.Angle2.Value))
     return out
 
 
-# ------------------------------------------------------------------ more features
+# ------------------------------------------------------------------ dress-ups and more
 
 def _sub_shape(obj, prop, index=0):
     """The ``index``-th element a LinkSub property names, on its object's shape."""
@@ -713,7 +753,7 @@ def edge_feature_specs(obj, part, prop):
     if fr is None:
         return []
     m, n = fr
-    return [(prop, m, n, getattr(obj, prop).Value, 1.0, _scale(obj, part))]
+    return [Spec.arrow(prop, m, n, getattr(obj, prop).Value, _scale(obj, part))]
 
 
 def fillet_specs(obj, part):
@@ -744,7 +784,7 @@ def shell_specs(obj, part):
     except Exception:
         return []
     d = n if obj.ShellOutward else -n
-    return [("Thickness", c, d, obj.Thickness.Value, 1.0, _scale(obj, part))]
+    return [Spec.arrow("Thickness", c, d, obj.Thickness.Value, _scale(obj, part))]
 
 
 def hole_specs(obj, part):
@@ -763,81 +803,7 @@ def hole_specs(obj, part):
     if not pts:
         return []
     d = n if obj.Reverse else -n
-    return [("Depth", pts[0], d, obj.Depth.Value, 1.0, _scale(obj, part))]
-
-
-SPECS = {"Fillet": fillet_specs, "Chamfer": chamfer_specs, "Shell": shell_specs,
-         "Hole": hole_specs}
-
-
-def field_for(panel, prop):
-    """The panel's unit field for ``prop``, or None."""
-    from .panel import parts
-    try:
-        for f in panel.widget.findChildren(parts.QuantityField):
-            if f.prop == prop and f.obj is panel.obj:
-                return f
-    except Exception:
-        pass
-    return None
-
-
-class PanelHandles(object):
-    """Drag arrows for a panel whose feature has a SPECS entry: dragging one sets
-    the panel's field (and so the preview), typing in the field moves it."""
-
-    def __init__(self, panel, specs):
-        self.panel, self.specs = panel, specs
-        self.set = Handles()
-        self.by_prop = {}
-        self.released_at = 0.0
-        self.set.on_release = self._released
-        self.set.listen()
-
-    def _released(self, _a):
-        import time
-        self.released_at = time.time()
-
-    def busy(self):
-        """A drag is on, or just ended: a click it made in the view isn't a pick."""
-        import time
-        return self.set.active is not None or time.time() - self.released_at < 0.5
-
-    def place(self):
-        try:
-            specs = self.specs(self.panel.obj, self.panel.part)
-        except Exception:
-            specs = []
-        shown = set()
-        for prop, origin, d, value, factor, scale in specs:
-            a = self.by_prop.get(prop)
-            if a is None:
-                a = self.set.add(DragArrow(lambda v, p=prop: self._dragged(p, v)))
-                a.prop = prop
-                self.by_prop[prop] = a
-            a.factor = factor
-            a.place(origin, d, value, scale)
-            a.attach()
-            shown.add(prop)
-        for p, a in self.by_prop.items():
-            if p not in shown:
-                a.detach()
-
-    def _dragged(self, prop, v):
-        hook = getattr(self.panel, "drag_set", None)
-        if hook is not None and hook(prop, v):
-            return
-        f = field_for(self.panel, prop)
-        if f is not None:
-            f.spin.setProperty("rawValue", float(v))
-        else:
-            self.panel.set_prop(prop, v)
-
-    def arrows(self):
-        return [a for a in self.by_prop.values() if a.shown()]
-
-    def stop(self):
-        self.set.stop()
+    return [Spec.arrow("Depth", pts[0], d, obj.Depth.Value, _scale(obj, part))]
 
 
 def flex_specs(obj, part):
@@ -856,11 +822,8 @@ def flex_specs(obj, part):
     p_lo = f.multVec(App.Vector(0, 0, lo))
     p_hi = f.multVec(App.Vector(0, 0, hi))
     sc = _scale(obj, part)
-    return [("TrimPlane1", p_lo, z, obj.TrimPlane1.Value, 1.0, sc),
-            ("TrimPlane2", p_hi, -z, obj.TrimPlane2.Value, 1.0, sc)]
-
-
-SPECS["Flex"] = flex_specs
+    return [Spec.arrow("TrimPlane1", p_lo, z, obj.TrimPlane1.Value, sc),
+            Spec.arrow("TrimPlane2", p_hi, -z, obj.TrimPlane2.Value, sc)]
 
 
 def deform_specs(obj, part):
@@ -881,7 +844,7 @@ def deform_specs(obj, part):
         return []
     if obj.ReverseDirection:
         d = -d
-    return [("Distance", c, d, obj.Distance.Value, 1.0, _scale(obj, part))]
+    return [Spec.arrow("Distance", c, d, obj.Distance.Value, _scale(obj, part))]
 
 
 def freeform_specs(obj, part):
@@ -903,11 +866,140 @@ def freeform_specs(obj, part):
         # The arrow's base sits at the height; a negative height points it inwards
         # (its name says which way, so a drag keeps the sign).
         if h >= 0:
-            out.append(("Point%d+" % i, c, n, h, 1.0, sc))
+            out.append(Spec.arrow("Point%d+" % i, c, n, h, sc))
         else:
-            out.append(("Point%d-" % i, c, -n, -h, 1.0, sc))
+            out.append(Spec.arrow("Point%d-" % i, c, -n, -h, sc))
     return out
 
 
-SPECS["Deform"] = deform_specs
-SPECS["Freeform"] = freeform_specs
+def placed_specs(obj, part):
+    """Mounting Boss, Snap Hook: the height arrow, from the clicked point along the
+    face's normal."""
+    from ..app.surfaces import _vec
+    f = _sub_shape(obj, "Items")
+    c = _vec(obj.Position)
+    if f is None or f.ShapeType != "Face" or c is None:
+        return []
+    try:
+        u, w = f.Surface.parameter(c)
+        n = f.normalAt(u, w)
+    except Exception:
+        return []
+    if obj.ReverseDirection:
+        n = -n
+    return [Spec.arrow("Height", c, n, obj.Height.Value, _scale(obj, part))]
+
+
+SPECS = {"Extrude": extrude_specs, "Revolve": revolve_specs, "Fillet": fillet_specs,
+         "Chamfer": chamfer_specs, "Shell": shell_specs, "Hole": hole_specs,
+         "Flex": flex_specs, "Deform": deform_specs, "Freeform": freeform_specs,
+         "MountingBoss": placed_specs, "SnapHook": placed_specs}
+
+
+def field_for(panel, prop):
+    """The panel's unit field for ``prop``, or None."""
+    from .panel import parts
+    try:
+        for f in panel.widget.findChildren(parts.QuantityField):
+            if f.prop == prop and f.obj is panel.obj:
+                return f
+    except Exception:
+        pass
+    return None
+
+
+class FeatureDraggers(object):
+    """One feature's draggers, from its specs. ``on_value(prop, value)`` is called
+    as a dragger moves (a panel sets its field); ``on_release(dragger)`` when a drag
+    (or a typed value) is done (Instant3D changes the feature then)."""
+
+    def __init__(self, obj, part, specs, on_value=None, on_release=None):
+        import time
+        self.obj, self.part, self.specs = obj, part, specs
+        self.on_value = on_value
+        self.release_hook = on_release
+        self.set = DragSet()
+        self.by_prop = {}
+        self.released_at = 0.0
+        self._time = time
+        self.set.on_release = self._released
+        self.set.listen()
+
+    def _released(self, d):
+        self.released_at = self._time.time()
+        if self.release_hook is not None:
+            self.release_hook(d)
+
+    def busy(self):
+        """A drag is on, or just ended: a click it made in the view isn't a pick."""
+        return self.set.active is not None or self._time.time() - self.released_at < 0.5
+
+    def place(self):
+        try:
+            specs = self.specs(self.obj, self.part)
+        except Exception:
+            specs = []
+        shown = set()
+        for s in specs:
+            d = self.by_prop.get(s.prop)
+            if d is not None and d.KIND != s.kind:
+                d.detach()
+                d = None
+            if d is None:
+                d = self.set.add(DRAGGERS[s.kind](
+                    lambda v, p=s.prop: self.on_value(p, v) if self.on_value else None))
+                d.prop = s.prop
+                self.by_prop[s.prop] = d
+            d.apply(s)
+            d.attach()
+            shown.add(s.prop)
+        for p, d in self.by_prop.items():
+            if p not in shown:
+                d.detach()
+
+    def get(self, prop):
+        return self.by_prop.get(prop)
+
+    def draggers(self):
+        """The draggers showing now."""
+        return [d for d in self.by_prop.values() if d.shown()]
+
+    def stop(self):
+        self.set.stop()
+
+
+def panel_value(panel, prop, v):
+    """A dragger in a panel moved: the panel's own hook, its field for the property,
+    or the property itself."""
+    hook = getattr(panel, "drag_set", None)
+    if hook is not None and hook(prop, v):
+        return
+    f = field_for(panel, prop)
+    if f is not None:
+        f.spin.setProperty("rawValue", float(v))
+    else:
+        panel.set_prop(prop, v)
+
+
+def feature_value(obj, prop):
+    """The value a dragger's property has on the feature now."""
+    if prop[:5] == "Point" and prop[-1:] in "+-" and "ControlPoints" in obj.PropertiesList:
+        pts = obj.Proxy.points(obj)
+        i = int(prop[5:-1])
+        return abs(pts[i][1]) if i < len(pts) else 0.0
+    v = getattr(obj, prop)
+    return v.Value if hasattr(v, "Value") else float(v)
+
+
+def set_feature_value(obj, prop, v):
+    """Set what a dragger shows on the feature itself (Instant3D)."""
+    if prop[:5] == "Point" and prop[-1:] in "+-" and "ControlPoints" in obj.PropertiesList:
+        i = int(prop[5:-1])
+        pts = obj.Proxy.moves(obj)
+        if i < len(pts):
+            texts = list(obj.ControlPoints)
+            texts[i] = obj.Proxy.point_text(pts[i][0], -v if prop.endswith("-") else v,
+                                            pts[i][2])
+            obj.ControlPoints = texts
+        return
+    setattr(obj, prop, v)

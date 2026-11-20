@@ -9,6 +9,7 @@ that follow the model.
 import FreeCAD as App
 
 from ..core import refgeom as core_ref
+from ..core import regions
 from ..core import topo
 from ..core.bodies import IdAllocator
 from ..core.features import edges as edgemod
@@ -46,15 +47,50 @@ class _Pattern(feature.FeatureProxy):
         for f in obj.Features:
             if f is None:
                 continue
+            if getattr(getattr(f, "Proxy", None), "TYPE", "") in ("Fillet", "Chamfer"):
+                if f.ErrorMessage:
+                    raise topo.GeometryError("{} has an error; fix it before repeating it."
+                                             .format(f.Label))
+                out.append(_dressup_seed(f, obj, warns))
+                continue
             if "ToolShape" not in f.PropertiesList or "Mode" not in f.PropertiesList:
                 raise topo.GeometryError(
                     "{} can't be repeated: only features that add or cut a shape (Extrude, "
-                    "Revolve, Hole) can. Pattern the bodies instead.".format(f.Label))
+                    "Revolve, Hole), fillets and chamfers can. Pattern the bodies instead."
+                    .format(f.Label))
             if f.ErrorMessage:
                 raise topo.GeometryError("{} has an error; fix it before repeating it."
                                          .format(f.Label))
             out.append(core.Seed(f.Label, f.ToolShape, f.Mode, getattr(f, "MergeResult", True)))
         return out
+
+    def store_centres(self, obj, base, keyed, warns):
+        """Where every instance sits (skipped ones too), so they can be shown in the
+        view and clicked: [[key, x, y, z]] in InstanceCentres."""
+        import json
+        if "InstanceCentres" not in obj.PropertiesList:
+            util.add_prop(obj, "App::PropertyString", "InstanceCentres", "Pattern",
+                          "Where each instance sits (for picking them in the view)", "")
+            util.hide_prop(obj, "InstanceCentres")
+        try:
+            shapes = [base.get(b).shape for b in obj.Bodies if base.get(b) is not None]
+            seeds = self.seeds(obj, base, [])
+            c = core.reference_point(seeds, shapes) if (shapes or any(
+                s.tool is not None for s in seeds)) else None
+            if c is None:
+                for f in obj.Features:
+                    p = f.Proxy.params(f, []) if hasattr(f.Proxy, "params") else None
+                    items = getattr(p, "items", None) or []
+                    if items:
+                        c = items[0].BoundBox.Center
+                        break
+        except Exception:
+            c = None
+        text = ""
+        if c is not None:
+            text = json.dumps([[k] + list(pl.multVec(c)) for k, pl in keyed])
+        if obj.InstanceCentres != text:
+            obj.InstanceCentres = text
 
     def ref(self, obj, prop, what, warns):
         s, w = refs.get_ref(obj, prop, what, obj.BaseFeature)
@@ -72,6 +108,56 @@ class _Pattern(feature.FeatureProxy):
             obj.IdMemory = mem
         res.warnings.extend(w for w in warns if w)
         return res, preview
+
+
+def _dressup_seed(f, pattern, warns):
+    """A fillet or chamfer to repeat: run again on its edges (faces, vertices) moved
+    into each instance's place."""
+    import copy
+    from ..core.features import chamfer as core_chamfer
+    from ..core.features import fillet as core_fillet
+    w = []
+    p = f.Proxy.params(f, w)
+    if warns is not None:
+        warns.extend(w)
+    run = core_fillet.compute if f.Proxy.TYPE == "Fillet" else core_chamfer.compute
+    lists = [a for a in ("items", "faces1", "faces2", "centre", "hold") if hasattr(p, a)]
+
+    def redo(base, move):
+        q = copy.copy(p)
+        for a in lists:
+            setattr(q, a, [move(x) for x in getattr(p, a)])
+        q.feature, q.tag = pattern.Name, pattern.ID
+        try:
+            return run(q, base)
+        except topo.GeometryError as e:
+            raise topo.GeometryError("The repeated {} failed: {}".format(f.Label, e))
+    return core.Seed(f.Label, None, "Dressup", redo=redo)
+
+
+def read_table(text):
+    """Points ("x,y") from a pattern table file: one point per line, X then Y,
+    separated by spaces, tabs, commas or semicolons. Lines that aren't two numbers
+    (headings, the seed's 'Point 0' label) are passed over."""
+    import re
+    out = []
+    for line in text.splitlines():
+        nums = re.findall(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", line)
+        words = re.sub(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|[\s,;:]|mm", "", line)
+        if len(nums) == 2 and not words:
+            out.append("{:g},{:g}".format(float(nums[0]), float(nums[1])))
+        elif len(nums) == 3 and not words:          # an index, then X and Y
+            out.append("{:g},{:g}".format(float(nums[1]), float(nums[2])))
+    return out
+
+
+def table_text(points):
+    """A pattern table file: one point per line, X and Y separated by a tab."""
+    lines = []
+    for t in points:
+        x, _c, y = str(t).partition(",")
+        lines.append("{}\t{}".format(x.strip() or "0", y.strip() or "0"))
+    return "\n".join(lines) + "\n"
 
 
 def _pairs(texts):
@@ -132,6 +218,10 @@ class LinearPatternProxy(_Pattern):
             s2, n2 = obj.Spacing2.Value, obj.Instances2
         moves = core.linear(d1, obj.Spacing.Value, obj.Instances, d2, s2, n2, obj.PatternSeedOnly,
                             skip=_pairs(obj.InstancesToSkip))
+        every = core.linear(d1, obj.Spacing.Value, obj.Instances, d2, s2, n2, obj.PatternSeedOnly)
+        slots = core.linear_slots(obj.Instances, n2, obj.PatternSeedOnly)[1:]
+        self.store_centres(obj, base, [("{},{}".format(*k), m) for k, m in zip(slots, every)],
+                           warns)
         return self.run(obj, base, moves, warns)
 
 
@@ -158,6 +248,8 @@ class CircularPatternProxy(_Pattern):
             d = -d
         moves = core.circular(p, d, obj.Angle.Value, obj.Instances, obj.EqualSpacing,
                               skip=_numbers(obj.InstancesToSkip))
+        every = core.circular(p, d, obj.Angle.Value, obj.Instances, obj.EqualSpacing)
+        self.store_centres(obj, base, [(str(k), m) for k, m in enumerate(every, 2)], warns)
         return self.run(obj, base, moves, warns)
 
 
@@ -205,18 +297,30 @@ class CurvePatternProxy(_PointPattern):
         a(obj, "App::PropertyEnumeration", "Alignment", g,
           "Tangent to curve: instances turn with the curve. Align to seed: they keep the "
           "seed's orientation", enum=core.ALIGNMENTS)
+        g = "Direction 2"
+        a(obj, "App::PropertyBool", "Direction2", g, "Pattern along a second curve too", False)
+        a(obj, "App::PropertyLinkSub", "Curve2", g, "The second curve: model edges")
+        a(obj, "App::PropertyLink", "CurveSketch2", g, "Or: a sketch")
+        a(obj, "App::PropertyBool", "Reverse2", g, "Reverse direction 2", False)
+        a(obj, "App::PropertyInteger", "Instances2", g, "Number of instances along it", 2)
+        a(obj, "App::PropertyBool", "EqualSpacing2", g, "Spread over the whole curve", True)
+        a(obj, "App::PropertyLength", "Spacing2", g, "Distance along the second curve", 10.0)
         a(obj, "App::PropertyStringList", "InstancesToSkip", "Instances to Skip",
-          "Instances left out, by number (the seed is 1)")
+          "Instances left out, by number (the seed is 1); with Direction 2, by i,j")
 
-    def curve(self, obj, warns):
+    def curve(self, obj, warns, n=""):
         from ..core import skin
         edges = []
-        if obj.CurveSketch is not None:
-            edges = list(topo.shape_of(obj.CurveSketch).Edges)
-        elif obj.Curve and obj.Curve[0] is not None:
-            shapes, w = refs.get_refs(obj, "Curve", "curve", obj.BaseFeature)
+        sk = getattr(obj, "CurveSketch" + n)
+        ref = getattr(obj, "Curve" + n)
+        if sk is not None:
+            edges = list(topo.shape_of(sk).Edges)
+        elif ref and ref[0] is not None:
+            shapes, w = refs.get_refs(obj, "Curve" + n, "curve", obj.BaseFeature)
             warns.extend(w)
             edges = [e for s in shapes for e in s.Edges]
+        if not edges and n:
+            raise topo.GeometryError("Pick the curve for Direction 2: edges or a sketch.")
         if not edges:
             raise topo.GeometryError("Pick the curve to pattern along: edges or a sketch.")
         import Part
@@ -232,8 +336,34 @@ class CurvePatternProxy(_PointPattern):
         warns = []
         curve = self.curve(obj, warns)
         ref = self.reference(obj, base, warns)
-        moves = core.curve_driven(curve, ref, obj.Instances, obj.Spacing.Value, obj.EqualSpacing,
-                                  obj.Alignment, obj.Reverse, _numbers(obj.InstancesToSkip))
+        if not getattr(obj, "Direction2", False):
+            moves = core.curve_driven(curve, ref, obj.Instances, obj.Spacing.Value,
+                                      obj.EqualSpacing, obj.Alignment, obj.Reverse,
+                                      _numbers(obj.InstancesToSkip))
+            every = core.curve_driven(curve, ref, obj.Instances, obj.Spacing.Value,
+                                      obj.EqualSpacing, obj.Alignment, obj.Reverse)
+            self.store_centres(obj, base, [(str(k), m) for k, m in enumerate(every, 2)], warns)
+            return self.run(obj, base, moves, warns)
+        # Two curves: every instance along the first is repeated along the second (the
+        # second carries them as they are, without turning).
+        curve2 = self.curve(obj, warns, "2")
+        m1 = [App.Placement()] + core.curve_driven(curve, ref, obj.Instances,
+                                                   obj.Spacing.Value, obj.EqualSpacing,
+                                                   obj.Alignment, obj.Reverse)
+        m2 = [App.Placement()] + (core.curve_driven(curve2, ref, obj.Instances2,
+                                                    obj.Spacing2.Value, obj.EqualSpacing2,
+                                                    core.TRANSLATE, obj.Reverse2)
+                                  if obj.Instances2 > 1 else [])
+        skip = _pairs(obj.InstancesToSkip)
+        moves, keyed = [], []
+        for j, b in enumerate(m2, 1):
+            for i, a_ in enumerate(m1, 1):
+                if (i, j) == (1, 1):
+                    continue
+                keyed.append(("{},{}".format(i, j), b.multiply(a_)))
+                if (i, j) not in skip:
+                    moves.append(b.multiply(a_))
+        self.store_centres(obj, base, keyed, warns)
         return self.run(obj, base, moves, warns)
 
 
@@ -425,6 +555,200 @@ class FillPatternProxy(_PointPattern):
         return res, tool
 
 
+# ------------------------------------------------------------------ Variable Pattern
+
+SKETCH_KEY = "Sketch:"
+VARIABLE_TYPES = ("Extrude", "Revolve")
+
+
+class _Instance(object):
+    """A seed feature as it would be with other values: reads fall through to the
+    feature, except the changed values; writes stay here, so the feature itself is
+    never touched."""
+
+    def __init__(self, feature, values, sketch):
+        self.__dict__["_f"] = feature
+        self.__dict__["_v"] = dict(values)
+        if sketch is not None:
+            self.__dict__["_v"]["Sketch"] = sketch
+            self.__dict__["_v"]["Contours"] = []
+        self.__dict__["_local"] = {}
+
+    def __getattr__(self, name):
+        d = self.__dict__
+        if name in d["_local"]:
+            return d["_local"][name]
+        if name in d["_v"]:
+            return d["_v"][name]
+        return getattr(d["_f"], name)
+
+    def __setattr__(self, name, value):
+        self.__dict__["_local"][name] = value
+
+
+def variable_dimensions(f):
+    """[(key, label, current value)] that a Variable Pattern can change on ``f``: its
+    lengths and angles, and its sketch's named dimensions."""
+    out = []
+
+    def on(name):
+        return bool(getattr(f, name, False))
+    wanted = []
+    for n in ("", "2"):
+        if n and not on("Direction2"):
+            continue
+        end = str(getattr(f, "EndCondition" + n, ""))
+        for prop in ("Depth", "Angle"):
+            if prop + n in f.PropertiesList and ("Blind" in end or "Mid" in end or
+                                                 end in ("", "Two Directions")):
+                wanted.append(prop + n)
+        if "Offset" in end:
+            wanted.append("Offset" + n)
+        if on("Draft" + n):
+            wanted.append("DraftAngle" + n)
+    if on("Thin"):
+        wanted.append("ThinThickness")
+        if "Two" in str(getattr(f, "ThinType", "")):
+            wanted.append("ThinThickness2")
+        if on("CapEnds"):
+            wanted.append("CapThickness")
+    if str(getattr(f, "From", "")) == "Offset":
+        wanted.append("FromOffset")
+    for prop in wanted:
+        if prop in f.PropertiesList:
+            v = getattr(f, prop)
+            if hasattr(v, "Value"):
+                out.append((prop, prop, v.Value))
+    sk = getattr(f, "Sketch", None)
+    if sk is not None and sk.TypeId.startswith("Sketcher::SketchObject"):
+        for i, c in enumerate(sk.Constraints):
+            if c.Name and c.Type in ("Distance", "DistanceX", "DistanceY", "Radius", "Diameter",
+                                     "Angle"):
+                v = sk.getDatum(i)
+                out.append((SKETCH_KEY + c.Name, "{} ({})".format(c.Name, sk.Label), v.Value))
+    return out
+
+
+def _scratch():
+    return topo.scratch_doc()
+
+
+def _solved_sketch(tmp, sk, values):
+    """A copy of ``sk`` in the scratch document, with named dimensions changed."""
+    copy = tmp.addObject("Sketcher::SketchObject", "Instance")
+    copy.Placement = regions.sketch_placement(sk)
+    copy.Geometry = sk.Geometry
+    keep = []
+    for c in sk.Constraints:
+        ids = [c.First, c.Second, getattr(c, "Third", -2000)]
+        if any(-2000 < g <= -3 for g in ids):
+            continue                    # tied to external geometry: dropped in the copy
+        keep.append(c)
+    copy.Constraints = keep
+    names = [c.Name for c in keep]
+    for name, v in values.items():
+        if name not in names:
+            raise topo.GeometryError("{} has no dimension named {}.".format(sk.Label, name))
+        i = names.index(name)
+        unit = copy.getDatum(i).Unit
+        copy.setDatum(i, App.Units.Quantity(v, unit))
+    tmp.recompute()
+    if not copy.Shape.Edges or "Invalid" in copy.State or "Error" in copy.State:
+        raise topo.GeometryError("{} doesn't solve with those values.".format(sk.Label))
+    return copy
+
+
+class VariablePatternProxy(_Pattern):
+    """SolidWorks' Variable Pattern: each row of the table is one more instance of a
+    feature, with its dimensions (the feature's own, and its sketch's named ones)
+    set to that row's values. Position dimensions in the sketch place each instance."""
+    TYPE = "VariablePattern"
+    LABELS = ("VPattern",)
+
+    def setup(self, obj):
+        super(VariablePatternProxy, self).setup(obj)
+        a = util.add_prop
+        g = "Table"
+        a(obj, "App::PropertyStringList", "Dimensions", g,
+          "The dimensions each instance changes: a feature property (Depth) or a sketch "
+          "dimension (Sketch:Name)")
+        a(obj, "App::PropertyStringList", "Instances", g,
+          "One row per instance: its values, in the Dimensions' order, separated by ;")
+        util.hide_prop(obj, "Bodies")
+        util.hide_prop(obj, "Faces")
+
+    def rows(self, obj):
+        dims = [d for d in obj.Dimensions if d]
+        out = []
+        for n, t in enumerate(obj.Instances, 1):
+            try:
+                vals = [float(x) for x in str(t).split(";") if x.strip()]
+            except ValueError:
+                raise topo.GeometryError("Instance {} has a value that isn't a number."
+                                         .format(n))
+            if len(vals) != len(dims):
+                raise topo.GeometryError("Instance {} has {} values; the table has {} "
+                                         "dimensions.".format(n, len(vals), len(dims)))
+            out.append(dict(zip(dims, vals)))
+        return out
+
+    def compute(self, obj, base):
+        warns = []
+        feats = [f for f in obj.Features if f is not None]
+        if len(feats) != 1:
+            raise topo.GeometryError("Pick the one feature to vary (an Extrude or a Revolve).")
+        f = feats[0]
+        if getattr(getattr(f, "Proxy", None), "TYPE", "") not in VARIABLE_TYPES:
+            raise topo.GeometryError("{} can't be varied: Variable Pattern varies an Extrude "
+                                     "or a Revolve.".format(f.Label))
+        if f.ErrorMessage:
+            raise topo.GeometryError("{} has an error; fix it first.".format(f.Label))
+        if not obj.Dimensions:
+            raise topo.GeometryError("Add the dimensions that change to the table.")
+        rows = self.rows(obj)
+        if not rows:
+            raise topo.GeometryError("Add instances to the table: one row each.")
+        props = [d for d in obj.Dimensions if not d.startswith(SKETCH_KEY)]
+        for d in props:
+            if d not in f.PropertiesList or not hasattr(getattr(f, d), "Unit"):
+                raise topo.GeometryError("{} has no dimension {}.".format(f.Label, d))
+        seeds = []
+        tmp = _scratch()
+        made = []
+        try:
+            for n, row in enumerate(rows, 1):
+                vals = {d: App.Units.Quantity(v, getattr(f, d).Unit)
+                        for d, v in row.items() if not d.startswith(SKETCH_KEY)}
+                sk_vals = {d[len(SKETCH_KEY):]: v for d, v in row.items()
+                           if d.startswith(SKETCH_KEY)}
+                sk = _solved_sketch(tmp, f.Sketch, sk_vals) if sk_vals else None
+                if sk is not None:
+                    made.append(sk.Name)
+                inst = _Instance(f, vals, sk)
+                try:
+                    f.Proxy.compute(inst, base)
+                except topo.GeometryError as e:
+                    raise topo.GeometryError("Instance {}: {}".format(n, e))
+                tool = inst._local.get("ToolShape")
+                if tool is None or tool.isNull():
+                    raise topo.GeometryError("Instance {} made no shape.".format(n))
+                seeds.append(core.Seed("{} ({})".format(f.Label, n), tool, f.Mode,
+                                       getattr(f, "MergeResult", True)))
+        finally:
+            for n in made:
+                try:
+                    tmp.removeObject(n)
+                except Exception:
+                    pass
+        alloc = IdAllocator(obj.Name, IdAllocator.loads(obj.IdMemory), taken=base.ids())
+        res, preview = core.repeat(base, seeds, [], [App.Placement()], obj.Name, obj.ID, alloc)
+        mem = alloc.dumps()
+        if obj.IdMemory != mem:
+            obj.IdMemory = mem
+        res.warnings.extend(w for w in warns if w)
+        return res, preview
+
+
 def _create(cls, doc, part, name, **props):
     obj = doc.addObject("Part::FeaturePython", name)
     cls(obj)
@@ -464,3 +788,7 @@ def create_table(doc, part, **props):
 
 def create_fill(doc, part, **props):
     return _create(FillPatternProxy, doc, part, "FillPattern", **props)
+
+
+def create_variable(doc, part, **props):
+    return _create(VariablePatternProxy, doc, part, "VariablePattern", **props)

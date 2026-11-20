@@ -39,9 +39,12 @@ is built from gui/panel/parts.py on the FeaturePanel base:
 
 ## Owner decisions (2026-11-17): icons and previews
 
-- One isometric icon set, drawn by tools/make_icons.py: blue adds material, red
-  removes it, grey is existing material, orange is reference geometry and
-  accents, green is a surface body.
+- One isometric icon set, drawn by tools/make_icons.py (rules in
+  tools/icon_kit.py). Redone 2026-11-20 at the owner's request: green always
+  adds material, red always removes it, grey is existing material; any other
+  tool uses its toolbar's one accent (Features blue, Bodies violet, Reference
+  amber, Surfaces teal, Curves magenta, Evaluate slate). At most grey plus one
+  colour per icon; no +/x badges.
 - The sketch tool uses the Sketcher workbench's icon; the body folders in the
   tree use FreeCAD's folder icon.
 - No Roll to End command (toolbar or menu); it stays in the rollback bar's and
@@ -112,11 +115,12 @@ These follow SolidWorks unless a line says otherwise.
 
 ## Draft (2026-11-18)
 
-### Neutral Plane and Parting Line; no Step Draft yet
+### Neutral Plane, Parting Line, Step Draft and DraftXpert
 - **SolidWorks:** manual Draft has Neutral Plane, Parting Line and Step Draft; DraftXpert too.
 - **Solid Design:** Neutral Plane (face propagation: None, Along Tangent, All Faces, Inner
   Faces, Outer Faces) and Parting Line (None, Along Tangent). Parting lines must lie in one
-  plane. No Step Draft and no DraftXpert yet.
+  plane. Step Draft (perpendicular steps; SolidWorks also has tapered steps) and
+  DraftXpert came later (see Stage 11).
 - **Why:** FreeCAD 1.1 has no draft in Python; OpenCASCADE's DraftAngle (reached through a
   PartDesign::Draft in a hidden scratch document) drafts about a plane only.
 
@@ -138,7 +142,8 @@ These follow SolidWorks unless a line says otherwise.
   Normal to Sketch; Flip material side.
 - The material side starts towards the model (the nearer hit from the middle of the line).
 - The ends are extended along their tangents only where they meet the model (SolidWorks'
-  Linear type). No Natural type and no draft on ribs yet.
+  Linear type), or round their circles (Natural). Draft leans the rib's sides
+  (thinner towards the model, or thicker with Draft outward).
 - A rib that would run off the model is refused with a message, rather than made open.
 - Patterns and Mirror can repeat ribs (like extrudes).
 
@@ -172,7 +177,7 @@ These follow SolidWorks unless a line says otherwise.
 ## Hole Wizard, full (2026-11-18)
 - Types: Counterbore, Countersink, Hole, Straight Tap, Counterbore Slot, Countersink Slot,
   Slot. Standards: ISO, ANSI Inch (typical machinist-table dimensions; check them, or use
-  Custom sizing). No Tapered Tap (pipe threads) or Legacy yet.
+  Custom sizing). Tapered Tap, Advanced and Legacy came later.
 - End conditions: Blind, Through All, Up To Next, Up To Vertex, Up To Surface, Offset From
   Surface; each position gets its own depth.
 - Options: near side countersink, far side countersink (Through All, Up To Next), head
@@ -424,9 +429,9 @@ These follow SolidWorks unless a line says otherwise.
 
 ### Sweep
 - **Profile twist:** None, Specify Twist Value (Degrees or Turns, with a flip for
-  the direction), Follow Path and 1st Guide Curve. SolidWorks also has Specify
-  Direction Vector, Tangent to Adjacent Faces, Natural and Follow 1st and 2nd
-  Guide Curves; not yet.
+  the direction), Follow Path and 1st Guide Curve, Follow 1st and 2nd Guide
+  Curves. Orientation (Stage 11): Follow Path, Keep Normal Constant, Specify
+  Direction Vector, Tangent to Adjacent Faces, Natural.
 - **Guide curves:** sketches (each connected chain of curves is one guide), or a
   helix. SolidWorks makes the profile touch the guides by solving the profile
   sketch's pierce relations. Solid Design has no sketch solving there, so it
@@ -452,9 +457,8 @@ These follow SolidWorks unless a line says otherwise.
 
 ### Loft
 - **Start/End constraints:** None, Normal To Profile (with a draft angle, outwards),
-  Direction Vector; both with a tangent length. SolidWorks also has Tangency To
-  Face (when a profile is a face of the model); not yet. A closed loft has no
-  ends to constrain.
+  Direction Vector, Tangency To Face; all with a tangent length. A closed loft has
+  no ends to constrain.
 - **Guide curves:** each must touch every profile. Influence: **To Next Edge**
   (the default here: a guide shapes the faces beside it, fading out at the
   profile's next corners, or half-way round a corner-less profile) or **To Next
@@ -514,8 +518,8 @@ These follow SolidWorks unless a line says otherwise.
   on it.
 
 ### Extend Surface
-- Open edges of a surface body, by a distance (SolidWorks also has Up To Point
-  and Up To Surface; not yet). Same Surface carries an analytic surface on (a
+- Open edges of a surface body, by a distance, Up To Point or Up To Surface. Same
+  Surface carries an analytic surface on (a
   cylinder stays a cylinder) past edges that are its own boundaries; elsewhere,
   and on B-spline surfaces, the edge goes on straight (Linear), with a note.
 
@@ -531,7 +535,7 @@ These follow SolidWorks unless a line says otherwise.
   commands); Cut is Thickened Cut, and the feature is labelled Thicken-Cut.
 - Side 1, Side 2 or Both Sides (half each); Create solid from enclosed volume for
   a closed surface. The surface body is used up, as in SolidWorks. Thicken has
-  Merge result; Thickened Cut cuts every solid it reaches (no feature scope yet).
+  Merge result. Feature scope: All bodies, or the bodies picked.
 
 ## Boundary, Intersect, Dome, Wrap (2026-11-19)
 
@@ -560,15 +564,15 @@ These follow SolidWorks unless a line says otherwise.
 - Flat faces; Distance with a flip for a dent (SolidWorks' Reverse direction).
   On a round face: part of a sphere, or half an ellipsoid (Elliptical dome). On
   other faces the dome rises from the edges to the top (square to the face at
-  the edge when Elliptical); SolidWorks' Continuous dome and constraint
-  point/direction aren't there yet.
+  the edge when Elliptical). Continuous dome, a direction and a constraint point
+  came in Stage 11.
 
 ### Wrap
 - Emboss / Deboss / Scribe, on cylindrical faces (SolidWorks' Analytical method:
   the sketch rolls round without stretching) and flat faces (projected). The
   sketch's plane must run along the cylinder's axis; it is rolled from the line
-  where the plane is nearest the axis. Cones and SolidWorks' Spline Surface
-  method (any face) aren't there yet. Scribed edges that cross the cylinder's
+  where the plane is nearest the axis. Cones and the Spline Surface method came in
+  Stage 11. Scribed edges that cross the cylinder's
   seam split there too.
 
 ## Patterns II (2026-11-19)
@@ -589,12 +593,11 @@ These follow SolidWorks unless a line says otherwise.
   instances from the seed to the end of the curve (round a closed curve);
   Alignment: Tangent to curve or Align to seed (SolidWorks' Curve method is
   always Transform curve here). An instance that would fall off the curve's end
-  is an error that says so. Direction 2 isn't there yet.
+  is an error that says so. Direction 2 came in Stage 11.
 
 ### Table Driven
 - Type X, Y in the table (a new empty row always waits at the bottom), in a
-  coordinate system or the part's origin. Reading and saving .sldptab/.txt files
-  isn't there yet.
+  coordinate system or the part's origin. Read File / Save File (Stage 11).
 
 ### Fill
 - Boundary: a flat face or a sketch's closed region. Layouts: Perforation
@@ -605,12 +608,11 @@ These follow SolidWorks unless a line says otherwise.
 
 ### Instances to Skip
 - Linear, Circular and Curve Driven list every instance (with its row and
-  column for Linear) to tick off; SolidWorks has you click pink dots in the view.
-  Clicking instances in the view isn't there yet.
+  column for Linear) to tick off; Pick Instances in the View (Stage 11) toggles
+  them by clicking the model where they are.
 
 ### Variable Pattern
-- Not yet: it needs the seed rebuilt with different dimensions for each instance,
-  which comes with equations.
+- Came in Stage 10 (a table of values per instance).
 
 ## Curves (2026-11-19)
 
@@ -641,16 +643,16 @@ These follow SolidWorks unless a line says otherwise.
 - **Ruled Surface:** Tangent to Surface, Normal to Surface, Tapered to Vector
   (angle), Perpendicular to Vector; Alternate side flips it. On a solid's edge the
   face used is the first beside it (SolidWorks lets you pick the other face).
-  Sweep type, Trim and knit and Connecting surface aren't there yet.
+  Sweep, Trim and knit and Connecting surface came in Stage 11.
 - **Radiate Surface:** parallel to a reference plane, outward from the body (out
   of the solid, or away from the surface's face); Reverse sends it inward.
-  Propagate to tangent faces isn't there yet.
+  Propagate to tangent faces came in Stage 11.
 - **Untrim Surface:** Internal edges (fill holes), All edges, External edges
   (grow, keep holes) by Distance %; a new surface body (Merge with original isn't
   there yet).
 - **Mid-Surface:** face pairs found on the picked bodies (or among picked faces):
   parallel flat faces facing each other; with Recognition threshold 0, the
-  thinnest walls only. Cylindrical pairs aren't paired yet.
+  thinnest walls only. Coaxial cylinders (a tube) pair too (Stage 11).
 - **Cut With Surface:** a surface body or a plane; keeps the side behind the
   surface's normal, Flip cut for the other. The surface must reach across the
   body. Feature scope: the bodies picked, or all.
@@ -675,8 +677,7 @@ These follow SolidWorks unless a line says otherwise.
   refined and moved, so volumes come within about 0.05 % of exact on test
   shapes. Hard edges and the trim planes' "keep" areas outside the flexed span
   behave as in SolidWorks (unchanged before plane 1, carried along after plane 2).
-- **Indent:** not yet (it needs SolidWorks' keep/remove selections on the target
-  body's regions to make sense).
+- **Indent:** came in Stage 9 (see there).
 
 ## Core feature gaps (2026-11-19)
 
@@ -693,8 +694,8 @@ These follow SolidWorks unless a line says otherwise.
 - **Hole Wizard, Tapered Tap:** NPT (ANSI Inch) and Rc / ISO 7-1 (ISO) pipe
   sizes; the Size list switches to pipe sizes. The hole narrows 1 in 16 on the
   diameter, from the tap drill (or the thread's major diameter at the gauge
-  plane) at the face. A modelled thread isn't available for it yet: it warns and
-  uses the tap drill. Cosmetic threads aren't drawn (no feature has them yet).
+  plane) at the face. Modelled Thread follows the cone (Stage 10); Cosmetic Thread
+  is its own reference geometry (Stage 10).
 - **Hole Wizard, Advanced:** a Type in the same Hole Wizard rather than its own
   command. Near side and far side elements are a list (one line each:
   "Counterbore Ø11 × 6.4") with Add / Remove / Up / Down, and the selected
@@ -748,12 +749,14 @@ These follow SolidWorks unless a line says otherwise.
   it doesn't follow the model. The direction is an edge, axis or plane, or
   square to the face when empty. Stiffness Minimum / Medium / Maximum sets how
   the change fades over the radius. Curve to curve pairs initial and target
-  curves in order (a reversed target is turned round); there are no fixed curves
-  yet. Surface push uses a body of the part as the tool (SolidWorks also offers
+  curves in order (a reversed target is turned round); fixed curves hold the
+  body still along them. Surface push uses a body of the part as the tool (SolidWorks also offers
   built-in sphere, ellipse, polygon and rectangle tools) and pushes along the
-  direction picked, or from the tool towards the bodies; there's no deform
-  deviation yet, so the dent follows the tool to within the control net's
-  spacing (a few percent of the overlap can stay at the rim). The changed faces
+  direction picked, or from the tool towards the bodies. Deviation spreads the
+  dent round the tool's rim, fading out over that distance; with none, the dent
+  follows the tool to within the control net's spacing (a few percent of the
+  overlap can stay at the rim). A finer control net is used round the tool and
+  round a point push, so a point reaches its full distance. The changed faces
   become B-splines, like Flex; faces the change doesn't reach stay as they were.
   The distance has a drag arrow.
 - **Indent:** Target and Tool are bodies; the tool's regions outside the target
@@ -764,16 +767,139 @@ These follow SolidWorks unless a line says otherwise.
 - **Freeform:** pick one face; click on it to add control points; each point has a
   height along the face's normal (typed, or dragged with its arrow). The face's
   edges stay put; Edges: Contact, Tangent or Curvature sets how the change meets
-  them; Reach sets how far each point's pull spreads. SolidWorks drags control
-  curves and points with a triad; there are no control curves here, and points
-  only move along the normal. A point on (or within a few control-net spacings
-  of) an edge is refused.
+  them; Reach sets how far each point's pull spreads. Each point also has Move
+  X/Y/Z: a sideways slide across the face (the part along the normal is dropped;
+  Height does that). Control curves are sketches the face is pulled onto, where
+  SolidWorks draws control curves on the face and drags points on them with a
+  triad. A point on (or within a few control-net spacings of) an edge is refused.
 - **Surface Flatten:** faces (connected) laid flat as a new surface body,
   touching the faces at the vertex (or edge middle) picked, or the first face's
   centre. Uses FreeCAD's flatmesh unwrapper; developable faces come out true,
   others are stretched as little as possible and a warning gives the change of
-  area. Round faces are opened along their seams; a closed body (a whole sphere)
-  has to be split first. No relief cuts or tear lines yet.
+  area. Round faces are opened along their seams. Tear Edges cut the faces open
+  along edges (relief cuts); a tear that stops inside the faces opens a slit. A
+  closed set of faces (a whole body) needs tear edges, like a net, and says so.
 - Toolbar: the five surface makers lead the Surfaces toolbar; the Flex/Scale
   drop-down is now Deform Bodies (Flex, Deform, Indent, Freeform, Scale); Surface
   Flatten is in More Surfaces.
+
+## Stage 10: draggers, fillet options, fastening features, measured reference geometry
+
+- **One dragger system.** Every drag handle is a `Dragger` (an arrow or a ring) built
+  from a `Spec` and managed by one `FeatureDraggers` set, whether it shows in a
+  panel or on a selected feature (Instant3D). Extrude and Revolve no longer have
+  their own handle code. Mounting Boss and Snap Hook have a height arrow.
+- **Fillet:** Symmetric | Asymmetric (a distance on each face, swapped with the
+  flip button); Profile: Circular, Conic Rho (with rho) or Curvature Continuous.
+  Variable Size takes points along the edges (position in percent, radius), as
+  SolidWorks' variable radius points, listed and edited in the panel. Face
+  Fillet takes a hold line (the round's size follows it). Face Fillet and Face
+  Face chamfer also work across a gap between faces that don't touch (one flat
+  face per set). The rounds that OCC's fillet can't make (asymmetric, conic,
+  curvature continuous, variable points, hold line, gaps) are built from
+  sections lofted along the edge and cut or added with a fuzzy boolean. Setback
+  isn't there yet.
+- **Patterns and Mirror repeat fillets and chamfers** by running them again on
+  their edges moved into each instance's place.
+- **Variable Pattern:** the feature (an Extrude or a Revolve), the dimensions that
+  change (its own depth, angle, draft, thickness, and its sketch's *named*
+  dimensions), and a table with one row per instance. SolidWorks picks the
+  dimensions by clicking them in the view; here they come from a list. Sketch
+  dimensions tied to external geometry are dropped in the instances' copies.
+- **Mounting Boss, Snap Hook:** click on a face where it goes (the point, not a
+  sketch point or an edge as SolidWorks asks). On a curved face the boss or hook
+  reaches down to meet the face everywhere under it. Boss: Hole or Pin, drafted;
+  fins tie it to the wall (number, length, height, thickness, a turn). Hook:
+  beam height, thickness and width; the hook's overhang and height; it points
+  along X, along an edge or plane, turned by an angle.
+- **Lip/Groove:** the groove body, the lip body and the lip body's flat face where
+  they meet. The lip is a band in from the face's outer edge (offset, width,
+  height); the groove is the same band widened and deepened by the gap. SolidWorks
+  asks for the lip's faces and edges separately.
+- **Vent:** one sketch. Its outer loop is the vent, its lines are ribs and its
+  inner loops spars (or kept solid: Fill-in), each with a width; it cuts to a
+  depth. SolidWorks asks for the boundary, ribs, spars and fill-in boundaries one
+  by one and also sets rib and spar depths.
+- **Cosmetic Thread:** reference geometry, not a feature: it doesn't change the
+  body. It shows the thread's minor diameter (shaft) or major diameter (hole) as
+  dashed circles and lines, with the callout (size, class, length). Blind or Up
+  To Next (to the end of the cylinder).
+- **Tapered Tap:** Modelled Thread now cuts a tapered thread that follows the 1 in
+  16 cone.
+- **Bounding Box:** Best Fit (the smallest box over the bodies' main directions) or
+  Reference Plane (square to a plane, turned in it to fit). Its length, width,
+  thickness and volume are read-only properties and show in the panel; it can
+  include surface bodies. **Center of Mass:** a point at the solid bodies' centre
+  of mass (one density) that follows the model and works as any reference point.
+- Toolbar: Thread is now a Threads drop-down (Thread, Cosmetic Thread); the new
+  Fastening Features drop-down holds Mounting Boss, Snap Hook, Lip/Groove and
+  Vent. Bounding Box and Center of Mass are in Reference Geometry; Variable
+  Pattern is in Patterns.
+
+## Stage 11: Split's face reach, and the options missing on existing tools
+
+- **Split, faces and surfaces:** as soon as a face or surface body is picked, the
+  panel asks how far it should cut: *Within their edges* (the default) or *Past
+  their edges*. Within: holes in the face are patched first, so something poking
+  through it is cut off; a sphere or torus face with a hole is patched to the
+  whole sphere or torus, and a cylinder or cone face that goes all the way round
+  is patched across its holes, so a cylinder poking out of a sphere is cut off by
+  the sphere's face. Past: every face grows over its whole surface (a plane with
+  no edges, a whole cylinder, sphere or torus, a cone up to its tip, a B-spline's
+  whole patch) and cuts everything that would cross it. SolidWorks has no such
+  choice: it only uses a face within its edges.
+- **Draft, DraftXpert:** a Type in the same Draft panel rather than its own tabbed
+  manager. A neutral plane and an angle; with no faces picked it drafts every
+  face with less draft than the angle. Faces OpenCASCADE can't draft are left out
+  and listed in a warning instead of failing the whole draft. Draft Analysis in
+  the panel counts positive, negative, need-draft and straddle faces, with a
+  button that picks the faces that need draft (SolidWorks colours them in the
+  view).
+- **Sweep orientation:** Specify Direction Vector (the profile keeps its top
+  towards a direction), Tangent to Adjacent Faces (the path must be model edges;
+  the face the path runs along most wins where two meet), Natural (the path's
+  curvature turns it; on straight runs the nearest bend's direction carries
+  over). Twist: Follow 1st and 2nd Guide Curves (the line between the two guides
+  turns and scales the profile; other guides are not used then). Sweeps along a
+  closed path with stations now close round the ring.
+- **Loft, Tangency To Face:** the profile is a sketch drawn along a face's edges
+  (SolidWorks: a face of the model as the profile); the loft leaves it carrying
+  on the faces beside it.
+- **Dome:** Continuous dome (faces that aren't round: the outline rounds off as
+  it rises, never overhanging the face); Direction (the dome leans that way, a
+  shear, its height still square to the face); a constraint point (the top goes
+  through it: height and lean follow).
+- **Wrap:** cones (rolled like a cylinder; horizontal lengths kept as arc lengths
+  at each height) and the Spline Surface method: any face, the sketch projected
+  along its normal, the raised or sunk part between the face and its offset.
+- **Curve Driven Pattern, Direction 2:** a second curve; every instance along the
+  first is carried along it without turning. Instances to Skip become i,j.
+- **Table Driven Pattern:** Read File / Save File. Files are read as text: any
+  line with X and Y (spaces, tabs, commas or semicolons; an index first is fine)
+  is a point. SolidWorks' own .sldptab files are read when they're text.
+- **Instances to Skip, in the view:** Pick Instances in the View (Linear,
+  Circular, Curve Driven): while on, clicking the model where an instance is, or
+  would be, leaves it out or puts it back; the instances are numbered in the view
+  (skipped ones crossed). SolidWorks has pink dots to click instead.
+- **Thicken:** Feature Scope, All bodies or the bodies picked (both modes).
+- **Extend Surface:** Up To Point and Up To Surface (the extension goes past, then
+  is cut back to the surface or plane).
+- **Ruled Surface:** Sweep (one smooth surface, a line swept along the edge
+  chain, leaving the first edge tangent to its face or along the reference
+  vector); Trim and knit (strips that run into each other at a corner are cut
+  back to the mitre; on by default); Connecting surface (fills the gaps at sharp
+  corners with flat triangles).
+- **Radiate Surface:** Propagate to tangent faces (follows edges meeting the
+  picked ones smoothly).
+- **Mid-Surface:** coaxial cylinders (a tube's inside and outside) pair: the
+  cylinder halfway, over the height and turn they share.
+- **Hole Wizard, Legacy:** a Type: Simple, Tapered (taper angle), Counterbored,
+  Countersunk, Counterdrilled (a counterbore with a cone down to the hole). Sized
+  only by its own dimensions; no standards.
+- **Joining touching bodies:** when OpenCASCADE loses every solid fusing bodies
+  that only touch (a ring sitting on a rim), it retries with a little tolerance
+  and otherwise says so, instead of the bodies vanishing.
+- **Scratch document:** operations that need a document (draft, sketch copies for
+  Variable Pattern) use one hidden document that stays open for the session;
+  opening and closing one each time ended the user's open transaction, so Cancel
+  and Undo stopped working.

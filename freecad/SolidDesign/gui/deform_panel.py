@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """Panels for Indent, Deform, Freeform and Surface Flatten."""
 
+import FreeCAD as App
 from PySide import QtCore, QtWidgets
 
 from ..app import surfaces as app_surf
@@ -134,6 +135,7 @@ class DeformPanel(_SurfacePanel):
         self.initial = self.sketches_box(g, "InitialCurves", "The curves that move")
         self.target = self.sketches_box(g, "TargetCurves",
                                         "Where they move to, in the same order")
+        self.fixed = self.sketches_box(g, "FixedCurves", "Curves that stay put")
         # Surface push -----------------------------------------------------
         g = self.sec_push = self.group("Tool Body", "The body that pushes into the others")
         self.tool = self.bodies_box(g, "ToolBody", "The tool body (a solid)", label="Tool",
@@ -142,6 +144,9 @@ class DeformPanel(_SurfacePanel):
                                  "Click an edge or plane",
                                  "The push direction: an edge, axis or plane. Empty: from the "
                                  "tool towards the other bodies", empty="Towards the bodies")
+        self.dev, self.r_dev = self.qty(g, "DeformDeviation", "Deviation",
+                                        "How far round the tool the dent spreads; 0 keeps the "
+                                        "tool's own shape")
         # Region -----------------------------------------------------------
         g = self.sec_region = self.group("Deform Region")
         self.radius, self.r_radius = self.qty(g, "Radius", "Radius",
@@ -208,6 +213,20 @@ class FreeformPanel(_SurfacePanel):
                               "How far the selected point moves along the face's normal "
                               "(negative: in)")
         self.height.valueChanged.connect(self._height_changed)
+        # Sideways: the point also slides across the face (in its plane).
+        self.side = []
+        self.r_side = []
+        for axis in "XYZ":
+            sp = parts.QtWidgets.QDoubleSpinBox()
+            sp.setRange(-1e6, 1e6)
+            sp.setDecimals(3)
+            sp.setSuffix(" mm")
+            sp.setKeyboardTracking(False)
+            sp.valueChanged.connect(lambda _v: self._side_changed())
+            self.side.append(sp)
+            self.r_side.append(g.row("Move " + axis, sp,
+                                     "Slide the selected point sideways across the face "
+                                     "(the part along the normal is ignored; Height does that)"))
         self.points.list.currentRowChanged.connect(lambda _r: self._show_height())
         self.reach = parts.QtWidgets.QSpinBox()
         self.reach.setRange(5, 100)
@@ -217,11 +236,21 @@ class FreeformPanel(_SurfacePanel):
         g.row("Reach", self.reach, "How far each point's pull spreads, as a share of the "
                                    "face's size")
         self._loaders.append(self._load_points)
+        g = self.group("Control Curves", "The face is pulled onto these curves")
+        self.curves = self.sketches_box(g, "ControlCurves",
+                                        "Sketches or curves the face passes through")
+
+    @staticmethod
+    def _describe(c, h, side):
+        t = u"{}  {:+.4g} mm".format(_point_text(c), h)
+        if side.Length > 1e-12:
+            t += u"  \u2194 {:.4g} mm".format(side.Length)
+        return t
 
     def _load_points(self):
-        pts = self.obj.Proxy.points(self.obj)
-        self.points.set_items([(self.obj.Proxy.point_text(c, h),
-                                u"{}  {:+.4g} mm".format(_point_text(c), h)) for c, h in pts])
+        pts = self.obj.Proxy.moves(self.obj)
+        self.points.set_items([(self.obj.Proxy.point_text(c, h, sd), self._describe(c, h, sd))
+                               for c, h, sd in pts])
         self._show_height()
 
     def _points_changed(self):
@@ -240,25 +269,37 @@ class FreeformPanel(_SurfacePanel):
     def _show_height(self):
         r = self._row()
         self.r_height.set_visible(r is not None)
+        for row in self.r_side:
+            row.set_visible(r is not None)
         if r is None:
             return
-        _c, h = self.obj.Proxy.points(self.obj)[r]
-        self.height.blockSignals(True)
-        self.height.setValue(h)
-        self.height.blockSignals(False)
+        _c, h, side = self.obj.Proxy.moves(self.obj)[r]
+        for w, v in zip([self.height] + self.side, (h, side.x, side.y, side.z)):
+            w.blockSignals(True)
+            w.setValue(v)
+            w.blockSignals(False)
 
     def _height_changed(self, v):
         r = self._row()
         if r is not None:
             self.set_height(r, v)
 
+    def _side_changed(self):
+        r = self._row()
+        if r is not None:
+            self.set_move(r, side=App.Vector(*(w.value() for w in self.side)))
+
     def set_height(self, r, v):
-        pts = self.obj.Proxy.points(self.obj)
+        self.set_move(r, height=v)
+
+    def set_move(self, r, height=None, side=None):
+        pts = self.obj.Proxy.moves(self.obj)
         if not 0 <= r < len(pts):
             return
-        c, _h = pts[r]
+        c, h, sd = pts[r]
         texts = list(self.obj.ControlPoints)
-        texts[r] = self.obj.Proxy.point_text(c, v)
+        texts[r] = self.obj.Proxy.point_text(c, h if height is None else height,
+                                             sd if side is None else side)
         self.set_prop("ControlPoints", texts)
         self.points.blockSignals(True)
         self._load_points()
@@ -295,3 +336,7 @@ class FlattenPanel(_SurfacePanel):
         self.acc.setValue(int(self.obj.Accuracy))
         self.acc.valueChanged.connect(lambda v: self.set_prop("Accuracy", int(v)))
         g.row("Accuracy", self.acc, "Finer is truer to the faces, and slower")
+        g = self.group("Tear Edges", "Cut the faces open along these edges (relief cuts)")
+        self.tears = self.elements_list(g, "TearEdges", "Edges to cut open along; a closed set "
+                                        "of faces (a whole body) needs them, like a net",
+                                        kind="Edge", empty="No tears")

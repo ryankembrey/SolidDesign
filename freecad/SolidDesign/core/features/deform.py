@@ -153,7 +153,50 @@ def _refined(bs, size, segs):
     return s
 
 
-def _flex_face(face, fn, size, segs):
+def _refine_near(s, focus):
+    """More knots where the change is (within ``focus`` = (centre, radius)): a small
+    bump needs a fine control net there to reach its full height."""
+    c, r = focus
+    u0, u1, v0, v1 = s.bounds()
+    n = 40
+    us, vs = [], []
+    seen = []
+    for i in range(n + 1):
+        for j in range(n + 1):
+            u = u0 + (u1 - u0) * i / n
+            v = v0 + (v1 - v0) * j / n
+            if (s.value(u, v) - c).Length < 1.3 * r:
+                us.append(u)
+                vs.append(v)
+                seen.append((i, j))
+    if not us:
+        return s
+    step = r / 24.0
+    for get, ins, lo, hi, axis in ((s.getUKnots, s.insertUKnot, min(us), max(us), 0),
+                                   (s.getVKnots, s.insertVKnot, min(vs), max(vs), 1)):
+        pad = ((u1 - u0) if axis == 0 else (v1 - v0)) / n
+        lo, hi = max(lo - pad, u0 if axis == 0 else v0), min(hi + pad, u1 if axis == 0 else v1)
+        mid_other = 0.5 * (v0 + v1) if axis == 0 else 0.5 * (u0 + u1)
+        try:
+            a = s.value(lo, mid_other) if axis == 0 else s.value(mid_other, lo)
+            b = s.value(hi, mid_other) if axis == 0 else s.value(mid_other, hi)
+            span3 = max((b - a).Length, 2 * r)
+        except Exception:
+            span3 = 2 * r
+        k = min(int(span3 / step) + 1, 96)
+        known = list(get())
+        for j in range(1, k):
+            t = lo + (hi - lo) * j / float(k)
+            if any(abs(t - x) < 1e-9 * max(1.0, abs(x)) for x in known):
+                continue
+            try:
+                ins(t, 1, 1e-9)
+            except Exception:
+                pass
+    return s
+
+
+def _flex_face(face, fn, size, segs, focus=None):
     nf = face
     try:
         s = face.Surface
@@ -179,6 +222,16 @@ def _flex_face(face, fn, size, segs):
     if s.UDegree < 3 or s.VDegree < 3:
         s.increaseDegree(max(s.UDegree, 3), max(s.VDegree, 3))
     s = _refined(s, size, segs)
+    if focus is not None:
+        # Only where the change stays inside the face: refined on its own, a face's
+        # edge would no longer match its neighbour's.
+        c, r = focus
+        try:
+            inside = Part.makeCompound(face.Edges).distToShape(Part.Vertex(c))[0] > 1.3 * r
+        except Exception:
+            inside = False
+        if inside:
+            s = _refine_near(s, focus)
     poles = s.getPoles()
     for i, row in enumerate(poles):
         for j, p in enumerate(row):
@@ -208,7 +261,7 @@ def _flex_face(face, fn, size, segs):
     return out
 
 
-def flexed(shape, fn, tag, segs=48, face_fn=None):
+def flexed(shape, fn, tag, segs=48, face_fn=None, focus=None):
     """``shape`` with every control point moved by ``fn``. ``face_fn(face)`` (when
     given) picks the function per face instead; None leaves that face as it is
     (a deformation that is zero on its edges)."""
@@ -216,7 +269,7 @@ def flexed(shape, fn, tag, segs=48, face_fn=None):
     faces = []
     for f in shape.Faces:
         g = fn if face_fn is None else face_fn(f)
-        faces.append(f if g is None else _flex_face(f, g, size, segs))
+        faces.append(f if g is None else _flex_face(f, g, size, segs, focus))
     sh = Part.Shell(faces)
     try:
         sh.sewShape(1e-4 * size)

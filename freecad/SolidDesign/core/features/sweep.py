@@ -24,11 +24,15 @@ SOLID_PROFILE = "Solid Profile"
 PROFILE_TYPES = [SKETCH_PROFILE, CIRCULAR_PROFILE, SOLID_PROFILE]
 FOLLOW_PATH = "Follow Path"
 KEEP_NORMAL = "Keep Normal Constant"
-ORIENTATIONS = [FOLLOW_PATH, KEEP_NORMAL]
+DIRECTION_VEC = "Specify Direction Vector"
+ADJACENT_FACES = "Tangent to Adjacent Faces"
+NATURAL = "Natural"
+ORIENTATIONS = [FOLLOW_PATH, KEEP_NORMAL, DIRECTION_VEC, ADJACENT_FACES, NATURAL]
 NO_TWIST = "None"
 TWIST_VALUE = "Specify Twist Value"
 FOLLOW_GUIDE = "Follow Path and 1st Guide Curve"
-TWISTS = [NO_TWIST, TWIST_VALUE, FOLLOW_GUIDE]
+FOLLOW_GUIDES2 = "Follow 1st and 2nd Guide Curves"
+TWISTS = [NO_TWIST, TWIST_VALUE, FOLLOW_GUIDE, FOLLOW_GUIDES2]
 DEGREES = "Degrees"
 TURNS = "Turns"
 TWIST_UNITS = [DEGREES, TURNS]
@@ -37,7 +41,8 @@ PATH_TANGENT = "Path Tangent"
 SWEEP_TANGENCY = [NO_TANGENCY, PATH_TANGENT]
 NORMAL_TO_PROFILE = "Normal To Profile"
 DIRECTION_VECTOR = "Direction Vector"
-LOFT_TANGENCY = [NO_TANGENCY, NORMAL_TO_PROFILE, DIRECTION_VECTOR]
+TANGENCY_TO_FACE = "Tangency To Face"
+LOFT_TANGENCY = [NO_TANGENCY, NORMAL_TO_PROFILE, DIRECTION_VECTOR, TANGENCY_TO_FACE]
 STATIONS = 48
 
 
@@ -51,6 +56,8 @@ class SweepParams(object):
         self.profile_type = SKETCH_PROFILE
         self.diameter = 5.0
         self.orientation = FOLLOW_PATH
+        self.direction = None       # Specify Direction Vector: the profile's "up"
+        self.adjacent = []          # Tangent to Adjacent Faces: the faces along the path
         self.twist = NO_TWIST
         self.twist_angle = 0.0      # degrees, total along the path
         self.guides = []            # skin.Guide
@@ -175,7 +182,8 @@ def sweep_tool(p):
 # ------------------------------------------------------------------ stations
 
 def stations_needed(p):
-    return bool(p.guides) or p.twist != NO_TWIST or p.start_tangent or p.end_tangent
+    return bool(p.guides) or p.twist != NO_TWIST or p.start_tangent or p.end_tangent or \
+        p.orientation in (DIRECTION_VEC, ADJACENT_FACES, NATURAL)
 
 
 def _frames(p, path, fs):
@@ -199,6 +207,8 @@ def _frames(p, path, fs):
             r = r.normalize() if r.Length > 1e-12 else _perp(t)
             out.append((x, t, r, t.cross(r)))
         return out
+    if p.orientation in (DIRECTION_VEC, ADJACENT_FACES, NATURAL):
+        return _steered(p, xs, ts)
     r = _perp(ts[0])
     out = [(xs[0], ts[0], r, ts[0].cross(r))]
     for i in range(len(xs) - 1):
@@ -214,6 +224,76 @@ def _frames(p, path, fs):
         r = rl if c2 < 1e-18 else rl - v2 * (2.0 / c2 * v2.dot(rl))
         r = (r - ts[i + 1] * r.dot(ts[i + 1])).normalize()
         out.append((xs[i + 1], ts[i + 1], r, ts[i + 1].cross(r)))
+    return out
+
+
+def _steered(p, xs, ts):
+    """Frames whose second axis is steered: towards a direction (Specify Direction
+    Vector), along the faces beside the path (Tangent to Adjacent Faces), or towards
+    the path's centre of curvature (Natural, the Frenet frame)."""
+    if p.orientation == DIRECTION_VEC:
+        if p.direction is None or App.Vector(p.direction).Length < 1e-12:
+            raise topo.GeometryError("Specify Direction Vector: pick the direction (an edge, "
+                                     "axis or plane).")
+        want = [App.Vector(p.direction).normalize()] * len(xs)
+    elif p.orientation == ADJACENT_FACES:
+        if not p.adjacent:
+            raise topo.GeometryError("Tangent to Adjacent Faces: the path must be edges of "
+                                     "the model, with faces beside them.")
+        want = []
+        tol = 1e-6 * max(p.path.BoundBox.DiagonalLength, 1.0)
+        for x in xs:
+            best = None
+            # The faces come most-shared first: on an edge two faces meet, the one the
+            # path runs along most wins.
+            for f in p.adjacent:
+                try:
+                    d, pts, _i = f.distToShape(Part.Vertex(x))
+                except Exception:
+                    continue
+                if best is None or d < best[0] - tol:
+                    best = (d, f, pts[0][0])
+            if best is None:
+                want.append(None)
+                continue
+            _d, f, q = best
+            try:
+                want.append(f.normalAt(*f.Surface.parameter(q)))
+            except Exception:
+                want.append(None)
+    else:
+        want = []
+        for i in range(len(xs)):
+            a, b = max(i - 1, 0), min(i + 1, len(xs) - 1)
+            dt = ts[b] - ts[a]
+            want.append(dt if dt.Length > 1e-6 else None)
+        # Straight runs have no curvature: carry the nearest curved run's normal over
+        # them, so the profile doesn't jump where the path starts to bend.
+        known = [i for i, w in enumerate(want) if w is not None]
+        if not known:
+            want = [None] * len(xs)
+        else:
+            for i in range(len(want)):
+                if want[i] is None:
+                    j = min(known, key=lambda k: abs(k - i))
+                    want[i] = want[j]
+    out = []
+    prev = None
+    for x, t, w in zip(xs, ts, want):
+        r = None
+        if w is not None:
+            r = w - t * w.dot(t)
+            if r.Length < 1e-9:
+                r = None
+        if r is None:
+            r = (prev - t * prev.dot(t)) if prev is not None else _perp(t)
+            if r.Length < 1e-9:
+                r = _perp(t)
+        r = App.Vector(r).normalize()
+        if prev is not None and r.dot(prev) < -0.5 and p.orientation == NATURAL:
+            r = -r                      # a curvature flip (an inflection): stay continuous
+        prev = r
+        out.append((x, t, r, t.cross(r)))
     return out
 
 
@@ -310,8 +390,8 @@ def stations(p, anchor):
             rot = App.Placement(App.Vector(), App.Rotation(t, p.twist_angle * f), x).toMatrix()
             out.append(rot.multiply(m))
         mats = out
-    elif p.twist == FOLLOW_GUIDE:
-        raise topo.GeometryError("Follow Path and 1st Guide Curve needs a guide curve.")
+    elif p.twist in (FOLLOW_GUIDE, FOLLOW_GUIDES2):
+        raise topo.GeometryError("{} needs guide curves.".format(p.twist))
     return mats, fs
 
 
@@ -332,8 +412,13 @@ def _guided(p, anchor, frames, mats):
     basis = _matrix(o, e1, e2, n)
     binv = basis.inverse()
     prof = anchor.OuterWire if anchor.ShapeType == "Face" else anchor
+    guides = list(p.guides)
+    if p.twist == FOLLOW_GUIDES2:
+        if len(guides) < 2:
+            raise topo.GeometryError("Follow 1st and 2nd Guide Curves needs two guide curves.")
+        guides = guides[:2]             # the line between them turns (and scales) the profile
     g0, prev = [], []
-    for g in p.guides:
+    for g in guides:
         q = _cross(g, o, n, o)
         if q is None or prof.distToShape(Part.Vertex(q))[0] > 1e-4 * max(prof.BoundBox
                                                                           .DiagonalLength, 1):
@@ -349,7 +434,7 @@ def _guided(p, anchor, frames, mats):
         e1i = m.multVec(o + e1) - oi
         e2i = m.multVec(o + e2) - oi
         gi = []
-        for k, g in enumerate(p.guides):
+        for k, g in enumerate(guides):
             q = _cross(g, oi, ni, prev[k])
             if q is None:
                 raise topo.GeometryError("{} ends before the path does; make it as long as "
@@ -379,6 +464,9 @@ def _skin_wire(p, wire, moves, solid):
         end = (lambda _pt: t1)
     closed = wire.isClosed()
     try:
+        if p.path.isClosed() and len(rows) > 3:
+            # A closed path: the last station is the first again; skin round the ring.
+            return skin.build(rows[:-1], True, solid and closed, params=list(fs), tag=p.tag)
         return skin.build(rows, False, solid and closed, start, end, params=fs, tag=p.tag)
     except topo.GeometryError as e:
         raise topo.GeometryError("The sweep failed: {}".format(e))
@@ -592,6 +680,8 @@ def _skin_through(p, shapes, guides):
             raise topo.GeometryError("A start or end constraint needs a profile, not a point.")
         nb = sections[1 if k == 0 else -2]
         towards = nb.centre() - s.centre()
+        if kind == TANGENCY_TO_FACE:
+            return _face_tangency(p, s, k, length, towards, len(sections))
         if kind == DIRECTION_VECTOR:
             if direction is None:
                 raise topo.GeometryError("Pick the direction vector for the {} constraint."
@@ -624,6 +714,61 @@ def _skin_through(p, shapes, guides):
     if guides:
         return skin.guided_loft(sections, guides, p.influence, solid, start, end, tag=p.tag)
     return skin.loft(sections, p.closed, solid, start, end, tag=p.tag)
+
+
+def _face_tangency(p, s, k, length, towards, count):
+    """Tangency To Face: the profile lies along edges of the model; the loft leaves
+    each point carrying on the model's face beside it there (as if that face went on)."""
+    wire = s.wire()
+    try:
+        n = Part.Face(wire).normalAt(0, 0)
+    except Exception:
+        raise topo.GeometryError("Tangency To Face needs a flat profile.")
+    size = max(wire.BoundBox.DiagonalLength, 1.0)
+    tol = 1e-5 * size
+    beside = []
+    for b in getattr(p, "base", None) or []:
+        if b.kind != "solid":
+            continue
+        for f in b.shape.Faces:
+            if f.distToShape(wire)[0] > tol:
+                continue
+            if f.Surface.TypeId == "Part::GeomPlane" and \
+                    abs(abs(f.normalAt(0, 0).dot(n)) - 1) < 1e-6:
+                continue                    # the face the profile sits on
+            beside.append(f)
+    if not beside:
+        raise topo.GeometryError("Tangency To Face: the {} profile must lie along edges of "
+                                 "the model (sketch it on a face, along its edges)."
+                                 .format("start" if k == 0 else "end"))
+    mag = length * max(towards.Length, 1e-6) * (count - 1)
+    up = App.Vector(towards)
+
+    def f(pt):
+        best = None
+        for g in beside:
+            try:
+                d, pts, _i = g.distToShape(Part.Vertex(pt))
+            except Exception:
+                continue
+            if best is None or d < best[0]:
+                best = (d, g, pts[0][0])
+        if best is None or best[0] > 1e-3 * size:
+            dv = App.Vector(n)
+        else:
+            _d, g, q = best
+            ng = g.normalAt(*g.Surface.parameter(q))
+            # Along the face, square to the profile there: the face carried on.
+            dv = ng.cross(n).cross(ng)
+            if dv.Length < 1e-9:
+                dv = App.Vector(n)
+        dv.normalize()
+        if dv.dot(up) < 0:
+            dv = -dv
+        if k != 0:
+            dv = -dv
+        return dv * mag
+    return f
 
 
 def compute(p, tool):

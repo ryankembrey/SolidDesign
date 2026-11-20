@@ -63,6 +63,88 @@ class TestSurfaces2(Case):
         self.assertEqual(len(s), 1)
         self.assertAlmostEqual(s[0].shape.optimalBoundingBox().XMin, -4, 2)   # outwards
 
+    def test_ruled_corners(self):
+        sk = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(0, 0, 30), App.Rotation()))
+        rect(sk, 0, 0, 20, 10)
+        self.doc.recompute()
+        pl = surfaces.create_planar(self.doc, self.part, Sketch=sk)
+        self.doc.recompute()
+        top = edges_at(pl, 30)
+        r = s2.create_ruled(self.doc, self.part, Items=top, RuledType="Tangent to Surface",
+                            Distance=5, ConnectingSurface=True)
+        self.doc.recompute()
+        self.ok(r)
+        new = [b for b in self.surface() if abs(b.shape.Area - 200) > 1e-6]
+        # Out from the sheet: the four corner gaps are filled with triangles.
+        self.assertAlmostEqual(new[0].shape.Area, 60 * 5 + 4 * 12.5, 4)
+        r.ConnectingSurface = False
+        r.AlternateSide = True
+        self.doc.recompute()
+        self.ok(r)
+        # In over the sheet: the strips cross at the corners and are cut back to meet.
+        new = [b for b in self.surface() if b.id not in (self.surface()[0].id,)]
+        self.assertAlmostEqual(new[0].shape.Area, 200, 3)
+
+    def slot(self):
+        sk = sketch(self.doc, plane(self.part, "Top Plane"),
+                    attach_offset=App.Placement(V(50, 0, 0), App.Rotation()))
+        sk.addGeometry(Part.LineSegment(V(0, 0, 0), V(20, 0, 0)))
+        sk.addGeometry(Part.ArcOfCircle(Part.Circle(V(20, 5, 0), V(0, 0, 1), 5),
+                                        -PI / 2, PI / 2))
+        sk.addGeometry(Part.LineSegment(V(20, 10, 0), V(0, 10, 0)))
+        sk.addGeometry(Part.ArcOfCircle(Part.Circle(V(0, 5, 0), V(0, 0, 1), 5),
+                                        PI / 2, 3 * PI / 2))
+        self.doc.recompute()
+        return extrude(self.doc, self.part, sk, Depth=4, MergeResult=False)
+
+    RING = PI * (49 - 25) + 2 * 20 * 2
+
+    def test_radiate_propagates_along_tangent_edges(self):
+        slot = self.slot()
+        one = [n for n in edges_at(slot, 4)
+               if abs(slot.Shape.getElement(n).CenterOfMass.y) < 1e-6]
+        self.assertEqual(len(one), 1)
+        rd = s2.create_radiate(self.doc, self.part, Items=one, Distance=2)
+        rd.ReferencePlane = (plane(self.part, "Top Plane"), [])
+        self.doc.recompute()
+        self.ok(rd)
+        self.assertAlmostEqual(self.surface()[0].shape.Area, 40, 4)
+        rd.PropagateTangent = True
+        self.doc.recompute()
+        self.ok(rd)
+        self.assertAlmostEqual(self.surface()[0].shape.Area, self.RING, 2)
+
+    def test_ruled_sweep(self):
+        slot = self.slot()
+        r = s2.create_ruled(self.doc, self.part, Items=edges_at(slot, 4), RuledType="Sweep",
+                            Distance=2, ReferenceVector=(plane(self.part, "Top Plane"), []))
+        self.doc.recompute()
+        self.ok(r)
+        s = self.surface()[0].shape
+        self.assertAlmostEqual(s.Area, 2 * (40 + 10 * PI), 1)       # a band, 2 high
+        r.ReferenceVector = (plane(self.part, "Front Plane"), [])
+        self.doc.recompute()
+        self.ok(r)
+        self.assertAlmostEqual(self.surface()[0].shape.Area, self.RING, 1)   # a flat ring
+
+    def test_mid_surface_of_a_tube(self):
+        sk = sketch(self.doc, plane(self.part, "Top Plane"))
+        circle(sk, 50, 0, 10)
+        circle(sk, 50, 0, 8)
+        self.doc.recompute()
+        tube = extrude(self.doc, self.part, sk, Depth=10, MergeResult=False)
+        tid = [b.id for b in self.bodies() if abs(b.shape.BoundBox.XMax - 60) < 1e-6][0]
+        m = s2.create_mid_surface(self.doc, self.part, Bodies=[tid])
+        self.doc.recompute()
+        self.ok(m)
+        mids = [f for b in self.surface() for f in b.shape.Faces
+                if f.Surface.TypeId == "Part::GeomCylinder"]
+        self.assertEqual(len(mids), 1)
+        self.assertAlmostEqual(mids[0].Surface.Radius, 9, 6)
+        self.assertAlmostEqual(mids[0].Area, 2 * PI * 9 * 10, 4)
+        _ = tube
+
     def test_untrim_and_mid_surface(self):
         hs = sketch(self.doc, plane(self.part, "Top Plane"))
         circle(hs, 10, 5, 2)

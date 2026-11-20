@@ -117,10 +117,19 @@ class TestHole(unittest.TestCase):
         self.assertTrue(h.Label.startswith("1/4-18 NPT Tapered Tap"))
         major = core.taper_table("ANSI Inch", "1/4 NPT")[1]
         self.assertAlmostEqual(major, 13.6, 0)            # 1/4 NPT: about 0.54 in at the face
+        h.ThreadOption = "Tap Drill Diameter"
+        self.doc.recompute()
+        drilled = self.total()
         h.ThreadOption = "Modelled Thread"
+        h.ThreadDepth = 10
         self.doc.recompute()
         self.ok(h)
-        self.assertIn("modelled thread isn't available", h.WarningMessage)
+        self.assertEqual(h.WarningMessage, "")
+        body = [b for b in self.part.Shape.Solids][0]
+        self.assertTrue(body.isValid())
+        # The thread's grooves take a little more out than the tap drill alone.
+        self.assertLess(self.total(), drilled - 5)
+        self.assertGreater(self.total(), drilled - 400)
         h.EndCondition = "Through All"
         h.ThreadOption = "Tap Drill Diameter"
         self.doc.recompute()
@@ -154,7 +163,7 @@ class TestHole(unittest.TestCase):
                 self.assertGreater(tap, 0.75 * major)
         for s in core.SIZES:
             for t in core.TYPES:
-                if t in (core.TAPERED_TAP, core.ADVANCED):
+                if t in (core.TAPERED_TAP, core.ADVANCED, core.LEGACY):
                     continue
                 d, cb, csk = core.dims(t, s, "Normal")
                 self.assertGreater(d, 0)
@@ -162,3 +171,57 @@ class TestHole(unittest.TestCase):
                     self.assertGreater(cb[0], d)
                 if csk:
                     self.assertGreater(csk, d)
+
+
+class TestLegacyHole(unittest.TestCase):
+    def setUp(self):
+        from helpers import extrude, new_doc, plane, rect, sketch
+        self.doc, self.part = new_doc("LH")
+        sk = sketch(self.doc, plane(self.part, "Top Plane"))
+        rect(sk, 0, 0, 40, 40)
+        self.doc.recompute()
+        extrude(self.doc, self.part, sk, Depth=20)
+        pts = sketch(self.doc, plane(self.part, "Top Plane"),
+                     attach_offset=App.Placement(App.Vector(0, 0, 20), App.Rotation()))
+        pts.addGeometry(Part.Point(App.Vector(20, 20, 0)))
+        self.doc.recompute()
+        self.pts = pts
+
+    def tearDown(self):
+        App.closeDocument(self.doc.Name)
+
+    def total(self):
+        from freecad.SolidDesign.app import part as app_part
+        return sum(b.shape.Volume for b in app_part.tip_bodies(self.part))
+
+    def test_legacy_types(self):
+        import math
+        from freecad.SolidDesign.app import hole as app_hole
+        h = app_hole.create(self.doc, self.part, self.pts)
+        h.HoleType = "Legacy"
+        h.LegacyType = "Simple"
+        h.HoleDiameter = 6
+        h.EndCondition = "Through All"
+        self.doc.recompute()
+        self.assertEqual(h.ErrorMessage, "", h.ErrorMessage)
+        self.assertEqual(h.Label, "Legacy Hole1")
+        full = 40 * 40 * 20
+        self.assertAlmostEqual(self.total(), full - math.pi * 9 * 20, 3)
+        h.LegacyType = "Counterbored"
+        h.CboreDiameter = 10
+        h.CboreDepth = 5
+        self.doc.recompute()
+        self.assertEqual(h.ErrorMessage, "", h.ErrorMessage)
+        cb = full - math.pi * 9 * 15 - math.pi * 25 * 5
+        self.assertAlmostEqual(self.total(), cb, 3)
+        h.LegacyType = "Counterdrilled"
+        h.CdrillAngle = 90
+        self.doc.recompute()
+        self.assertEqual(h.ErrorMessage, "", h.ErrorMessage)
+        self.assertLess(self.total(), cb - 1)             # the cone below the counterdrill
+        h.LegacyType = "Tapered"
+        h.TaperAngle = 2
+        self.doc.recompute()
+        self.assertEqual(h.ErrorMessage, "", h.ErrorMessage)
+        self.assertGreater(self.total(), full - math.pi * 9 * 20)   # narrows going down
+

@@ -8,6 +8,10 @@ releases from its mould.
 - **Parting Line:** the faces next to the parting lines, on one side, turn about
   those lines. The parting lines must lie in one plane (OpenCASCADE drafts about
   a plane).
+- **DraftXpert:** a neutral plane and an angle; with no faces picked it drafts
+  every face that has less draft than the angle. Faces OpenCASCADE can't draft
+  are left out and listed, instead of the whole draft failing; the panel shows a
+  draft analysis of the faces.
 - **Step Draft:** parting lines at several heights (each square to the direction
   of pull); the faces at each height turn about their own lines, leaving steps
   between them (SolidWorks' perpendicular steps).
@@ -25,7 +29,12 @@ from . import common, edges as edgemod
 NEUTRAL_PLANE = "Neutral Plane"
 PARTING_LINE = "Parting Line"
 STEP_DRAFT = "Step Draft"
-TYPES = [NEUTRAL_PLANE, PARTING_LINE, STEP_DRAFT]
+DRAFTXPERT = "DraftXpert"
+TYPES = [NEUTRAL_PLANE, PARTING_LINE, STEP_DRAFT, DRAFTXPERT]
+
+# Draft analysis (SolidWorks' colours): enough draft towards the pull, enough
+# away from it, not enough (needs draft), or some of each (straddle).
+POSITIVE, NEGATIVE, NEEDS, STRADDLE = "Positive", "Negative", "Needs draft", "Straddle"
 
 NONE, TANGENT, ALL, INNER, OUTER = ("None", "Along Tangent", "All Faces", "Inner Faces",
                                     "Outer Faces")
@@ -60,6 +69,8 @@ def compute(p, base):
         steps = [(point, normal, pull, groups)]
     elif p.kind == STEP_DRAFT:
         steps = _steps(p, base)
+    elif p.kind == DRAFTXPERT:
+        return _xpert(p, base)
     else:
         groups, point, normal, pull = _neutral(p, base)
         steps = [(point, normal, pull, groups)]
@@ -442,3 +453,92 @@ def _classify(shape, walls, pull):
                 pass
         (outer if on_outer else inner).append(f)
     return outer, inner
+
+
+# ------------------------------------------------------------------ DraftXpert
+
+def face_draft(face, pull, angle):
+    """Which of POSITIVE, NEGATIVE, NEEDS or STRADDLE a face is, for ``pull`` and the
+    required ``angle`` (degrees). Floors and tops (square to the pull) are
+    POSITIVE or NEGATIVE as they face."""
+    import math
+    lim = math.sin(math.radians(angle)) - 1e-9
+    kinds = set()
+    for u, v in _samples(face):
+        try:
+            d = face.normalAt(u, v).dot(pull)
+        except Exception:
+            continue
+        kinds.add(POSITIVE if d >= lim else NEGATIVE if d <= -lim else NEEDS)
+    if not kinds:
+        return NEEDS
+    if POSITIVE in kinds and NEGATIVE in kinds:
+        return STRADDLE
+    if NEEDS in kinds:
+        return NEEDS if len(kinds) == 1 else STRADDLE
+    return kinds.pop()
+
+
+def analysis(shape, pull, angle):
+    """{kind: [face index from 1]} for a body."""
+    out = {POSITIVE: [], NEGATIVE: [], NEEDS: [], STRADDLE: []}
+    for i, f in enumerate(shape.Faces, 1):
+        out[face_draft(f, pull, angle)].append(i)
+    return out
+
+
+def xpert_pull(p, base):
+    """The neutral plane (point, normal) and pull DraftXpert uses."""
+    if p.plane is None:
+        raise topo.GeometryError("Pick the neutral plane: a plane or a planar face.")
+    point, normal = p.plane
+    shapes = list(p.faces) or [b.shape for b in base if b.kind == SOLID]
+    return point, normal, _pull(p, normal, shapes, point)
+
+
+def _xpert(p, base):
+    point, normal, pull = xpert_pull(p, base)
+    if p.faces:
+        groups = edgemod.faces_by_body(base, p.faces)
+    else:
+        groups = {}
+        for b in base:
+            if b.kind != SOLID:
+                continue
+            need = [b.shape.Faces[i - 1] for i in analysis(b.shape, pull, p.angle)[NEEDS]]
+            need = [f for f in need if _along_pull(f, pull, 1e-3)]
+            if need:
+                groups[b.id] = need
+        if not groups:
+            raise topo.GeometryError("Every face already has at least {:g}° of draft."
+                                     .format(p.angle))
+    out = base.copy()
+    res = common.Result(out)
+    changed, skipped = [], []
+    for bid, faces in groups.items():
+        shape = base.get(bid).shape
+        faces = [f for f in faces if not _parallel_to_plane(f, pull)]
+        idx = [_index(shape, f) for f in faces]
+        try:
+            r = topo.draft(shape, idx, point, normal, pull, p.angle, p.tag)
+        except topo.GeometryError:
+            # One at a time: keep each face that drafts with the ones kept so far.
+            ok, r = [], None
+            for i in idx:
+                try:
+                    r = topo.draft(shape, ok + [i], point, normal, pull, p.angle, p.tag)
+                    ok.append(i)
+                except topo.GeometryError:
+                    skipped.append(i)
+            if r is None:
+                continue
+        out.replace(bid, r, p.feature)
+        res.touched.append(bid)
+        changed.append(r)
+    if not changed:
+        raise topo.GeometryError("None of the faces could be drafted about this neutral plane.")
+    if skipped:
+        res.warnings.append("DraftXpert left out {} face{} it couldn't draft (Face{})."
+                            .format(len(skipped), "s" if len(skipped) > 1 else "",
+                                    ", Face".join(str(i) for i in skipped)))
+    return res, topo.compound(changed, p.tag)

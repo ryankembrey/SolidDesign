@@ -5,6 +5,11 @@ On a round face the dome is part of a sphere (or, Elliptical dome, half an
 ellipsoid: as high as asked, square to the face at its edge). On any other flat
 face it rises smoothly from the face's edges to its top (square to the face at
 the edge when Elliptical). Reverse makes it a dent instead.
+
+Continuous dome (faces that aren't round): the outline rounds off as it rises,
+so the dome slopes up evenly with no creases from the corners. A direction
+leans the dome that way (its height still measured square to the face); a
+constraint point puts the dome's top on that point (setting height and lean).
 """
 
 import FreeCAD as App
@@ -23,6 +28,9 @@ class Params(object):
         self.height = 5.0
         self.reverse = False
         self.elliptical = False
+        self.continuous = False
+        self.direction = None       # lean the dome this way
+        self.point = None           # the dome's top goes here
 
 
 def _round(face):
@@ -34,7 +42,43 @@ def _round(face):
     return None
 
 
-def dome_solid(face, h, elliptical, outward):
+def _refined(curves):
+    """Cubic copies of the outline's curves with enough poles to bend smoothly."""
+    out = []
+    for cv in curves:
+        c = cv.copy()
+        if c.Degree < 3:
+            c.increaseDegree(3)
+        a, b = c.FirstParameter, c.LastParameter
+        for i in range(1, 8):
+            try:
+                c.insertKnot(a + (b - a) * i / 8.0, 1, 1e-9)
+            except Exception:
+                pass
+        out.append(c)
+    return out
+
+
+def leaned(solid, base_point, n, direction):
+    """The dome sheared so it rises along ``direction``, its base kept on the face."""
+    d = App.Vector(direction)
+    if d.Length < 1e-12:
+        return solid
+    d.normalize()
+    k = d.dot(n)
+    if k < 0:
+        d, k = -d, -k                   # an edge or axis can point either way
+    if k < 0.05:
+        raise topo.GeometryError("The dome's direction must point away from the face.")
+    w = d * (1.0 / k) - n
+    m = App.Matrix(1 + w.x * n.x, w.x * n.y, w.x * n.z, -w.x * n.dot(base_point),
+                   w.y * n.x, 1 + w.y * n.y, w.y * n.z, -w.y * n.dot(base_point),
+                   w.z * n.x, w.z * n.y, 1 + w.z * n.z, -w.z * n.dot(base_point),
+                   0, 0, 0, 1)
+    return solid.transformGeometry(m)
+
+
+def dome_solid(face, h, elliptical, outward, continuous=False):
     """The dome's solid, standing on ``face`` (towards ``outward``)."""
     n = outward
     rc = _round(face)
@@ -67,6 +111,12 @@ def dome_solid(face, h, elliptical, outward):
     import math
     c = face.CenterOfMass
     base_curves = skin.oriented_curves(face.OuterWire)
+    if continuous:
+        base_curves = _refined(base_curves)
+    # Round towards the largest circle about the middle that stays inside the outline,
+    # so the dome never overhangs the face.
+    radii = [face.OuterWire.distToShape(Part.Vertex(c))[0]] if continuous else [1.0]
+    mean = max(min(radii), 1e-9)
     rows, params = [], []
     steps = 10
     for k in range(steps):
@@ -76,11 +126,26 @@ def dome_solid(face, h, elliptical, outward):
         else:
             scale = math.cos(phi)
             z = h * (1 - scale * scale)
-        m = App.Matrix()
-        m.move(-c)
-        m.scale(scale, scale, scale)
-        m.move(c + n * z)
-        rows.append(skin.transformed(base_curves, m))
+        if continuous and k:
+            # Round the outline off as it rises: each pole moves towards that circle.
+            t = math.sin(phi) ** 0.5
+            row = []
+            for cv in base_curves:
+                poles = []
+                for q in cv.getPoles():
+                    r = q - c
+                    r = r - n * r.dot(n)
+                    if r.Length > 1e-12:
+                        r = r * ((1 - t) + t * mean / r.Length)
+                    poles.append(c + r * scale + n * z)
+                row.append(skin._rebuild(cv, poles))
+            rows.append(row)
+        else:
+            m = App.Matrix()
+            m.move(-c)
+            m.scale(scale, scale, scale)
+            m.move(c + n * z)
+            rows.append(skin.transformed(base_curves, m))
         params.append(k / float(steps))
     top = c + n * h
     rows.append([skin._rebuild(cv, [top] * cv.NbPoles) for cv in base_curves])
@@ -91,7 +156,7 @@ def dome_solid(face, h, elliptical, outward):
 def compute(p, base):
     if not p.faces:
         raise topo.GeometryError("Pick a flat face for the dome.")
-    if p.height <= 0:
+    if p.height <= 0 and p.point is None:
         raise topo.GeometryError("The dome's height must be greater than zero.")
     from .edges import faces_by_body
     groups = faces_by_body(base, p.faces)
@@ -110,8 +175,17 @@ def compute(p, base):
                 n = -n                              # point out of the body
             if p.reverse:
                 n = -n
+            h, lean = p.height, p.direction
+            c = f.CenterOfMass
+            if p.point is not None:
+                h = (p.point - c).dot(n)
+                if h <= 1e-9:
+                    raise topo.GeometryError("The constraint point must be above the face.")
+                lean = p.point - c
             try:
-                t = dome_solid(f, p.height, p.elliptical, n)
+                t = dome_solid(f, h, p.elliptical, n, p.continuous)
+                if lean is not None:
+                    t = leaned(t, c, n, lean)
             except topo.GeometryError:
                 raise
             except Exception as e:

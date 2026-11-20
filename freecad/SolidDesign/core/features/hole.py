@@ -37,8 +37,13 @@ ADVANCED = "Advanced"
 CBORE_SLOT = "Counterbore Slot"
 CSK_SLOT = "Countersink Slot"
 SLOT = "Slot"
+LEGACY = "Legacy"
 TYPES = [COUNTERBORE, COUNTERSINK, HOLE, STRAIGHT_TAP, TAPERED_TAP, CBORE_SLOT, CSK_SLOT,
-         SLOT, ADVANCED]
+         SLOT, ADVANCED, LEGACY]
+# Legacy holes (SolidWorks' older hole types): sized by their own dimensions.
+L_SIMPLE, L_TAPERED, L_CBORE, L_CSK, L_CDRILL = ("Simple", "Tapered", "Counterbored",
+                                                 "Countersunk", "Counterdrilled")
+LEGACY_TYPES = [L_SIMPLE, L_TAPERED, L_CBORE, L_CSK, L_CDRILL]
 TAPS = (STRAIGHT_TAP, TAPERED_TAP)
 SLOTS = (CBORE_SLOT, CSK_SLOT, SLOT)
 
@@ -167,7 +172,7 @@ def sizing(kind, standard, size, fit, thread_option=TAP_DRILL):
         pitch, major, tap = taper_table(standard, size)
         return Sizing(major if thread_option == THREAD_DIAMETER else tap, None, None,
                       CSK_ANGLE[standard], pitch, major, TAPER)
-    if kind == ADVANCED:
+    if kind in (ADVANCED, LEGACY):
         return Sizing(0.0)
     pitch, major, tap, close, normal, loose, cb_d, cb_h, csk = table(standard, size)
     d = {"Close": close, "Normal": normal, "Loose": loose}[fit]
@@ -215,6 +220,8 @@ def label(kind, size, standard=ISO_STD):
         return "{} Tapered Tap".format(size)
     if kind == ADVANCED:
         return "Advanced Hole"
+    if kind == LEGACY:
+        return "Legacy Hole"
     return "{} Clearance Hole".format(size)
 
 
@@ -238,6 +245,8 @@ class Params(object):
         self.near_csk = None        # (diameter, angle) or None
         self.far_csk = None
         self.head_clearance = 0.0
+        self.legacy = L_SIMPLE
+        self.cdrill_angle = 118.0   # Counterdrilled: the step from the counterdrill down
         self.near = []              # Advanced: [Element], from the face down
         self.far = []               # Advanced: [Element], from the exit face up
         self.points = []            # App.Vector, on the face
@@ -449,6 +458,16 @@ def one_hole(p, length, tag=1, sz=None, exit_depth=None):
             raise topo.GeometryError("The hole depth must be more than the counterbore depth "
                                      "({:g} mm).".format(ch))
         parts.append(_prism(cd, slot, -ch, clear))
+        if p.kind == LEGACY and p.legacy == L_CDRILL:
+            # A counterdrill steps down to the hole with a cone, not a flat floor.
+            if not 0 < p.cdrill_angle < 180:
+                raise topo.GeometryError("The counterdrill angle must be between 0° and "
+                                         "180°.")
+            h = _sink_depth(cd, d, p.cdrill_angle)
+            if p.end == BLIND and length <= ch + h:
+                raise topo.GeometryError("The hole depth must be more than the counterdrill "
+                                         "and its cone ({:g} mm).".format(ch + h))
+            parts.append(_sink(cd, d, slot, -ch, -ch - h))
         top_w = cd
     if sz.csk is not None:
         if sz.csk <= d:
@@ -569,7 +588,7 @@ def tool_shape(p, base_shapes):
     if not p.points:
         raise topo.GeometryError("Pick where the holes go: a sketch with points, or click on a "
                                  "face.")
-    if p.kind != STRAIGHT_TAP and p.thread == MODELLED:
+    if p.kind not in TAPS and p.thread == MODELLED:
         p.thread = TAP_DRILL
     sz = None if p.kind == ADVANCED else \
         (p.custom or sizing(p.kind, p.standard, p.size, p.fit, p.thread))
@@ -594,7 +613,7 @@ def tool_shape(p, base_shapes):
         if key not in cache:
             cache[key] = one_hole(p, L, p.tag, sz, exit_depth)
         tools.append(topo.transformed(cache[key], App.Placement(pt, rot), p.tag))
-        if p.kind == STRAIGHT_TAP and p.thread == MODELLED:
+        if p.kind in TAPS and p.thread == MODELLED:
             tools.append(_thread(p, sz, pt, down, L, exit_depth))
     return topo.compound(tools, p.tag)
 
@@ -611,7 +630,9 @@ def _thread(p, sz, pt, down, L, exit_depth):
     r = sz.d / 2.0
     site = thr.Site(None, App.Vector(pt), r, App.Vector(down), True)
     h = threads.depth(sz.pitch, True)
-    return thr._tool(site, App.Vector(pt), tl, sz.pitch, h, 1.0, False, 1, p.tag)
+    if sz.taper and exit_depth is not None:
+        tl = min(tl, exit_depth)
+    return thr._tool(site, App.Vector(pt), tl, sz.pitch, h, 1.0, False, 1, p.tag, sz.taper)
 
 
 def compute(p, base, scope=None):

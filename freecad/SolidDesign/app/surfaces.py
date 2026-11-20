@@ -226,6 +226,10 @@ class ExtendProxy(_SurfaceTool):
         a(obj, "App::PropertyEnumeration", "ExtensionType", g,
           "Same Surface: carry the surface on. Linear: go straight on, tangent to it",
           enum=core.EXTEND_TYPES)
+        a(obj, "App::PropertyEnumeration", "EndCondition", g,
+          "Distance, Up To Point or Up To Surface", enum=core.EXTEND_ENDS)
+        a(obj, "App::PropertyLinkSub", "UpTo", g, "The point, or the surface or plane, to "
+          "extend up to")
 
     def compute(self, obj, base):
         warns = []
@@ -235,6 +239,19 @@ class ExtendProxy(_SurfaceTool):
         p.edges = [e for el in edges for e in el.Edges]
         p.distance = obj.Distance.Value
         p.kind = obj.ExtensionType
+        p.end = getattr(obj, "EndCondition", core.DISTANCE)
+        p.target = None
+        v = getattr(obj, "UpTo", None)
+        if p.end != core.DISTANCE and v and v[0] is not None:
+            s, w = refs.get_ref(obj, "UpTo", "extend up to", obj.BaseFeature)
+            if w:
+                warns.append(w)
+            if s is not None:
+                if p.end == core.UP_TO_POINT:
+                    from ..core import refgeom as core_ref
+                    p.target = core_ref.point_of(s, "point to extend up to")
+                else:
+                    p.target = s
         res, preview = core.extend(p, base)
         self.done(obj, p, res, warns)
         return res, preview
@@ -287,6 +304,10 @@ class ThickenProxy(_SurfaceTool):
           "Create solid from enclosed volume (a closed surface)", False)
         a(obj, "App::PropertyBool", "MergeResult", g,
           "Fuse with the solids it touches (Thicken)", True)
+        g = "Feature Scope"
+        a(obj, "App::PropertyBool", "AllBodies", g,
+          "Work on every solid it reaches; off: only the Scope Bodies", True)
+        a(obj, "App::PropertyStringList", "ScopeBodies", g, "The solids it works on, by ID")
 
     def default_label(self, obj):
         return self.LABELS[1] if obj.Mode == "Cut" else self.LABELS[0]
@@ -299,9 +320,17 @@ class ThickenProxy(_SurfaceTool):
         p.solid = obj.CreateSolid
         p.merge = obj.MergeResult
         p.mode = obj.Mode
-        p.scope = common.Scope()
+        warns = []
+        everything = getattr(obj, "AllBodies", True)
+        p.scope = common.Scope(everything, [] if everything else list(obj.ScopeBodies))
+        if not everything:
+            if not obj.ScopeBodies:
+                raise topo.GeometryError("Pick the bodies in the feature scope, or tick All "
+                                         "bodies.")
+            if p.scope.missing(base):
+                warns.append("A body in the feature scope no longer exists.")
         res, preview = core.thicken(p, base)
-        self.done(obj, p, res)
+        self.done(obj, p, res, warns)
         return res, preview
 
     def onChanged(self, obj, prop):

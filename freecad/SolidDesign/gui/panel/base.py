@@ -411,8 +411,8 @@ class FeaturePanel(object):
     _drag = None
 
     def place_drag_handles(self):
-        """Instant3D arrows for the features that have them (Fillet, Chamfer, Shell,
-        Hole); Extrude and Revolve panels place their own."""
+        """The feature's draggers (Instant3D), for every feature that has them
+        (handles.SPECS): a drag sets the panel's field, typing moves the dragger."""
         if self._closing:
             return
         try:
@@ -423,10 +423,18 @@ class FeaturePanel(object):
             if self._drag is None:
                 if Gui.ActiveDocument is None:
                     return
-                self._drag = hmod.PanelHandles(self, specs)
+                self._drag = hmod.FeatureDraggers(
+                    self.obj, self.part, specs,
+                    on_value=lambda prop, v: hmod.panel_value(self, prop, v))
             self._drag.place()
         except Exception:
             pass
+
+    def draggers(self):
+        """The feature's draggers (a FeatureDraggers), placing them if need be."""
+        if self._drag is None:
+            self.place_drag_handles()
+        return self._drag
 
     def _apply_pending(self, pending):
         for name, value in pending.items():

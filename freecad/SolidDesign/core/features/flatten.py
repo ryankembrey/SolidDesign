@@ -25,14 +25,20 @@ class Params(object):
         self.faces = []             # Part.Faces, one connected set
         self.anchor = None          # App.Vector on the faces (None: the first face's centre)
         self.accuracy = 0.5         # 0 coarse .. 1 fine
+        self.tears = []             # Part.Edges to cut the faces open along (relief cuts)
         self.feature = "Flatten"
         self.tag = 1
         self.alloc = None
 
 
-def _mesh(faces, tol):
+def _on(edges, p, tol):
+    v = Part.Vertex(p)
+    return any(e.distToShape(v)[0] < tol for e in edges)
+
+
+def _mesh(faces, tol, tears=()):
     """(points, triangles) of the faces, joined where they share edges, cut open
-    along each face's seam."""
+    along each face's seam and along the tear edges."""
     pts, tris = [], []
     index = {}
 
@@ -40,7 +46,23 @@ def _mesh(faces, tol):
         q = 1.0 / max(tol * 0.05, 1e-9)
         return (round(p.x * q), round(p.y * q), round(p.z * q))
 
-    for f in faces:
+    # A tear's ends stay joined unless they reach the outline (or another tear), so a
+    # tear that stops inside the faces opens a slit rather than cutting a piece off.
+    tears = list(tears)
+    outline = _outline_edges(faces) if tears else []
+    loose_ends = []
+    for t in tears:
+        for vx in t.Vertexes:
+            others = [e for e in tears if not e.isSame(t)]
+            if not _on(outline, vx.Point, tol * 0.1) and not _on(others, vx.Point, tol * 0.1):
+                loose_ends.append(vx.Point)
+
+    def torn(p):
+        if not tears or not _on(tears, p, tol * 0.1):
+            return False
+        return not any((p - e).Length < tol * 0.1 for e in loose_ends)
+
+    for fi, f in enumerate(faces):
         fp, ft = f.tessellate(tol)
         seams = [e for e in f.Edges if _is_seam(e, f)]
         u0, u1, v0, v1 = f.ParameterRange
@@ -73,13 +95,74 @@ def _mesh(faces, tol):
                     ids.append(dup[i])
                     continue
                 k = key(p)
+                if torn(p):
+                    k = (fi,) + k           # each face keeps its own copy along a tear
                 if k not in index:
                     index[k] = len(pts)
                     pts.append(p)
                 ids.append(index[k])
             if len(set(ids)) == 3:
                 tris.append(ids)
+    if tears:
+        pts, tris = _rejoin(faces, pts, tris, index, tears, tol)
     return pts, tris
+
+
+def _rejoin(faces, pts, tris, index, tears, tol):
+    """Along a tear each face got its own copy of a point; join the copies of two
+    faces again where they share an edge that isn't torn (the hinges of a net)."""
+    parent = list(range(len(pts)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    hinges = []                     # (face i, face j, edge) not torn
+    for i, f in enumerate(faces):
+        for j in range(i + 1, len(faces)):
+            for e in f.Edges:
+                if any(e.isSame(o) for o in faces[j].Edges) and \
+                        not any(e.isSame(t) for t in tears):
+                    hinges.append((i, j, e))
+    by_key = {}
+    for k, n in index.items():
+        if len(k) == 4:             # (face, x, y, z): a torn copy
+            by_key.setdefault(k[1:], []).append((k[0], n))
+    for _k, copies in by_key.items():
+        if len(copies) < 2:
+            continue
+        p = pts[copies[0][1]]
+        v = Part.Vertex(p)
+        for fi, a in copies:
+            for fj, b in copies:
+                if fi < fj and any((h[0], h[1]) == (fi, fj) and h[2].distToShape(v)[0] < tol * 0.1
+                                   for h in hinges):
+                    parent[find(a)] = find(b)
+    roots = {}
+    out_pts, remap = [], {}
+    for i in range(len(pts)):
+        r = find(i)
+        if r not in roots:
+            roots[r] = len(out_pts)
+            out_pts.append(pts[r])
+        remap[i] = roots[r]
+    out_tris = []
+    for t in tris:
+        ids = [remap[i] for i in t]
+        if len(set(ids)) == 3:
+            out_tris.append(ids)
+    return out_pts, out_tris
+
+
+def _outline_edges(faces):
+    """Edges used by one face of the set only (not seams): the set's open outline."""
+    out = []
+    edges = [(e, f) for f in faces for e in f.Edges if not _is_seam(e, f)]
+    for i, (e, f) in enumerate(edges):
+        if not any(j != i and e.isSame(o) for j, (o, _g) in enumerate(edges)):
+            out.append(e)
+    return out
 
 
 def _is_seam(edge, face):
@@ -107,7 +190,11 @@ def flatten(p):
     size = Part.makeCompound(faces).BoundBox.DiagonalLength
     acc = min(max(p.accuracy, 0.0), 1.0)
     tol = size * (0.004 - 0.0035 * acc)
-    pts, tris = _mesh(faces, tol)
+    tears = [e for e in p.tears if e is not None]
+    if not tears and not _outline_edges(faces) and len(faces) > 1:
+        raise topo.GeometryError("The faces close up (a whole body): pick Tear edges to cut "
+                                 "them open, as you would to make a net.")
+    pts, tris = _mesh(faces, tol, tears)
     if len(tris) < 2:
         raise topo.GeometryError("The faces are too small to flatten.")
     P = np.array([[q.x, q.y, q.z] for q in pts])
@@ -122,7 +209,7 @@ def flatten(p):
                                  "sphere) must be split first.".format(e))
     if not loops:
         raise topo.GeometryError("The faces have no open edge to flatten from (a closed "
-                                 "body). Split them first.")
+                                 "body). Pick Tear edges to cut them open.")
     # Map flat boundary points back to mesh nodes.
     def node_of(xy):
         return int(((flat - np.array(xy[:2])) ** 2).sum(axis=1).argmin())
@@ -206,12 +293,25 @@ def _outline(points, owner, edges3):
             cur.append(pts[i])
     cur.append(pts[0])
     runs.append((cur_own, cur))
-    edges = []
+    # Both sides of a tear belong to the same edge and meet at a sharp point: split
+    # every run at sharp turns, so no curve (or straight line) cuts the corner off.
+    split = []
     for which, run in runs:
         clean = [run[0]]
         for q in run[1:]:
             if (q - clean[-1]).Length > 1e-9:
                 clean.append(q)
+        cur = [clean[0]]
+        for i in range(1, len(clean)):
+            cur.append(clean[i])
+            if 0 < i < len(clean) - 1:
+                d1, d2 = clean[i] - clean[i - 1], clean[i + 1] - clean[i]
+                if d1.getAngle(d2) > math.radians(25.0):
+                    split.append((which, cur))
+                    cur = [clean[i]]
+        split.append((which, cur))
+    edges = []
+    for which, clean in split:
         if len(clean) < 2:
             continue
         chord = clean[-1] - clean[0]
@@ -219,13 +319,19 @@ def _outline(points, owner, edges3):
         if chord.Length > 1e-12:
             u = chord * (1.0 / chord.Length)
             dev = max(((q - clean[0]) - u * (q - clean[0]).dot(u)).Length for q in clean)
-        straight = _is_line(edges3[which]) or len(clean) == 2 or \
-            dev < 1e-4 * max(chord.Length, 1e-9)
+        closed = chord.Length < 1e-9
+        if closed and len(clean) < 4:
+            continue                        # nothing left of it
+        straight = not closed and (_is_line(edges3[which]) or len(clean) == 2 or
+                                   dev < 1e-4 * max(chord.Length, 1e-9))
         if straight:
             edges.append(Part.LineSegment(clean[0], clean[-1]).toShape())
         else:
             c = Part.BSplineCurve()
-            c.interpolate(clean)
+            if closed:
+                c.interpolate(clean[:-1], PeriodicFlag=True)
+            else:
+                c.interpolate(clean)
             edges.append(c.toShape())
     try:
         return Part.Wire(edges)
@@ -257,4 +363,3 @@ def compute(p, base):
     return res, face
 
 
-REEXPORTED = (math,)
