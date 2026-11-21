@@ -24,6 +24,12 @@ shows how it relates to each pick. Change any of those if it guessed wrong.
 The names of planes, axes and points show in the 3D view, the same size however far you zoom.
 [Reference Names](../reference/tools/reference-names.md) turns them off.
 
+## Hidden ones show while selected
+
+Click a hidden plane, axis or point in the tree (an origin one, or one you made) and it shows in the
+3D view while it stays selected, then hides again. It is still hidden as far as the file is
+concerned: nothing to save, nothing to undo.
+
 ## They follow the model
 
 Reference geometry made from faces and edges moves when they move. If what it was built on goes,

@@ -19,17 +19,8 @@ def _to_eye():
         return None
 
 
-def choices(obj, sub):
-    """[(menu text, tip, [edge names])] for the edge ``sub`` of ``obj``."""
-    try:
-        shape = obj.Shape
-        edge = shape.getElement(sub)
-    except Exception:
-        return []
-    out = []
-    tan = core_edges.select_tangency(shape, edge)
-    if len(tan) > 1:
-        out.append(("Select Tangency", "The edges that run on smoothly from this one", tan))
+def _loops(shape, edge):
+    """The loops of the faces beside the edge, the face that faces you first."""
     loops = core_edges.face_loops(shape, edge)
     eye = _to_eye()
     if eye is not None and len(loops) > 1:
@@ -42,6 +33,59 @@ def choices(obj, sub):
             except Exception:
                 return 0.0
         loops.sort(key=facing, reverse=True)
+    return loops
+
+
+#: The command line's selection words (``sel=jk,loop``): what each adds, from the
+#: edge picked before it. Each has a letter the labels never use (see
+#: hints.ALPHABET), so a word is never taken for a label.
+WORDS = {
+    "tangent": "the edges that run on smoothly from it",
+    "loop": "the loop round the face beside it that faces you",
+    "otherloop": "the loop round the face on its other side",
+    "chain": "the edges joined end to end with it",
+}
+#: Short forms.
+WORD_ALIASES = {"tan": "tangent", "oloop": "otherloop"}
+
+
+def word(text):
+    """The selection word *text* means ("tan" -> "tangent"), or None."""
+    t = (text or "").strip().lower()
+    return t if t in WORDS else WORD_ALIASES.get(t)
+
+
+def expand(obj, sub, which):
+    """The edge names a selection word adds from the edge ``sub`` of ``obj``
+    (the edge itself included), or [] if there is nothing to add."""
+    try:
+        shape = obj.Shape
+        edge = shape.getElement(sub)
+    except Exception:
+        return []
+    if which == "tangent":
+        return core_edges.select_tangency(shape, edge)
+    if which in ("loop", "otherloop"):
+        loops = _loops(shape, edge)
+        i = 0 if which == "loop" else 1
+        return list(loops[i][1]) if len(loops) > i else []
+    if which == "chain":
+        return list(core_edges.select_chain(shape, edge)[0])
+    return []
+
+
+def choices(obj, sub):
+    """[(menu text, tip, [edge names])] for the edge ``sub`` of ``obj``."""
+    try:
+        shape = obj.Shape
+        edge = shape.getElement(sub)
+    except Exception:
+        return []
+    out = []
+    tan = core_edges.select_tangency(shape, edge)
+    if len(tan) > 1:
+        out.append(("Select Tangency", "The edges that run on smoothly from this one", tan))
+    loops = _loops(shape, edge)
     for i, (_f, names) in enumerate(loops):
         out.append(("Select Loop" if i == 0 else "Select Other Loop",
                     "The loop of edges round the face beside this edge that faces you"

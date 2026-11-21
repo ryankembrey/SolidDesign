@@ -146,7 +146,7 @@ def _initialize(wb):
     import importlib
 
     for mod in ("ref_labels", "health_badge", "sketch_edit", "temp_axis", "instant3d",
-                "context_bar", "command_line", "view_menus"):
+                "context_bar", "command_line", "view_menus", "reveal"):
         m = importlib.import_module("freecad.SolidDesign.gui." + mod)
         if hasattr(m, "install"):
             m.install = lambda *a, **k: None

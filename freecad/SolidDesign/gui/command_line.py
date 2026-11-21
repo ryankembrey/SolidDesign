@@ -621,7 +621,19 @@ def completions(text):
     parts = text.lstrip(":").split(" ")
     word = parts[-1]
     if "=" in word and word.split("=", 1)[0].lower() in SEL_KEYS:
-        return []                       # typing labels: they show in the view
+        # Labels show in the view; a selection word (sel=jk,loop) completes here.
+        from .hints import ALPHABET
+        from .pick_tools import WORDS
+        head, _sep, part = word.rpartition(",")
+        key, _eq, first = word.partition("=")
+        if not _sep:
+            head, part = key + "=", first
+        else:
+            head += ","
+        if not part or all(c in ALPHABET for c in part.lower()):
+            return []
+        return [(head + w + ",", u"{}  —  adds {}".format(w, tip))
+                for w, tip in WORDS.items() if w.startswith(part.lower())]
     listing = tools()
     if len(parts) == 1:
         ranked = command_search.rank(word, [(n, label, tip) for n, _kw, label, tip in listing]) \
@@ -765,6 +777,7 @@ def _make_bar(view):
             self.hints = []
             self.hint_kinds = None
             self.picks = {}             # code -> (doc, object, sub) it picked
+            self.word_picks = {}        # (place, word, code) -> [(doc, object, sub)] it added
             self._cam = None
             self.cam_timer = QtCore.QTimer(self)
             self.cam_timer.setInterval(250)
@@ -776,6 +789,7 @@ def _make_bar(view):
             self.hist = history()
             self.hpos = len(self.hist)
             self.picks = {}
+            self.word_picks = {}
             self.hints = []
             self.hint_kinds = None
             self.edit.clear()
@@ -828,6 +842,7 @@ def _make_bar(view):
                     Gui.Selection.removeSelection(doc, obj, sub)
                 except Exception:
                     pass
+            self.apply_words(text)
             words = text.split(" ")
             last = words[-1]
             key = last.split("=", 1)[0].lower() if "=" in last else None
@@ -849,11 +864,65 @@ def _make_bar(view):
                 text += ","
                 self.edit.setText(text)
                 prefix = ""
+            elif prefix and any(c not in hm.ALPHABET for c in prefix.lower()):
+                pass                    # a selection word being typed (sel=jk,loop)
             elif prefix and not any(h.code.startswith(prefix) for h in self.hints):
                 _say(u"No label \"{}\" in view.".format(prefix))
             self.overlay.set_state(self.hints, prefix, self.picks.keys())
             self.show_hints(True)
             return text
+
+        def apply_words(self, text, final=False):
+            """Selection words (sel=jk,tangent,loop): each adds the edges it names
+            from the edge picked before it. A word counts once it is followed by a
+            comma (or, with *final*, on Enter); taking it out of the line takes its
+            edges out of the selection."""
+            from . import hints as hm
+            from . import pick_tools
+            want = {}
+            toks = text.split(" ")
+            for ti, tok in enumerate(toks):
+                if "=" not in tok or tok.split("=", 1)[0].strip().lower() not in hm.SEL_KEYS:
+                    continue
+                parts = tok.split("=", 1)[1].split(",")
+                if ti == len(toks) - 1 and not final:
+                    parts = parts[:-1]          # the part being typed
+                base = None
+                for pi, part in enumerate(parts):
+                    if part in self.picks:
+                        doc, obj, sub = self.picks[part]
+                        base = (part, doc, obj, sub) if sub.startswith("Edge") else None
+                        continue
+                    which = pick_tools.word(part)
+                    if which is None:
+                        continue
+                    if base is None:
+                        _say(u"\"{}\" adds edges from an edge: pick one before it.".format(part))
+                        continue
+                    code, doc, obj, sub = base
+                    o = App.getDocument(doc).getObject(obj)
+                    names = pick_tools.expand(o, sub, which)
+                    if not names:
+                        _say(u"No {} from that edge.".format(which))
+                    want[(ti, pi, which, code)] = [(doc, obj, n) for n in names]
+            picked = set(self.picks.values())
+            for k in [k for k in self.word_picks if k not in want]:
+                still = {x for kk, v in want.items() for x in v} | picked
+                for key in self.word_picks.pop(k):
+                    if key not in still:
+                        try:
+                            Gui.Selection.removeSelection(*key)
+                        except Exception:
+                            pass
+            for k, keys in want.items():
+                if k in self.word_picks:
+                    continue
+                for key in keys:
+                    try:
+                        Gui.Selection.addSelection(*key)
+                    except Exception:
+                        pass
+                self.word_picks[k] = keys
 
         def hint_clicked(self, code):
             """A label clicked: as if typed; a picked one clicked: taken out."""
@@ -977,10 +1046,12 @@ def _make_bar(view):
             if not text:
                 self.close_bar()
                 return
+            self.apply_words(text, final=True)
             rest, _sels = split_selection(text)
             if not rest:
                 # Only picks: leave them selected for the next tool.
-                n = len(self.picks)
+                n = len({k for v in self.word_picks.values() for k in v} |
+                        set(self.picks.values()))
                 self.close_bar(keep=True)
                 _say("{} picked.".format(n) if n != 1 else "1 picked.")
                 return
@@ -998,12 +1069,14 @@ def _make_bar(view):
             """Esc drops what was picked by letters; Enter keeps it (the tool
             takes it, or it stays selected)."""
             if not keep:
-                for doc, obj, sub in self.picks.values():
+                for doc, obj, sub in list(self.picks.values()) + \
+                        [k for v in self.word_picks.values() for k in v]:
                     try:
                         Gui.Selection.removeSelection(doc, obj, sub)
                     except Exception:
                         pass
             self.picks = {}
+            self.word_picks = {}
             self.hints = []
             self.hint_kinds = None
             self.show_hints(False)

@@ -78,9 +78,10 @@ class SolidDesignWorkbench(Gui.Workbench):
         temp_axis.install()
         instant3d.install()
         context_bar.install()
-        from freecad.SolidDesign.gui import command_line, view_menus
+        from freecad.SolidDesign.gui import command_line, reveal, view_menus
         command_line.install()
         view_menus.install()
+        reveal.install()
         for name, cmds in self.TOOLBARS:
             self.appendToolbar(name, cmds)
         # The workbench's own menu, with every tool.

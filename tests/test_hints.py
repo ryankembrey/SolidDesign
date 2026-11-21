@@ -75,3 +75,33 @@ class TestAssign(unittest.TestCase):
         hints.assign(hs, keep={("D", "Body", "Edge4"): "jj"}, centre=(0, 0))
         self.assertEqual(hs[3].code, "jj")
         self.assertEqual(len({h.code for h in hs}), 5)
+
+
+class TestSelectionWords(unittest.TestCase):
+    """sel=jk,loop: words that add edges from the edge picked before them."""
+
+    def test_never_a_label(self):
+        from freecad.SolidDesign.gui import pick_tools
+        for w in list(pick_tools.WORDS) + list(pick_tools.WORD_ALIASES):
+            self.assertTrue(any(c not in hints.ALPHABET for c in w), w)
+
+    def test_short_forms(self):
+        from freecad.SolidDesign.gui import pick_tools
+        self.assertEqual(pick_tools.word("tan"), "tangent")
+        self.assertEqual(pick_tools.word("Loop"), "loop")
+        self.assertEqual(pick_tools.word("oloop"), "otherloop")
+        self.assertIsNone(pick_tools.word("jk"))
+
+    def test_expand_on_a_box(self):
+        import Part
+        from freecad.SolidDesign.gui import pick_tools
+
+        class _O(object):
+            Shape = Part.makeBox(40, 30, 10)
+        top_front = next("Edge%d" % i for i, e in enumerate(_O.Shape.Edges, 1)
+                         if abs(e.CenterOfMass.z - 10) < 1e-6 and abs(e.CenterOfMass.y) < 1e-6)
+        self.assertEqual(pick_tools.expand(_O, top_front, "tangent"), [top_front])
+        a = pick_tools.expand(_O, top_front, "loop")
+        b = pick_tools.expand(_O, top_front, "otherloop")
+        self.assertEqual((len(a), len(b)), (4, 4))
+        self.assertEqual(set(a) & set(b), {top_front})

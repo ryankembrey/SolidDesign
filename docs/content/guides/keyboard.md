@@ -41,6 +41,19 @@ Type `sel=` and press <kbd>Tab</kbd>: every face, edge or vertex the tool can us
 label in the view. Type a label to pick it; picks are separated by commas, and a comma is added for
 you after each good one. You can also click a label.
 
+After an edge, a word adds the edges that go with it, as the chain button in a panel does:
+
+| Word | Adds |
+| :-- | :-- |
+| `tangent` (or `tan`) | The edges that run on smoothly from it |
+| `loop` | The loop round the face beside it that faces you |
+| `otherloop` (or `oloop`) | The loop round the face on its other side |
+| `chain` | The edges joined end to end with it |
+
+So `fillet 2 sel=jk,loop` fillets every edge round a face from one label. A word counts once you
+type the comma after it (<kbd>Tab</kbd> completes it and adds the comma); delete it and its edges
+are unpicked again.
+
 [![The command line with link hints on the model's edges](../assets/shots/tool-command-line.png)](../assets/shots/tool-command-line.png)
 
 ## Do it again: <kbd>.</kbd>

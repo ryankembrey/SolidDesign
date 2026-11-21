@@ -2949,6 +2949,111 @@ def command_line_and_repeat():
 
 
 @scenario
+def selection_words_add_edges():
+    """sel=jk,loop: a word after a picked edge adds the edges it names (loop,
+    otherloop, tangent, chain); taking the word out takes them out; Enter
+    fillets them all. Tab completes a word once it can't be a label."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import command_line, pick_tools
+    doc, part = new_doc("SW")
+    extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10)
+    view = Gui.ActiveDocument.ActiveView
+    view.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(300)
+    Gui.Selection.clearSelection()
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+    body = body_views(part)[0]
+    front = edge_at(body, V(0, 0, 10), V(40, 0, 10))
+
+    def selected():
+        return sorted(sub for s in Gui.Selection.getSelectionEx() for sub in s.SubElementNames)
+
+    gl.setFocus()
+    wait(100)
+    QtTest.QTest.keyClick(gl, ":")
+    wait(300)
+    bar = command_line.current()
+    QtTest.QTest.keyClicks(bar.edit, "fillet 1 sel=")
+    wait(300)
+    code = next((h.code for h in bar.hints if h.sub == front), None)
+    expect(code is not None, "the front top edge has a label")
+    if code is None:
+        bar.close_bar()
+        App.closeDocument(doc.Name)
+        return
+    QtTest.QTest.keyClicks(bar.edit, code + "lo")
+    wait(300)
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Tab)
+    wait(400)
+    expect(bar.edit.text() == "fillet 1 sel=%s,loop," % code,
+           "Tab completes \"lo\" to loop and adds the comma (%s)" % bar.edit.text())
+    loop = sorted(pick_tools.expand(body, front, "loop"))
+    expect(len(loop) == 4 and selected() == loop, "loop picks the four edges round the face "
+           "that faces you (%s)" % selected())
+    QtTest.QTest.keyClicks(bar.edit, "otherloop,")
+    wait(400)
+    both = sorted(set(loop) | set(pick_tools.expand(body, front, "otherloop")))
+    expect(len(both) == 7 and selected() == both, "otherloop adds the other face's loop "
+           "(%s)" % selected())
+    for _i in range(len("otherloop,")):
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Backspace)
+    wait(400)
+    expect(selected() == loop, "taking the word out takes its edges out (%s)" % selected())
+    n = len(util.features(part))
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+    wait(1200)
+    feats = util.features(part)
+    f = feats[-1] if len(feats) > n else None
+    expect(f is not None and f.ErrorMessage == "" and len(f.Items[1]) == 4,
+           "Enter fillets the four (%s)" % (list(f.Items[1]) if f else None))
+    App.closeDocument(doc.Name)
+
+
+@scenario
+def hidden_references_show_while_selected():
+    """A hidden plane (an origin one, or one made with Plane) shows while it is
+    selected in the tree, and hides again after; the document isn't changed."""
+    from freecad.SolidDesign.app import refgeom
+    from freecad.SolidDesign.gui import reveal
+    doc, part = new_doc("RV")
+    box = extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10)
+    body = body_views(part)[0]
+    pl = refgeom.create_plane(doc, part, references=[(body, face_at(body, V(20, 15, 10)))])
+    doc.recompute()
+    wait(300)
+    pl.ViewObject.Visibility = False
+    top = plane(part, "Top Plane")
+    wait(300)
+    for o in (pl, top):
+        vo = o.ViewObject
+        expect(not vo.Visibility and vo.SwitchNode.whichChild.getValue() < 0,
+               "%s starts hidden" % o.Label)
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(doc.Name, o.Name)
+        wait(300)
+        expect(vo.SwitchNode.whichChild.getValue() == vo.DefaultMode,
+               "selecting %s shows it" % o.Label)
+        shot("shown-" + o.Name)
+        expect(not vo.Visibility and "Touched" not in o.State, "its Visibility is still off")
+        Gui.Selection.clearSelection()
+        wait(300)
+        expect(vo.SwitchNode.whichChild.getValue() < 0, "deselecting hides it again")
+    # Shown for good while selected: left shown.
+    Gui.Selection.addSelection(doc.Name, pl.Name)
+    wait(300)
+    pl.ViewObject.Visibility = True
+    Gui.Selection.clearSelection()
+    wait(300)
+    expect(pl.ViewObject.SwitchNode.whichChild.getValue() >= 0,
+           "made visible while selected: it stays shown")
+    expect(reveal.is_reference(top) and reveal.is_reference(pl) and
+           not reveal.is_reference(box), "only reference geometry is revealed")
+    App.closeDocument(doc.Name)
+
+
+@scenario
 def command_line_link_hints():
     """Pick by letters: on the command line, sel= labels every edge in view that
     Fillet can use (none of the hidden ones); typing a label picks the edge and
