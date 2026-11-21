@@ -81,6 +81,12 @@ These follow SolidWorks unless a line says otherwise.
   count as one, and slips off it under 0.7 s don't restart the wait. It stays 3 s after the pointer leaves, then fades out; that
   face or edge can be picked wherever an axis is asked (Revolve, Circular
   Pattern, Move/Copy rotation, Axis).
+- The temporary axis itself can be clicked (2026-11-21, owner's request): it turns
+  green and stays (no fading, and hovering elsewhere doesn't replace it) until it
+  is used or something else in the view is clicked, when it fades. The click
+  selects nothing behind it. With a tool open, the click puts it in the tool's
+  axis box (or the active box); with none, the next tool that asks for an axis
+  (Revolve, Circular Pattern, Move/Copy rotation, Flex, Axis) starts with it.
 - Sketches in a part don't hide the model, so a face can be sketched on.
   Editing a sketch a feature uses rolls the model back to just before that
   feature while it is open, as SolidWorks' Edit Sketch does.
@@ -382,12 +388,21 @@ guesses again; a constraint the user chose stays until then.
   panel turns it into the same plane, as constraints. Scripts can still give a
   type.
 
-### Axis, Point: type first  (PROPOSED: owner to decide)
-- **SolidWorks:** reference boxes; the axis or point is solved from what is picked.
-- **Solid Design:** pick a type (for axes One Line/Edge/Axis, Two Planes, Two
-  Points/Vertices, Cylindrical/Conical Face, Point and Face/Plane), then the panel
-  shows only the boxes that type needs. With a preselection the type is guessed.
-- **Why:** kept from before; Plane moved to SolidWorks' way at the owner's request.
+### Axis: SolidWorks' one box and five types (2026-11-21, owner's request)
+- One Selections box (up to two references; a third pick keeps the last two) and
+  the five types as buttons: One Line/Edge/Axis, Two Planes, Two Points/Vertices,
+  Cylindrical/Conical Face, Point and Face/Plane. The type is pressed for you from
+  what was picked, in either order (a face then a point is Point and Face), as
+  SolidWorks does; pressing another overrides it until the next pick. "Fully
+  defined" shows when the axis is made. A circular edge counts as One Line: its
+  axis. Preselection and the right-click menu guess the same way.
+
+### Point: type first  (PROPOSED: owner to decide)
+- **SolidWorks:** one box; the point is solved from what is picked.
+- **Solid Design:** pick a type, then the panel shows only the boxes that type
+  needs. With a preselection the type is guessed.
+- **Why:** kept from before; Plane and Axis moved to SolidWorks' way at the
+  owner's request.
 
 ### Names in the 3D view (2026-11-21, owner's request)
 - Planes, axes, points and coordinate systems show their names, as SolidWorks
@@ -1010,6 +1025,33 @@ text field).
   the same settings, on the selection or what's under the pointer. From a panel it
   repeats what was changed there (and on the line before it), not the defaults.
 - Also in the Solid Design menu: Command Line, Repeat Last Feature.
+
+## Picks show in the view; picking more edges at once (2026-11-21, owner's request)
+- Whatever is in a tool's selection boxes is drawn in the selection blue as soon
+  as it is picked (edges thick, faces tinted), in every tool. Fillet, Chamfer and
+  Draft already drew their own.
+- SolidWorks' edge helpers, for boxes that take several edges:
+  - Right-click an edge while a tool is open (and its active box takes edges):
+    Add/Remove This Edge, Select Tangency, Select Loop (round the face beside it
+    that faces you), Select Other Loop (the face on its other side), Select Chain
+    (open edges joined end to end; Select Closed Loop when they come back round).
+    The count of edges each adds is shown. Elsewhere, FreeCAD's own menu, as before.
+  - The chain button beside such a list offers the same for the last edge picked.
+  - Edges already in the box are skipped, so a helper only adds.
+- **Departure:** on a solid every corner has three edges, so Select Chain stops at
+  once there; it is for the open edges of surfaces (and sketch curves). SolidWorks
+  also has Select Partial Loop and Select Midpoint; not here.
+
+## Preview colour follows what the tool does (2026-11-21, owner's request)
+- Green adds, red removes, measured on the bodies the feature changes (their
+  volume; their area when there are only surface bodies), not set per tool. So
+  Delete Body, Keep Body, Combine Subtract or Common, Shell, a pattern or mirror
+  of a cut, a face moved in, a groove or vent, and a fillet or chamfer on an
+  outside edge preview red; a fillet in an inside corner, a face moved out or a
+  boss preview green. A move or split, which neither adds nor removes, stays
+  green. Fillet, Chamfer and Draft keep the old body drawn as it is while red
+  (their edges and faces are picked on it); the other tools show the result
+  with the removed material in dashed red, as cuts do.
 
 ## Picking by letters on the command line (2026-11-21, owner's idea)
 

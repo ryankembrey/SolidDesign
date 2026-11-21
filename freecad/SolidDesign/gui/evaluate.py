@@ -112,14 +112,27 @@ class WhatsWrongDialog(_Dialog):
         if not 0 <= i < len(self.items):
             return
         f = self.items[i][0]
-        Gui.Control.closeDialog()
-        QtCore.QTimer.singleShot(0, lambda: f.ViewObject.Proxy.doubleClicked(f.ViewObject))
+        # Not now: this runs inside the list's own double-click, and closing the
+        # dialog deletes the list, so Qt would carry on in a deleted widget and
+        # FreeCAD would crash. Once the click is over, close, then edit.
+        QtCore.QTimer.singleShot(0, lambda: _close_then_edit(f))
 
     def reject(self):
         Gui.Control.closeDialog()
         return True
 
     accept = reject
+
+
+def _close_then_edit(f):
+    try:
+        if Gui.Control.activeDialog():
+            Gui.Control.closeDialog()
+        if f.Document is not None:
+            f.ViewObject.Proxy.doubleClicked(f.ViewObject)
+    except Exception as e:
+        App.Console.PrintWarning("Solid Design: can't edit {}: {}\n".format(
+            getattr(f, "Label", "?"), e))
 
 
 # ====================================================================== commands

@@ -479,7 +479,7 @@ def _make_filter():
             pos = ev.position().toPoint() if hasattr(ev, "position") else ev.pos()
             if t == QtCore.QEvent.MouseButtonPress:
                 self.press = (pos.x(), pos.y())
-                self.mine = ours()
+                self.mine = ours() or bool(pick_menu_target(pos.x(), pos.y()))
                 try:
                     # Before FreeCAD's navigation sees the click: its menu or ours.
                     Gui.ActiveDocument.ActiveView.setPopupMenuEnabled(not self.mine)
@@ -497,9 +497,50 @@ def _make_filter():
     return Clicks()
 
 
+def pick_menu_target(x, y):
+    """With a tool open: (panel, box, object, edge) when the right click is on an
+    edge its active box takes (that edge gets Select Tangency, Loop, Chain)."""
+    from . import pick_tools
+    p = pick_tools.current_panel()
+    if p is None:
+        return None
+    try:
+        hit = hit_at(Gui.ActiveDocument.ActiveView, x, y)
+    except Exception:
+        return None
+    if hit.obj is None or not hit.sub.startswith("Edge") or \
+            not pick_tools.accepts_edge(p, hit.obj, hit.sub):
+        return None
+    return p, pick_tools.edge_box(p), hit.obj, hit.sub
+
+
+def pick_menu(target):
+    """The menu for an edge while a tool is open: add it, or it and the edges that
+    go with it, to the tool's box."""
+    from . import pick_tools
+    from .selection import Sel
+    p, box, obj, sub = target
+    m = Menu()
+    m.section(u"{} \u00b7 {}".format(sub, p.TITLE))
+    q = m.qmenu
+    res = box.accept_fn(Sel(obj, sub))
+    there = isinstance(res, tuple) and any(pl == res[0] for pl, _t in box.items)
+    a = q.addAction("Remove This Edge" if there else "Add This Edge")
+    a.triggered.connect(lambda _c=False: p.route(Sel(obj, sub)))
+    pick_tools.fill_menu(q, p, box, obj, sub)
+    return m
+
+
 def show_at(x, y, global_pos, run=True):
     """Open the menu for what's at (x, y) in the 3D view."""
     view = Gui.ActiveDocument.ActiveView
+    target = pick_menu_target(x, y)
+    if target is not None:
+        m = pick_menu(target)
+        _shown[0] = m
+        if run:
+            m.qmenu.popup(global_pos)
+        return m
     m = menu_for(hit_at(view, x, y))
     _shown[0] = m
     if run:

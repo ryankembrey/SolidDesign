@@ -41,10 +41,12 @@ def body_name_before(obj, bid):
 class ToolPanel(FeaturePanel):
     EDIT_SHOWS_BASE = True
     ICON_NAME = ""
-    PREVIEW_ADDS = True     # False: the preview is material taken away (drawn red)
+    PREVIEW_ADDS = True     # False: always material taken away (drawn red)
 
     def removes(self):
-        return not self.PREVIEW_ADDS
+        if not self.PREVIEW_ADDS:
+            return True
+        return super(ToolPanel, self).removes()     # measured: see FeaturePanel
 
     def __init__(self, obj, is_new=False):
         LAST[0] = self
@@ -212,7 +214,7 @@ class ToolPanel(FeaturePanel):
         self.refresh()
 
     def preview_layers(self):
-        return [("result", pv.result_node(self.obj.AddSubShape, self.PREVIEW_ADDS))]
+        return [("result", pv.result_node(self.obj.AddSubShape, not self.removes()))]
 
 
 # ====================================================================== body tools

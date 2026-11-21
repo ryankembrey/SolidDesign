@@ -468,7 +468,19 @@ def create_plane(doc, part, kind=None, references=(), constraints=()):
 
 
 def create_axis(doc, part, kind=None, references=()):
-    return _create(RefAxisProxy, doc, part, "Axis", kind, references)
+    """With no type, it is guessed from the references, as SolidWorks does."""
+    obj = _create(RefAxisProxy, doc, part, "Axis", kind, references)
+    if kind is None and references:
+        guess_axis_type(obj)
+    return obj
+
+
+def guess_axis_type(obj):
+    """Set an axis' type from what its references are (kept if they make none)."""
+    t = core.axis_guess(obj.Proxy.resolved(obj, []))
+    if t is not None and obj.Type != t:
+        obj.Type = t
+    return t
 
 
 

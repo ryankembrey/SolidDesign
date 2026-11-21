@@ -23,6 +23,8 @@ __all__ = ["FilletPanel", "ChamferPanel"]
 
 class _EdgePanel(FeaturePanel):
     EDIT_SHOWS_BASE = True
+    CUT_VIEW = False
+    OWN_PICKS = True
     KINDS = ("Edge", "Face")
     PLACEHOLDER = "Click edges or faces in the 3D view"
 
@@ -72,7 +74,7 @@ class _EdgePanel(FeaturePanel):
         self.changed()
 
     def preview_layers(self):
-        layers = [("result", pv.result_node(self.changed_faces(), True))]
+        layers = [("result", pv.result_node(self.changed_faces(), not self.removes()))]
         picks = []
         base = self.obj.BaseFeature
         for s in self.items.payloads():

@@ -40,6 +40,8 @@ def _direction(shape):
 
 class DraftPanel(ToolPanel):
     TITLE = "Draft"
+    CUT_VIEW = False
+    OWN_PICKS = True
 
     def build(self):
         obj = self.obj
@@ -225,7 +227,7 @@ class DraftPanel(ToolPanel):
         self.faces.set_placeholder(empty="Found by Face propagation" if auto else "")
 
     def preview_layers(self):
-        layers = [("result", pv.result_node(self.changed_faces(), True))]
+        layers = [("result", pv.result_node(self.changed_faces(), not self.removes()))]
         picks = []
         base = self.obj.BaseFeature
         box = self.faces if self.kind.currentText() in (core.NEUTRAL_PLANE, core.DRAFTXPERT) \

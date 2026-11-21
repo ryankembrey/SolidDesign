@@ -5,8 +5,10 @@ Plane is SolidWorks' own: First, Second and Third Reference, each taking a
 plane, face, edge or point, with buttons for the constraints that fit it. What
 was picked sets the constraints to start with (Offset Distance for one face,
 Mid Plane for two...), and the panel says when the plane is fully defined.
-Axis, Point and the rest ask for the type first and then exactly the
-references that type needs (see docs/_notes/ux-departures.md).
+Axis is SolidWorks' too: one box for its references and the five types, the
+type picked from what was clicked (two planes: Two Planes...) and pressable.
+Point and the rest ask for the type first and then exactly the references that
+type needs (see docs/_notes/ux-departures.md).
 """
 
 import Part
@@ -98,6 +100,13 @@ CONSTRAINT_TIPS = {
     core.C_TANGENT: "Tangent: the plane touches the cylinder",
 }
 ORDINAL = ("First", "Second", "Third")
+AXIS_TIPS = {
+    core.LINE: "Along a straight edge, an axis or a sketch line (or a circular edge's axis)",
+    core.TWO_PLANES: "Where two planes or planar faces meet",
+    core.TWO_POINTS: "Through two points or vertices",
+    core.CYLINDRICAL: "The axis of a cylindrical or conical face",
+    core.POINT_AND_FACE: "Through a point, square to a plane or planar face",
+}
 FLIP_TEXT = {core.C_OFFSET: "Flip offset", core.C_ANGLE: "Flip angle",
              core.C_TANGENT: "Other side"}
 
@@ -158,6 +167,8 @@ class RefGeomPanel(FeaturePanel):
     def build(self):
         if self.kind == "plane":
             return self.build_plane()
+        if self.kind == "axis":
+            return self.build_axis()
         obj = self.obj
         g = self.sec = self.group("Type")
         self.type = parts.combo(obj.Proxy.TYPES, obj.Type)
@@ -238,9 +249,68 @@ class RefGeomPanel(FeaturePanel):
                                             "Turn the plane the other way round")
         self._compacting = False
 
+    # ---------------------------------------------------------- axis
+    def build_axis(self):
+        """SolidWorks' Axis: the references in one box, and the type buttons with
+        the one that fits them pressed."""
+        self.status = parts.Message("info")
+        self.layout.addWidget(self.status)
+        g = self.group("Selections", "Up to two references the axis is made from")
+        self.refs = self.list(g, "References", "references",
+                              "Click an edge, a round face, two planes or two points",
+                              lambda s: self._accept_any(s, 0),
+                              "Up to two references: an edge or axis; a cylindrical or "
+                              "conical face; two planes; two points; a point and a face")
+        self.refs.changed.connect(self._axis_refs_changed)
+        self.ref_boxes = [self.refs]
+        g = self.sec_type = self.group("Type", "How the axis is made from the references; "
+                                       "picked from what they are, or press another")
+        self.type_group = QtWidgets.QButtonGroup(self.widget)
+        self.type_group.setExclusive(True)
+        self.type_buttons = {}
+        for t in core.AXIS_TYPES:
+            b = QtWidgets.QToolButton()
+            b.setText(t)
+            b.setCheckable(True)
+            b.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+            b.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            b.setMinimumHeight(parts.BUTTON)
+            b.setToolTip(AXIS_TIPS[t])
+            b.clicked.connect(lambda _c=False, t=t: self._axis_type_pressed(t))
+            self.type_group.addButton(b)
+            g.wide(b)
+            self.type_buttons[t] = b
+        g = self.sec_opts = self.group("Options")
+        self.flip, self.r_flip = self.check(g, "Flip", "Reverse direction",
+                                            "Turn the axis the other way round")
+
+    def _axis_refs_changed(self):
+        items = list(self.refs.items)
+        if len(items) > 2:              # a third pick: keep the last two
+            items = items[-2:]
+            self.refs.set_items(items)
+        for j in range(3):
+            if j < len(items):
+                (name, sub), _t = items[j]
+                refs.set_ref(self.obj, "Reference%d" % (j + 1), self.doc.getObject(name), sub)
+            else:
+                refs.set_ref(self.obj, "Reference%d" % (j + 1), None)
+        from ..app import refgeom as app_refgeom
+        app_refgeom.guess_axis_type(self.obj)
+        self.changed()
+
+    def _axis_type_pressed(self, t):
+        self.set_prop("Type", t)
+
+    def _refresh_axis(self):
+        for t, b in self.type_buttons.items():
+            b.blockSignals(True)
+            b.setChecked(t == self.obj.Type)
+            b.blockSignals(False)
+
     def _accept_any(self, sel, i):
-        """Anything a plane can be placed by: a plane, a planar or cylindrical face,
-        an edge, a point, or a datum."""
+        """Anything a plane or axis can be made from: a plane, a planar or round
+        face, an edge, a point, or a datum."""
         o = sel.obj
         if o is self.obj:
             return "A reference can't refer to itself."
@@ -336,6 +406,10 @@ class RefGeomPanel(FeaturePanel):
         self.sec_opts.setVisible(bool(live))
 
     def after_preview(self):
+        if self.kind == "axis":
+            ok = not self.obj.ErrorMessage and bool(self.refs.items)
+            self.status.set("Fully defined" if ok else "")
+            return
         if self.kind != "plane":
             return
         ok = not self.obj.ErrorMessage and any(b.items for b in self.ref_boxes)
@@ -427,6 +501,8 @@ class RefGeomPanel(FeaturePanel):
             self.activate(nxt)
 
     def next_box_needing_input(self):
+        if self.kind == "axis":
+            return self.refs if len(self.refs.items) < 2 else None
         if self.kind == "plane":
             # The first empty reference: picks go on into the next box.
             return next((b for b in self.ref_boxes if not b.items and
@@ -443,6 +519,16 @@ class RefGeomPanel(FeaturePanel):
             cons = self.obj.Proxy.constraints(self.obj)
             self.obj.Type = core.REFERENCES
             self.obj.Constraints = cons
+        if self.kind == "axis":
+            items = []
+            for i in (1, 2, 3):
+                v = getattr(self.obj, "Reference%d" % i)
+                if v and v[0] is not None:
+                    sub = v[1][0] if v[1] else ""
+                    items.append(((v[0].Name, sub), self.ref_text(v[0], sub)))
+            self.refs.set_items(items)
+            self.refresh()
+            return
         for i, b in enumerate(self.ref_boxes, 1):
             v = getattr(self.obj, "Reference%d" % i)
             if v and v[0] is not None:
@@ -453,6 +539,8 @@ class RefGeomPanel(FeaturePanel):
     def refresh(self):
         if self.kind == "plane":
             return self._refresh_plane()
+        if self.kind == "axis":
+            return self._refresh_axis()
         needs = self.needs()
         for i, b in enumerate(self.ref_boxes):
             show = i < len(needs)

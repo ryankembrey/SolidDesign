@@ -774,6 +774,88 @@ def surface_views(part):
 
 
 @scenario
+def picks_show_and_edge_helpers():
+    """What is picked in a tool shows in the view (Filled Surface's edges, Shell's
+    face), and edges come with SolidWorks' helpers: the chain button beside the
+    list and the right-click menu on an edge add the whole rim at once."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import view_menus
+    doc, part = new_doc("PKS")
+    extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10)
+    v = body_views(part)[0]
+    select(doc, v, face_at(v, V(20, 15, 10), V(0, 0, 1)))
+    run_cmd("SD_DeleteFace")
+    close_panel(True)
+    sv = body_views(part)[0]
+    expect(sv.Shape.ShapeType != "Solid" and len(sv.Shape.Faces) == 5,
+           "an open box (%d faces)" % len(sv.Shape.Faces))
+    view = Gui.ActiveDocument.ActiveView
+    view.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(300)
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_FilledSurface", 900)
+    expect(p is not None and p.active_box is p.edges, "Filled Surface waits for edges")
+    front = edge_at(sv, V(0, 0, 10), V(40, 0, 10))
+    pick(p, sv, front)
+    wait(300)
+    layer = p.preview.layers.get("picked")
+    expect(len(p.edges.items) == 1 and layer is not None,
+           "the picked edge is drawn in the view")
+    expect(p.edges.more_button.isVisible(), "the chain button shows once an edge is picked")
+    shot("one_edge")
+    menu = p.edges.more_button.menu()
+    p._fill_more(p.edges, menu)
+    texts = [a.text() for a in menu.actions()]
+    loop = [a for a in menu.actions() if a.text().startswith("Select Closed Loop")]
+    expect(loop and "(4)" in loop[0].text(), "the rim is one closed loop of 4 (%s)" % texts)
+    if loop:
+        loop[0].trigger()
+    wait(900)
+    expect(len(p.edges.items) == 4 and ok_enabled(), "all four picked: the patch can be made "
+           "(%d, %s)" % (len(p.edges.items), p.error.value()))
+    shot("rim")
+    # Right-click on an edge, with the tool open: the same helpers.
+    p.edges.clear_items()
+    wait(400)
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+    e = sv.Shape.getElement(front)
+    gx, gy = view.getPointOnViewport(e.valueAt(0.5 * (e.FirstParameter + e.LastParameter)))
+    pt = QtCore.QPoint(int(gx), int(view.getSize()[1] - gy))
+    view_menus._shown[0] = None
+    QtTest.QTest.mousePress(gl, QtCore.Qt.RightButton, QtCore.Qt.NoModifier, pt)
+    QtTest.QTest.mouseRelease(gl, QtCore.Qt.RightButton, QtCore.Qt.NoModifier, pt)
+    wait(400)
+    m = view_menus._shown[0]
+    texts = [a.text() for a in m.qmenu.actions()] if m is not None else []
+    expect(any(t.startswith("Add This Edge") for t in texts) and
+           any(t.startswith("Select Closed Loop") for t in texts) and
+           any(t.startswith("Select Loop") for t in texts),
+           "right-clicking an edge offers it and its loops (%s)" % texts)
+    if m is not None:
+        m.qmenu.hide()
+        a = [x for x in m.qmenu.actions() if x.text().startswith("Select Closed Loop")]
+        if a:
+            a[0].trigger()
+    wait(800)
+    expect(len(p.edges.items) == 4, "the right-click helper adds the rim too (%d)"
+           % len(p.edges.items))
+    close_panel(False)
+
+    # Shell: the picked face shows too.
+    doc2, part2 = new_doc("PKS2")
+    extrude_ui(doc2, part2, plate_sketch(doc2, part2, 40, 30), 10)
+    b = body_views(part2)[0]
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Shell", 900)
+    pick(p, b, face_at(b, V(20, 15, 10), V(0, 0, 1)))
+    wait(600)
+    expect(p.preview.layers.get("picked") is not None, "Shell's picked face is drawn")
+    close_panel(False)
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+@scenario
 def surface_tools_through_panels():
     """Delete Face, Filled Surface, Planar, Trim, Extend, Knit and Thicken, the way
     a user drives them: preselections and clicks in the view."""
@@ -1827,6 +1909,149 @@ def reference_names_in_view():
     wait(200)
     expect(label_texts(pl) == ["Datum Top"], "and shows with it (%s)" % label_texts(pl))
     expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+@scenario
+def axis_guesses_from_picks():
+    """Axis as SolidWorks has it: one box for the references, and the type picked
+    from what they are (in either order); another type can be pressed; a third
+    pick keeps the last two."""
+    from freecad.SolidDesign.core import refgeom as core_ref
+    doc, part = new_doc("AXG")
+    sk = plate_sketch(doc, part, 40, 30)
+    extrude_ui(doc, part, sk, 10)
+    v = body_views(part)[0]
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Axis")
+    expect(p is not None and p.TITLE == "Axis" and p.active_box is p.refs,
+           "Axis opens with one box waiting")
+
+    def pressed():
+        return [t for t, b in p.type_buttons.items() if b.isChecked()]
+
+    def axis_dir():
+        e = p.obj.Shape.Edges[0]
+        d = e.Vertexes[-1].Point - e.Vertexes[0].Point
+        return d.normalize()
+
+    pick(p, plane(part, "Front Plane"))
+    pick(p, plane(part, "Right Plane"))
+    wait(500)
+    expect(pressed() == [core_ref.TWO_PLANES], "two planes: Two Planes (%s)" % pressed())
+    expect(p.status.value() == "Fully defined" and ok_enabled(), "fully defined")
+    expect(abs(abs(axis_dir().z) - 1) < 1e-6, "along Z, where they meet")
+    shot("two_planes")
+
+    p.refs.clear_items()
+    wait(300)
+    top = face_at(v, V(20, 15, 10), V(0, 0, 1))
+    corner = "Vertex%d" % [i for i, x in enumerate(v.Shape.Vertexes, 1)
+                           if (x.Point - V(40, 30, 10)).Length < 1e-6][0]
+    pick(p, v, top)
+    pick(p, v, corner)
+    wait(500)
+    expect(pressed() == [core_ref.POINT_AND_FACE] and ok_enabled(),
+           "a face, then a point: Point and Face (%s, %s)" % (pressed(), p.error.value()))
+    e = p.obj.Shape.Edges[0]
+    expect(abs(e.CenterOfMass.x - 40) < 1e-6 and abs(e.CenterOfMass.y - 30) < 1e-6,
+           "through the corner, square to the top")
+
+    p.type_buttons[core_ref.TWO_POINTS].click()
+    wait(600)
+    expect(pressed() == [core_ref.TWO_POINTS] and not ok_enabled() and p.error.value(),
+           "Two Points pressed with a face picked: said (%s)" % p.error.value())
+
+    edge = edge_at(v, V(0, 0, 10), V(40, 0, 10))
+    pick(p, v, edge)
+    wait(500)
+    expect([x[0][1] for x in p.refs.items] == [corner, edge],
+           "a third pick keeps the last two (%s)" % [x[1] for x in p.refs.items])
+    p.refs.clear_items()
+    wait(300)
+    pick(p, v, edge)
+    wait(500)
+    expect(pressed() == [core_ref.LINE] and ok_enabled() and abs(abs(axis_dir().x) - 1) < 1e-6,
+           "an edge: along it (%s)" % pressed())
+    close_panel(True)
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+def preview_colour(p, layer="result"):
+    """The first colour in a panel's preview layer, or None."""
+    node = p.preview.layers.get(layer)
+    if node is None:
+        return None
+    todo = [node]
+    while todo:
+        n = todo.pop(0)
+        t = n.getTypeId().getName().getString()
+        if t == "Material":
+            return tuple(round(c, 2) for c in n.diffuseColor[0].getValue())
+        if t == "BaseColor":
+            return tuple(round(c, 2) for c in n.rgb[0].getValue())
+        try:
+            todo.extend(n.getChild(i) for i in range(n.getNumChildren()))
+        except Exception:
+            pass
+    return None
+
+
+@scenario
+def preview_red_when_removing():
+    """Green adds, red removes, by what the tool does to the bodies: Delete Body,
+    Keep Body (of two), Combine Subtract, Shell and a fillet on an outside edge
+    are red; a boss is green."""
+    from freecad.SolidDesign.app import bodytools, dressup
+    from freecad.SolidDesign.gui import preview as pv
+    red = tuple(round(c, 2) for c in pv.CUT_COLOR)
+    green = tuple(round(c, 2) for c in pv.ADD_COLOR)
+
+    def two_bodies(name):
+        """A 40 x 30 x 10 block and a 20 x 20 x 10 one beside it."""
+        for d in list(App.listDocuments().values()):
+            App.closeDocument(d.Name)
+        doc, part = new_doc(name)
+        extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10)
+        sk2 = sketch(doc, plane(part, "Top Plane"))
+        rect(sk2, 60, 0, 80, 20)
+        app_part.add_to_part(part, sk2)
+        doc.recompute()
+        extrude_ui(doc, part, sk2, 10)
+        return doc, part, [v.BodyId for v in body_views(part)]
+
+    doc, part = new_doc("RED")
+    extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10, ok=False)
+    p = panel()
+    expect(preview_colour(p) == green and not p.removes(), "a boss: green")
+    close_panel(True)
+
+    cases = [
+        ("Delete Body", lambda d, pt, ids: bodytools.create_delete(d, pt, Bodies=[ids[1]]), red),
+        ("Keep Body (one of two)", lambda d, pt, ids: bodytools.create_delete(
+            d, pt, Type="Keep Bodies", Bodies=[ids[0]]), red),
+        ("Combine Subtract", lambda d, pt, ids: bodytools.create_combine(
+            d, pt, Operation="Subtract", MainBody=ids[0], Bodies=[ids[1]]), red),
+        ("Shell", lambda d, pt, ids: dressup.create_shell(
+            d, pt, [face_at(pt.Tip, V(20, 15, 10), V(0, 0, 1))]), red),
+        ("Fillet on an outside edge", lambda d, pt, ids: dressup.create_fillet(
+            d, pt, [edge_at(pt.Tip, V(0, 0, 10), V(40, 0, 10))]), red),
+    ]
+    for name, make, want in cases:
+        doc, part, ids = two_bodies("RED")
+        obj = make(doc, part, ids)
+        doc.recompute()
+        Gui.ActiveDocument.setEdit(obj.Name, 0)
+        wait(900)
+        p = panel()
+        got = preview_colour(p) if p is not None else None
+        expect(got == want, "%s: %s (%s, %s)" % (name, "red" if want == red else "green", got,
+                                                 p.error.value() if p else None))
+        if name == "Delete Body":
+            shot("delete_body")
+        if name.startswith("Fillet") and p is not None:
+            expect(not p._veiled, "a fillet keeps the body as it is (its edges are picked)")
+            shot("fillet")
+        close_panel(False)
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
 
 @scenario
 def plane_and_sketch_on_it():
@@ -3195,7 +3420,13 @@ def whats_wrong_and_rebuild():
     expect(len(d.items) == 1 and d.items[0][0] is f2, "it lists the broken cut (%s)"
            % [(x.Label, k) for x, k, _t in d.items])
     shot("whats_wrong")
-    d.list.itemDoubleClicked.emit(d.list.item(0))
+    # A real double-click, as a hand does it (emitting the signal didn't catch
+    # the crash: closing the dialog inside the click deleted the list under it).
+    from PySide6 import QtTest
+    rect = d.list.visualItemRect(d.list.item(0))
+    vp = d.list.viewport()
+    QtTest.QTest.mouseClick(vp, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, rect.center())
+    QtTest.QTest.mouseDClick(vp, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, rect.center())
     wait(900)
     p = panel()
     expect(p is not None and p.obj is f2, "double-clicking edits it")
@@ -4513,6 +4744,91 @@ def axis_dashed_on_top():
     wait(200)
     expect(not ax.ViewObject.Visibility, "the axis can be hidden")
 
+
+@scenario
+def temporary_axis_picked():
+    """The axis that shows on a round face can be clicked: it turns green and stays
+    (hovering elsewhere or waiting doesn't move or fade it, and nothing behind it
+    is selected) until it is used or something else is clicked. Used by a tool
+    already open, by the next tool that asks for an axis, and by Axis."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import temp_axis
+    doc, part = new_doc("TAP")
+    sk = sketch(doc, plane(part, "Top Plane"))
+    circle(sk, 0, 0, 10)
+    app_part.add_to_part(part, sk)
+    doc.recompute()
+    extrude_ui(doc, part, sk, 20)
+    v = body_views(part)[0]
+    side = [("Face%d" % i) for i, f in enumerate(v.Shape.Faces, 1)
+            if f.Surface.TypeId == "Part::GeomCylinder"][0]
+    flat = [("Face%d" % i) for i, f in enumerate(v.Shape.Faces, 1)
+            if f.Surface.TypeId == "Part::GeomPlane"][0]
+    view = Gui.ActiveDocument.ActiveView
+    view.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(300)
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+    t = temp_axis.current()
+
+    def on_axis(frac=0.85):
+        a, b = t.seg
+        gx, gy = view.getPointOnViewport(a + (b - a) * frac)
+        h = view.getSize()[1]
+        return QtCore.QPoint(int(gx), int(h - gy))
+
+    def click(pt):
+        QtTest.QTest.mouseClick(gl, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, pt)
+        wait(300)
+
+    def show_and_pick():
+        Gui.Selection.clearSelection()
+        t.show(doc.Name, v.Name, side)
+        wait(100)
+        click(on_axis())
+
+    show_and_pick()
+    expect(t.pinned and t.node is not None, "clicking the axis picks it")
+    expect(not Gui.Selection.getSelectionEx(), "and selects nothing behind it")
+    col = tuple(round(c, 2) for c in t.material.diffuseColor[0].getValue())
+    expect(col == tuple(round(c, 2) for c in temp_axis.PICKED_COLOR), "drawn green (%s)"
+           % (col,))
+    shot("picked")
+    Gui.Selection.setPreselection(v, flat)
+    wait(200)
+    t.hovered(doc.Name, v.Name, flat)
+    t.left()
+    wait(temp_axis.LINGER_MS + temp_axis.FADE_MS + 500)
+    expect(t.pinned and t.node is not None, "hovering elsewhere and waiting: it stays")
+    click(QtCore.QPoint(15, 15))
+    expect(not t.pinned, "clicking off it lets it go")
+    wait(temp_axis.FADE_MS + 400)
+    expect(t.node is None, "and it fades away")
+
+    # Picked first, then the tool: its axis box starts with it.
+    show_and_pick()
+    p = run_cmd("SD_CircularPattern", 900)
+    expect(p is not None and p.axis.items and p.axis.items[0][0][1] == side,
+           "Circular Pattern starts with the picked axis (%s)" % (p.axis.items if p else None))
+    expect(t.node is None, "used: it goes")
+    # The tool open first: clicking the axis puts it in the axis box.
+    p.axis.clear_items()
+    wait(300)
+    t.show(doc.Name, v.Name, side)
+    wait(100)
+    click(on_axis())
+    expect(p.axis.items and t.node is None, "with the tool open, clicking the axis fills its "
+           "axis box (%s)" % p.axis.items)
+    close_panel(False)
+
+    # Axis: a picked temporary axis makes it.
+    show_and_pick()
+    p = run_cmd("SD_Axis", 900)
+    expect(p is not None and p.refs.items and p.obj.Type.startswith("Cylindrical"),
+           "Axis from the picked axis (%s)" % (p.obj.Type if p else None))
+    close_panel(True)
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
 
 @scenario
 def temporary_axis_on_hover():

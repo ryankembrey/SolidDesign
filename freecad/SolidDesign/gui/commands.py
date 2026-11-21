@@ -368,9 +368,6 @@ def _classify(o, sub):
     return kind, (o, sub)
 
 
-AXIS_GUESS = [(("line",), "One Line/Edge/Axis"), (("plane", "plane"), "Two Planes"),
-              (("point", "point"), "Two Points/Vertices"),
-              (("round",), "Cylindrical/Conical Face"), (("point", "plane"), "Point and Face/Plane")]
 
 
 POINT_GUESS = [(("point",), "On Point"), (("curve",), "Arc Center"),
@@ -466,15 +463,27 @@ class RefGeomTool(object):
             # Up to three references in the order picked; their constraints are
             # guessed from what they are, as SolidWorks does.
             obj = app_refgeom.create_plane(doc, part, None, [r for _k, r in picks][:3])
+        elif self.kind == "axis":
+            # The type is guessed from what the references are, in either order.
+            # A picked temporary axis counts as its face or edge.
+            if not picks:
+                from . import temp_axis
+                ta = temp_axis.current()
+                src = ta.picked() if ta is not None else None
+                if src is not None:
+                    k, ref = _classify(*src)
+                    if k is not None:
+                        picks = [(k, ref)]
+                        ta.used()
+            obj = app_refgeom.create_axis(doc, part, None, [r for _k, r in picks][:2])
         else:
-            guesses = {"axis": AXIS_GUESS, "point": POINT_GUESS}[self.kind]
+            guesses = {"point": POINT_GUESS}[self.kind]
             kind = None
             for pattern, name in guesses:
                 if pattern == kinds:
                     kind = name
                     break
-            make = {"plane": app_refgeom.create_plane, "axis": app_refgeom.create_axis,
-                    "point": app_refgeom.create_point}[self.kind]
+            make = app_refgeom.create_point
             obj = make(doc, part, kind, [r for _k, r in picks] if kind else [])
         from . import viewproviders
         viewproviders.attach_refgeom(obj, new=True)

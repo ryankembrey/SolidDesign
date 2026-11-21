@@ -628,7 +628,38 @@ def _underdefined(refs_):
 
 # ------------------------------------------------------------------ axes
 
+def axis_guess(shapes):
+    """The axis type SolidWorks would pick for these references (in any order),
+    or None when they don't make an axis."""
+    kinds = sorted(ref_kind(s) or "" for s in shapes if s is not None)
+    if kinds == ["line"]:
+        return LINE
+    if kinds == ["curve"]:
+        s = next(s for s in shapes if s is not None)
+        return LINE if axis_of_element(_single(s)) is not None else None
+    if kinds == ["round"]:
+        return CYLINDRICAL
+    if kinds == ["plane", "plane"]:
+        return TWO_PLANES
+    if kinds == ["point", "point"]:
+        return TWO_POINTS
+    if kinds == ["plane", "point"]:
+        return POINT_AND_FACE
+    return None
+
+
+def _in_order(kind, refs):
+    """References in the order a type reads them: a point and a face may come
+    either way round."""
+    live = [r for r in refs if r is not None]
+    if kind == POINT_AND_FACE and len(live) == 2 and ref_kind(live[0]) == "plane" and \
+            ref_kind(live[1]) == "point":
+        return [live[1], live[0]]
+    return refs
+
+
 def axis(kind, refs, flip=False):
+    refs = _in_order(kind, refs)
     need = AXIS_NEEDS[kind]
     if len([r for r in refs if r is not None]) < len(need):
         raise topo.GeometryError("{}: pick {}.".format(kind, _describe(need)))

@@ -169,14 +169,12 @@ def run():
     Gui.runCommand("SD_Axis")
     wait(900)
     p = panel()
-    p.type.setCurrentIndex(p.type.findText("Two Planes"))
-    wait(300)
     p.route(Sel(plane(part, "Front Plane")))
     wait(200)
     p.route(Sel(plane(part, "Right Plane")))
     wait(700)
-    check(len(p.ref_boxes[0].items) == 1 and len(p.ref_boxes[1].items) == 1,
-          "Axis: two planes picked, one per box")
+    check(len(p.refs.items) == 2 and p.obj.Type == "Two Planes",
+          "Axis: two planes picked -> Two Planes")
     ax = p.obj
     finish(p, "axis")
 

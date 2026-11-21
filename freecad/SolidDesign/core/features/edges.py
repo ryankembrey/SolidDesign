@@ -144,3 +144,75 @@ def tangent_faces(shape, faces, tol=1e-4):
                     out.append(g)
                     todo.append(g)
     return out
+
+
+# ------------------------------------------------------------------ picking more edges
+# SolidWorks' Select Tangency, Select Loop and Select Chain: from one picked edge,
+# the edges that go with it. Names are "EdgeN" of ``shape``.
+
+def edge_name(shape, edge):
+    for i, e in enumerate(shape.Edges, 1):
+        if e.isSame(edge):
+            return "Edge%d" % i
+    return None
+
+
+def _faces_of(shape, edge):
+    import Part
+    try:
+        return shape.ancestorsOfType(edge, Part.Face)
+    except Exception:
+        return []
+
+
+def select_tangency(shape, edge):
+    """The edge and every edge that runs on from it smoothly (tangent at the
+    shared vertex), as far as that goes."""
+    return [n for n in (edge_name(shape, e) for e in tangent_chain(shape, [edge])) if n]
+
+
+def face_loops(shape, edge):
+    """[(face, [edge names])]: for each face beside the edge, the loop of that
+    face's edges the edge is in (its outline, or the rim of a hole in it)."""
+    out = []
+    for f in _faces_of(shape, edge):
+        for w in f.Wires:
+            if any(e.isSame(edge) for e in w.Edges):
+                names = [edge_name(shape, e) for e in w.Edges]
+                out.append((f, [n for n in names if n]))
+                break
+    return out
+
+
+def select_chain(shape, edge):
+    """(edge names, closed): the edges joined end to end with it, followed while
+    the way on is clear: at each vertex just one edge of the same sort (an open
+    edge of a surface goes on along open edges; a sketch's along its curves).
+    Closed when it comes back round to where it started."""
+    def faces(e):
+        return len(_faces_of(shape, e))
+    sort = min(faces(edge), 2)
+    pool = [e for e in shape.Edges if min(faces(e), 2) == sort]
+    chain = [edge]
+    closed = False
+    for end in (-1, 0):
+        cur = edge
+        v = edge.Vertexes[end] if edge.Vertexes else None
+        while v is not None:
+            nxt = [e for e in pool if not e.isSame(cur) and
+                   any(ev.isSame(v) for ev in e.Vertexes)]
+            if len(nxt) != 1:
+                break
+            e = nxt[0]
+            if any(e.isSame(x) for x in chain):
+                closed = True
+                break
+            if end == -1:
+                chain.append(e)
+            else:
+                chain.insert(0, e)
+            others = [ev for ev in e.Vertexes if not ev.isSame(v)]
+            v, cur = (others[0] if others else None), e
+        if closed:
+            break
+    return [n for n in (edge_name(shape, e) for e in chain) if n], closed

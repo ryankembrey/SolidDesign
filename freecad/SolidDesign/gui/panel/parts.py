@@ -47,6 +47,13 @@ FLIP_SVG = (
     ' stroke-width="5" stroke-linecap="round" stroke-linejoin="round">'
     '<path d="M16 12V50M6 40l10 12 10-12"/><path d="M48 52V14M38 24l10-12 10 12"/></svg>')
 
+# Three links of a chain: add the edges connected to one.
+CHAIN_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR"'
+    ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="2" y="9" width="8" height="6" rx="3"/><rect x="14" y="9" width="8" height="6"'
+    ' rx="3"/><path d="M8 12h8"/></svg>')
+
 # A cross: clear the list.
 CLEAR_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="COLOR"'
@@ -661,8 +668,18 @@ class SelectionList(_Selection):
         buttons.setSpacing(4)
         self.clear_button = icon_button(CLEAR_SVG, "Clear the %s" % what)
         self.clear_button.clicked.connect(lambda _c=False: self.clear_items())
+        # Select Tangency, Loop, Chain from the last edge picked (the panel fills
+        # its menu and shows it once an edge is in the list).
+        self.more_button = icon_button(CHAIN_SVG, "Add the edges connected to the last one "
+                                                  "picked: tangency, loop, chain")
+        self.more_button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.more_button.setStyleSheet(ICON_BUTTON_CSS +
+                                       " QToolButton::menu-indicator { image: none; width: 0; }")
+        self.more_button.setMenu(QtWidgets.QMenu(self.more_button))
+        self.more_button.hide()
         buttons.addWidget(self.button)
         buttons.addWidget(self.clear_button)
+        buttons.addWidget(self.more_button)
         buttons.addStretch(1)
         row.addWidget(self.list, 1)
         row.addLayout(buttons)

@@ -89,6 +89,13 @@ class FeaturePanel(object):
     # Show the model before the feature while editing (SolidWorks does for Fillet,
     # Chamfer...): every edge stays pickable; the result is the preview.
     EDIT_SHOWS_BASE = False
+    # Every pick in the boxes is drawn in the selection blue; a panel that draws
+    # its own (Fillet, Chamfer, Draft) says so.
+    OWN_PICKS = False
+    # When it takes material away, show the bodies as they come out with the old
+    # ones veiled (see _cut_view). Off for tools picked on the old body's edges
+    # and faces (Fillet, Chamfer, Draft): it stays as it is; only the colour says.
+    CUT_VIEW = True
 
     def __init__(self, obj, is_new=False):
         # The handles shown for a selected feature give way to the panel's own.
@@ -113,6 +120,7 @@ class FeaturePanel(object):
                 pass
         self.boxes = []
         self.active_box = None
+        self.last_pick = {}         # box -> the last Sel it took (for Select Tangency...)
         self.preview = pv.Preview()
         self._closing = False
         self._recomputing = False
@@ -218,7 +226,26 @@ class FeaturePanel(object):
         """A several-item selection box, across the group."""
         box = self._register(parts.SelectionList(name, what, hint, accept, tip, empty))
         box.row = group.wide(box)
+        menu = box.more_button.menu()
+        menu.aboutToShow.connect(lambda b=box, m=menu: self._fill_more(b, m))
+        box.changed.connect(lambda b=box: self._update_more(b))
         return box
+
+    def _fill_more(self, box, menu):
+        from .. import pick_tools
+        menu.clear()
+        sel = self.last_pick.get(box)
+        if sel is not None:
+            pick_tools.fill_menu(menu, self, box, sel.obj, sel.sub)
+
+    def _update_more(self, box):
+        """The chain button shows once the last pick is an edge still in the list."""
+        sel = self.last_pick.get(box)
+        on = sel is not None and sel.elem_kind() == "Edge" and bool(box.items)
+        try:
+            box.more_button.setVisible(on)
+        except Exception:
+            pass
 
     def qty(self, group, prop, label, tip, unit="mm", minimum=0.0, maximum=1e9, step=1.0,
             flip=None, flip_tip="Reverse direction"):
@@ -312,6 +339,8 @@ class FeaturePanel(object):
             r = box.offer(sel)
             if r is True:
                 taken = filled = True
+                self.last_pick[box] = sel
+                self._update_more(box)
             elif isinstance(r, str):
                 taken = True        # refused, and said so under the box
         if not taken:
@@ -323,7 +352,9 @@ class FeaturePanel(object):
                 if res is not None and not isinstance(res, str):
                     fits.append(b)
             if len(fits) == 1:
+                self.last_pick[fits[0]] = sel
                 fits[0].offer(sel)
+                self._update_more(fits[0])
                 self.activate(fits[0])
                 box = fits[0]
                 filled = True
@@ -351,6 +382,7 @@ class FeaturePanel(object):
         before = set(self.visible_boxes())
         self.refresh()
         self._follow_boxes(before)
+        self._show_picks()
         self._timer.start()
 
     def _follow_boxes(self, before):
@@ -416,6 +448,8 @@ class FeaturePanel(object):
         (spec 8.2), so a value being typed doesn't blank it, but the other layers
         (what's picked) follow the panel, and once nothing is picked the result
         goes too: it showed picks that aren't there any more."""
+        self._removing = None           # measured afresh for this result
+        self._show_picks()
         try:
             layers = self.preview_layers()
         except Exception:
@@ -428,9 +462,49 @@ class FeaturePanel(object):
                 continue
             self.preview.set(name, node)
         if not err:
-            self._cut_view(self.removes())
+            self._cut_view(self.CUT_VIEW and self.removes())
         elif gone:
             self._cut_view(False)
+
+    # ------------------------------------------------------------ picks
+    def _pick_shape(self, payload, base):
+        """The face, edge or vertex a box's item names, or None (whole objects,
+        bodies by ID)."""
+        import Part
+        try:
+            if isinstance(payload, str):
+                if base is not None and payload.startswith(("Edge", "Face", "Vertex")):
+                    return Part.getShape(base, payload, needSubElement=True)
+                return None
+            if isinstance(payload, (tuple, list)) and len(payload) == 2 and \
+                    all(isinstance(x, str) for x in payload) and payload[1]:
+                o = self.doc.getObject(payload[0])
+                if o is not None:
+                    return Part.getShape(o, payload[1], needSubElement=True)
+        except Exception:
+            pass
+        return None
+
+    def _show_picks(self):
+        """What is in the boxes, drawn in the selection blue (edges thick, faces
+        tinted) as soon as it is picked, so a pick can be seen in the view."""
+        if self.OWN_PICKS or self._closing:
+            return
+        import Part
+        base = getattr(self.obj, "BaseFeature", None)
+        shapes = []
+        for b in self.visible_boxes():
+            for payload, _t in b.items:
+                sh = self._pick_shape(payload, base)
+                if sh is not None and not sh.isNull():
+                    shapes.append(sh)
+        try:
+            self.preview.set("picked", pv.shape_node(Part.makeCompound(shapes),
+                                                     pv.REGION_PICKED, 0.4, line_width=4.0,
+                                                     edge_color=pv.REGION_PICKED)
+                             if shapes else None)
+        except Exception:
+            pass
 
     def changed_faces(self):
         """Of the bodies the feature changed (AddSubShape), the faces it made: what a
@@ -447,8 +521,39 @@ class FeaturePanel(object):
         return bool(need) and not any(b.items for b in need)
 
     def removes(self):
-        """Whether the preview's result is material taken away (drawn red)."""
-        return False
+        """Whether the feature takes material away, so its preview is red (green
+        when it adds): what it does to the bodies, measured, not what kind of
+        tool it is. A Delete Body, a Common, a pattern of a cut, a face moved in,
+        a fillet on an outside edge: the bodies come out smaller. Worked out
+        once per preview (see _show_layers)."""
+        if self._removing is None:
+            self._removing = self.net_change() < 0
+        return self._removing
+
+    _removing = None
+
+    def net_change(self):
+        """How much the bodies the feature changes grow (+) or shrink (-): their
+        volume, or their area when there are only surface bodies. 0 when it
+        neither adds nor takes away (a move, a split) or can't be told."""
+        try:
+            changed = self._changed_bodies()
+            if not changed:
+                return 0.0
+            before = self.obj.Proxy.base_bodies(self.obj)
+            was = [before.get(i).shape for i in changed if i in before]
+            now = [b for b in changed.values() if b is not None]
+            solid = any(x.Solids for x in was + now)
+
+            def amount(shapes):
+                return sum(sum(v.Volume for v in x.Solids) if solid else x.Area
+                           for x in shapes)
+            a, b = amount(now), amount(was)
+            if abs(a - b) <= 1e-9 * max(abs(a), abs(b), 1.0):
+                return 0.0
+            return a - b
+        except Exception:
+            return 0.0
 
     # ------------------------------------------------------------ cut view
     _veiled = None
@@ -566,9 +671,41 @@ class FeaturePanel(object):
             ok.setEnabled(on)
             ok.setToolTip("" if on else "Can't make the feature yet: " + why)
 
+    def offer_axis(self, sel, active_too=False):
+        """Put a temporary axis (its face or edge, ``sel``) in the box that asks for
+        an axis, or (``active_too``: the axis was clicked with this panel open)
+        the active box. True if a box took it."""
+        vis = self.visible_boxes()
+        boxes = [b for b in vis if b.what == "axis"]
+        if active_too and self.active_box in vis and self.active_box not in boxes:
+            boxes.append(self.active_box)
+        for b in boxes:
+            if any(p[0] == (sel.obj.Name, sel.sub) for p, _t in b.items):
+                return True
+            res = b.accept_fn(sel)
+            if res is not None and not isinstance(res, str):
+                b.offer(sel)
+                self.activate(b)
+                Gui.Selection.clearSelection()
+                return True
+        return False
+
+    def _take_picked_axis(self):
+        """A temporary axis picked before the tool started: its axis box takes it."""
+        try:
+            from .. import temp_axis
+            from ..selection import Sel
+            ta = temp_axis.current()
+            src = ta.picked() if ta is not None else None
+            if src is not None and self.offer_axis(Sel(src[0], src[1])):
+                ta.used()
+        except Exception:
+            pass
+
     def _after_show(self):
         if self._closing:
             return
+        self._take_picked_axis()
         nxt = self.next_box_needing_input()
         if nxt is not None:
             self.activate(nxt)

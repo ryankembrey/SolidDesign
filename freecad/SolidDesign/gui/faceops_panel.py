@@ -87,7 +87,7 @@ class MoveFacePanel(_FacesPanel):
         self.r_dist.set_visible(t != core.ROTATE)
 
     def preview_layers(self):
-        return [("result", pv.result_node(self.obj.AddSubShape, True))]
+        return [("result", pv.result_node(self.obj.AddSubShape, not self.removes()))]
 
 
 class SplitLinePanel(_FacesPanel):

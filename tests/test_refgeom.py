@@ -451,3 +451,58 @@ class TestPlaneConstraints(unittest.TestCase):
         self.assertAlmostEqual(na.dot(nb), 1, 9)
         q = fb.CenterOfMass
         self.assertAlmostEqual(fa.Surface.projectPoint(q).distanceToPoint(q), 0, 9)
+
+
+class TestAxisGuess(unittest.TestCase):
+    """Axis: the type is picked from what the references are, in either order."""
+
+    def setUp(self):
+        self.doc, self.part = new_doc("AxG")
+        sk = sketch(self.doc, plane(self.part, "Top Plane"))
+        rect(sk, 0, 0, 20, 10)
+        self.doc.recompute()
+        self.box = extrude(self.doc, self.part, sk, Depth=5)
+
+    def tearDown(self):
+        App.closeDocument(self.doc.Name)
+
+    def shape(self, ref):
+        o, s = ref
+        return Part.getShape(o, s, needSubElement=True) if s else o.Shape
+
+    def test_guesses(self):
+        b = self.box
+        top = (b, face_at(b, V(10, 5, 5), V(0, 0, 1)))
+        side = (b, face_at(b, V(20, 5, 2.5), V(1, 0, 0)))
+        edge = (b, edge_at(b, V(10, 0, 5)))
+        p1, p2 = (b, vertex_at(b, V(0, 0, 5))), (b, vertex_at(b, V(20, 10, 0)))
+        g = lambda *refs: core.axis_guess([self.shape(r) for r in refs])  # noqa: E731
+        self.assertEqual(g(edge), core.LINE)
+        self.assertEqual(g(top, side), core.TWO_PLANES)
+        self.assertEqual(g(p1, p2), core.TWO_POINTS)
+        self.assertEqual(g(p1, top), core.POINT_AND_FACE)
+        self.assertEqual(g(top, p1), core.POINT_AND_FACE)
+        self.assertIsNone(g(edge, top))
+
+    def test_face_then_point_makes_the_axis(self):
+        b = self.box
+        top = (b, face_at(b, V(10, 5, 5), V(0, 0, 1)))
+        p = (b, vertex_at(b, V(20, 10, 5)))
+        ax = refgeom.create_axis(self.doc, self.part, None, [top, p])
+        self.doc.recompute()
+        self.assertEqual(ax.Type, core.POINT_AND_FACE)
+        self.assertEqual(ax.ErrorMessage, "")
+        e = ax.Shape.Edges[0]
+        d = e.Vertexes[-1].Point - e.Vertexes[0].Point
+        self.assertAlmostEqual(abs(d.normalize().z), 1, 6)
+        self.assertAlmostEqual(e.CenterOfMass.x, 20, 6)
+
+    def test_round_face(self):
+        sk = sketch(self.doc, plane(self.part, "Top Plane"))
+        sk.addGeometry(Part.Circle(V(40, 0, 0), V(0, 0, 1), 4))
+        self.doc.recompute()
+        cyl = extrude(self.doc, self.part, sk, Depth=10)
+        ax = refgeom.create_axis(self.doc, self.part, None,
+                                 [(cyl, face_at(cyl, V(44, 0, 5), V(1, 0, 0)))])
+        self.doc.recompute()
+        self.assertEqual((ax.Type, ax.ErrorMessage), (core.CYLINDRICAL, ""))
