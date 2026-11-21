@@ -62,7 +62,8 @@ def compute(p, base):
     if r is not None and not r.isNull() and r.Solids and not p.outward:
         # OCC can return a "valid" but inside-out result when the wall is too thick.
         bb, ob = r.BoundBox, shape.BoundBox
-        ob.enlarge(1e-6)
+        # Padded: a drawn shape's box comes from its display mesh, inside its curves.
+        ob.enlarge(max(1e-6, 0.01 * ob.DiagonalLength))
         if not ob.isInside(bb) or not 0 < r.Volume < shape.Volume - 1e-9:
             r = None
     if r is None or r.isNull() or not r.isValid() or not r.Solids:

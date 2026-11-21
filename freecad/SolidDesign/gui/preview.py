@@ -6,6 +6,7 @@ history or the file. Material a feature adds is transparent green, material it
 removes transparent red, both with dashed edges; sketch regions are blue.
 """
 
+import FreeCAD as App
 import FreeCADGui as Gui
 from pivy import coin
 
@@ -61,8 +62,57 @@ def result_node(shape, add=True):
                       dashed=True)
 
 
+BODY_COLOR = (0.62, 0.64, 0.66)
+EDGE_COLOR = (0.10, 0.10, 0.10)
+GHOST = 0.55                    # the panels ghost the bodies at 55 % transparency
+
+
+def body_node(shapes):
+    """Bodies as the model draws them while a panel is open: ghosted grey with
+    solid dark edges (lit as FreeCAD lights them: no glow of their own)."""
+    import Part
+    return shape_node(Part.makeCompound(list(shapes)), BODY_COLOR, GHOST, edge_color=EDGE_COLOR,
+                      glow=0.0)
+
+
+def touches(shape, p, tol=1e-6):
+    """Whether the point ``p`` is on ``shape`` (within ``tol``). Its bounding box
+    only rules shapes out quickly, so it is padded: once a shape is drawn FreeCAD
+    takes its box from the display mesh, which sits inside curved faces."""
+    import Part
+    bb = App.BoundBox(shape.BoundBox)
+    bb.enlarge(max(10 * tol, 0.01 * bb.DiagonalLength))
+    if not bb.isInside(p):
+        return False
+    try:
+        return shape.distToShape(Part.Vertex(p))[0] <= tol
+    except Exception:
+        return False
+
+
+def new_faces(after, before, tol=1e-6):
+    """The faces of ``after`` that aren't on ``before`` (a fillet's rounds, a
+    chamfer's bevels, drafted faces): their middles lie off every old face."""
+    import Part
+    if after is None or after.isNull() or before is None or before.isNull():
+        return after
+    old = before.Faces
+    out = []
+    for f in after.Faces:
+        try:
+            u0, u1, v0, v1 = f.ParameterRange
+            p = f.valueAt(0.5 * (u0 + u1), 0.5 * (v0 + v1))
+            if not f.isInside(p, tol, True):
+                p = f.CenterOfMass
+        except Exception:
+            continue
+        if not any(touches(g, p, tol * 10) for g in old):
+            out.append(f)
+    return Part.makeCompound(out) if out else None
+
+
 def shape_node(shape, color, transparency=0.0, edges=True, deflection_=None, line_width=2.0,
-               dashed=False):
+               dashed=False, edge_color=None, glow=0.25):
     """A coin separator drawing a Part shape's faces (and edges)."""
     sep = coin.SoSeparator()
     if shape is None or shape.isNull():
@@ -71,7 +121,8 @@ def shape_node(shape, color, transparency=0.0, edges=True, deflection_=None, lin
     mat = coin.SoMaterial()
     mat.diffuseColor.setValue(*color)
     mat.ambientColor.setValue(*color)
-    mat.emissiveColor.setValue(color[0] * 0.25, color[1] * 0.25, color[2] * 0.25)
+    mat.emissiveColor.setValue(color[0] * glow, color[1] * glow, color[2] * glow)
+    mat.specularColor.setValue(0.2, 0.2, 0.2)
     mat.transparency.setValue(transparency)
     hints = coin.SoShapeHints()
     hints.vertexOrdering = coin.SoShapeHints.COUNTERCLOCKWISE
@@ -98,8 +149,9 @@ def shape_node(shape, color, transparency=0.0, edges=True, deflection_=None, lin
     if edges and shape.Edges:
         esep = coin.SoSeparator()
         emat = coin.SoMaterial()
-        emat.diffuseColor.setValue(color[0] * 0.55, color[1] * 0.55, color[2] * 0.55)
-        emat.emissiveColor.setValue(color[0] * 0.55, color[1] * 0.55, color[2] * 0.55)
+        ec_ = edge_color or (color[0] * 0.55, color[1] * 0.55, color[2] * 0.55)
+        emat.diffuseColor.setValue(*ec_)
+        emat.emissiveColor.setValue(*ec_)
         emat.transparency.setValue(0.0 if dashed else min(transparency, 0.3))
         style = coin.SoDrawStyle()
         style.lineWidth = line_width

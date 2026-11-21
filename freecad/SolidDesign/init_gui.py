@@ -86,7 +86,7 @@ class SolidDesignWorkbench(Gui.Workbench):
         self.appendMenu([m, "Surfaces"], self.SURFACES_MENU)
         self.appendMenu([m, "Curves"], self.CURVES)
         self.appendMenu([m, "Evaluate"], self.EVALUATE)
-        self.appendMenu(m, ["Separator", "SD_ContextToolbar"])
+        self.appendMenu(m, ["Separator", "SD_CommandSearch", "SD_ContextToolbar"])
         # SolidWorks' Insert menu structure, where FreeCAD lets it.
         self.appendMenu("&Insert", self.PART + self.SKETCH + ["Separator"])
         self.appendMenu(["&Insert", "Features"],

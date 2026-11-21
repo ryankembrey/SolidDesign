@@ -64,14 +64,9 @@ class _Pattern(feature.FeatureProxy):
             out.append(core.Seed(f.Label, f.ToolShape, f.Mode, getattr(f, "MergeResult", True)))
         return out
 
-    def store_centres(self, obj, base, keyed, warns):
-        """Where every instance sits (skipped ones too), so they can be shown in the
-        view and clicked: [[key, x, y, z]] in InstanceCentres."""
-        import json
-        if "InstanceCentres" not in obj.PropertiesList:
-            util.add_prop(obj, "App::PropertyString", "InstanceCentres", "Pattern",
-                          "Where each instance sits (for picking them in the view)", "")
-            util.hide_prop(obj, "InstanceCentres")
+    def seed_centre(self, obj, base):
+        """Where the seed sits (the point the instances' centres are moved from), or
+        None."""
         try:
             shapes = [base.get(b).shape for b in obj.Bodies if base.get(b) is not None]
             seeds = self.seeds(obj, base, [])
@@ -84,8 +79,19 @@ class _Pattern(feature.FeatureProxy):
                     if items:
                         c = items[0].BoundBox.Center
                         break
+            return c
         except Exception:
-            c = None
+            return None
+
+    def store_centres(self, obj, base, keyed, warns):
+        """Where every instance sits (skipped ones too), so they can be shown in the
+        view and clicked: [[key, x, y, z]] in InstanceCentres."""
+        import json
+        if "InstanceCentres" not in obj.PropertiesList:
+            util.add_prop(obj, "App::PropertyString", "InstanceCentres", "Pattern",
+                          "Where each instance sits (for picking them in the view)", "")
+            util.hide_prop(obj, "InstanceCentres")
+        c = self.seed_centre(obj, base)
         text = ""
         if c is not None:
             text = json.dumps([[k] + list(pl.multVec(c)) for k, pl in keyed])
@@ -387,7 +393,8 @@ class SketchPatternProxy(_PointPattern):
             raise topo.GeometryError("{} has no points (sketch points, not construction)."
                                      .format(sk.Label))
         ref = self.reference(obj, base, warns)
-        return self.run(obj, base, core.to_points(pts, ref), warns)
+        n = sk.getGlobalPlacement().Rotation.multVec(App.Vector(0, 0, 1))
+        return self.run(obj, base, core.to_points(pts, ref, normal=n), warns)
 
 
 def sketch_points(sk):
@@ -433,7 +440,8 @@ class TablePatternProxy(_PointPattern):
         if not pts:
             raise topo.GeometryError("Add points to the table.")
         ref = self.reference(obj, base, warns)
-        return self.run(obj, base, core.to_points(pts, ref), warns)
+        n = pl.Rotation.multVec(App.Vector(0, 0, 1))
+        return self.run(obj, base, core.to_points(pts, ref, normal=n), warns)
 
 
 class FillPatternProxy(_PointPattern):

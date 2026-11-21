@@ -972,6 +972,9 @@ class PatternGroup(object):
         return _doc() is not None and not Gui.Control.activeDialog()
 
 
+GROUPS = set()      # the toolbar drop-downs (not tools themselves)
+
+
 def register():
     Gui.addCommand("SD_Part", NewPart())
     Gui.addCommand("SD_Sketch", NewSketch())
@@ -1169,10 +1172,12 @@ def register():
     Gui.addCommand("SD_BoundingBox", RefGeomTool("bbox"))
     Gui.addCommand("SD_CosmeticThread", RefGeomTool("cosmetic"))
     Gui.addCommand("SD_CenterOfMass", RefGeomTool("com"))
-    Gui.addCommand("SD_ReferenceGeometry", RefGeomGroup())
-    Gui.addCommand("SD_Patterns", PatternGroup())
-    Gui.addCommand("SD_Curves", CurvesGroup())
-    Gui.addCommand("SD_MoreSurfaces", MoreSurfacesGroup())
-    Gui.addCommand("SD_DeformBodies", DeformGroup())
-    Gui.addCommand("SD_Fastening", FasteningGroup())
-    Gui.addCommand("SD_Threads", ThreadGroup())
+    for name, group in (("SD_ReferenceGeometry", RefGeomGroup()),
+                        ("SD_Patterns", PatternGroup()), ("SD_Curves", CurvesGroup()),
+                        ("SD_MoreSurfaces", MoreSurfacesGroup()),
+                        ("SD_DeformBodies", DeformGroup()),
+                        ("SD_Fastening", FasteningGroup()), ("SD_Threads", ThreadGroup())):
+        GROUPS.add(name)
+        Gui.addCommand(name, group)
+    from . import command_search
+    Gui.addCommand("SD_CommandSearch", command_search.SearchCommand())

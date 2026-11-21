@@ -204,13 +204,34 @@ def _trim_to_surface(prism, face, faces, tag, big):
     return keep[0] if len(keep) == 1 else topo.fuse(keep[0], keep[1:], tag)
 
 
+def through_length(prof, base, d, big):
+    """Through All's length, as SolidWorks: from the profile to just past the far
+    side of the model's bounding box along ``d`` (``big`` with no model yet)."""
+    box = App.BoundBox()
+    for b in base:
+        if b.shape is not None and not b.shape.isNull():
+            box.add(b.shape.BoundBox)
+    if not box.isValid():
+        return big
+    pb = prof.BoundBox
+
+    def corners(bb):
+        return [App.Vector(x, y, z) for x in (bb.XMin, bb.XMax) for y in (bb.YMin, bb.YMax)
+                for z in (bb.ZMin, bb.ZMax)]
+    far = max(c.dot(d) for c in corners(box))
+    near = min(c.dot(d) for c in corners(pb))
+    margin = max(0.01, 1e-3 * box.DiagonalLength)
+    return max(far - near, 0.0) + margin
+
+
 def _direction_solid(p, base, faces, d, ext, tag, big, first):
     """The solid for one direction of the extrusion."""
     c = ext.condition
     if c == BLIND:
         return _prism(faces, d, ext.depth, tag, ext.draft, ext.draft_outward)
     if c in (THROUGH_ALL, THROUGH_ALL_BOTH):
-        return _prism(faces, d, big, tag, ext.draft, ext.draft_outward)
+        return _prism(faces, d, through_length(Part.makeCompound(faces), base, d, big), tag,
+                      ext.draft, ext.draft_outward)
     if c == UP_TO_VERTEX:
         if ext.vertex is None:
             raise topo.GeometryError("Up To Vertex: pick a vertex.")
@@ -326,7 +347,7 @@ def _sheet_direction(p, base, prof, d, ext, tag, big, first):
     if c == BLIND:
         return mk(prof, d, ext.depth)
     if c in (THROUGH_ALL, THROUGH_ALL_BOTH):
-        return mk(prof, d, big)
+        return mk(prof, d, through_length(ref, base, d, big))
     if c == UP_TO_VERTEX:
         if ext.vertex is None:
             raise topo.GeometryError("Up To Vertex: pick a vertex.")
@@ -426,7 +447,9 @@ def sheet_shape(p, base):
     big = topo.big_length(Part.makeCompound(sheet.wires_of(*prof)), *shapes)
     parts = [_sheet_direction(p, base, prof, d, p.dir1, tag, big, True)]
     if p.dir1.condition == THROUGH_ALL_BOTH:
-        parts.append(_sheet_prism(prof, -d, big, tag, p.dir1.draft, p.dir1.draft_outward))
+        ref = Part.makeCompound(sheet.wires_of(*prof))
+        parts.append(_sheet_prism(prof, -d, through_length(ref, base, -d, big), tag,
+                                  p.dir1.draft, p.dir1.draft_outward))
     elif p.dir2 is not None and p.dir1.condition != MID_PLANE:
         parts.append(_sheet_direction(p, base, prof, -d, p.dir2, tag, big, False))
     if len(parts) == 1:
@@ -476,7 +499,8 @@ def tool_shape(p, base):
     first = _direction_solid(p, base, faces, d, p.dir1, tag, big, True)
     parts = [first]
     if p.dir1.condition == THROUGH_ALL_BOTH:
-        parts.append(_prism(faces, -d, big, tag, p.dir1.draft, p.dir1.draft_outward))
+        parts.append(_prism(faces, -d, through_length(Part.makeCompound(faces), base, -d, big),
+                            tag, p.dir1.draft, p.dir1.draft_outward))
     elif p.dir2 is not None and p.dir1.condition != MID_PLANE:
         parts.append(_direction_solid(p, base, faces, -d, p.dir2, tag, big, False))
     tool = parts[0] if len(parts) == 1 else topo.refine(topo.fuse(parts[0], parts[1:], tag), tag)

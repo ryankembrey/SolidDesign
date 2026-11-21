@@ -193,6 +193,22 @@ class TestEndConditions(Case):
         self.assertAlmostEqual(f.Shape.BoundBox.ZMax, 8)
 
 
+class TestThroughAll(unittest.TestCase):
+    def test_goes_just_past_the_models_bounding_box(self):
+        from types import SimpleNamespace
+        from freecad.SolidDesign.core.features import extrude as core
+        base = [SimpleNamespace(shape=Part.makeBox(20, 10, 10)),
+                SimpleNamespace(shape=Part.makeBox(5, 5, 5, V(0, 0, 30)))]
+        prof = Part.Face(Part.Wire(Part.makeCircle(2, V(5, 5, 10))))
+        up = core.through_length(prof, base, V(0, 0, 1), 1e6)
+        self.assertGreater(up, 25.0)                         # past the top of the far box
+        self.assertLess(up, 25.1)
+        down = core.through_length(prof, base, V(0, 0, -1), 1e6)
+        self.assertGreater(down, 10.0)
+        self.assertLess(down, 10.1)
+        self.assertEqual(core.through_length(prof, [], V(0, 0, 1), 1e6), 1e6)
+
+
 class TestBodies(Case):
     def test_merge_keeps_first_id(self):
         self.box(0, 0, 10, 10, depth=5, MergeResult=False)

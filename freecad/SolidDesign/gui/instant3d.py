@@ -57,10 +57,10 @@ class _Instant3D(object):
         if len(objs) != 1:
             return None
         o = objs[0]
-        t = getattr(getattr(o, "Proxy", None), "TYPE", "")
-        if t not in hmod.SPECS or not util.is_feature(o):
+        t = hmod.spec_key(o)
+        if t not in hmod.SPECS or not (util.is_feature(o) or t.startswith("Ref:")):
             return None
-        if getattr(o, "RolledBack", False) or getattr(o, "Suppressed", False) or o.ErrorMessage:
+        if getattr(o, "RolledBack", False) or getattr(o, "Suppressed", False) or getattr(o, "ErrorMessage", ""):
             return None
         return o
 
@@ -76,7 +76,7 @@ class _Instant3D(object):
         self.obj = o
         part = part_mod.owner_part(o) if hasattr(part_mod, "owner_part") else None
         part = part or util.part_of(o)
-        s = hmod.FeatureDraggers(o, part, hmod.SPECS[o.Proxy.TYPE],
+        s = hmod.FeatureDraggers(o, part, hmod.SPECS[hmod.spec_key(o)],
                                  on_release=self.release)
         s.place()
         if not s.draggers():

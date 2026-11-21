@@ -94,6 +94,8 @@ class ThreadPanel(ToolPanel):
         if not self.obj.OverridePitch:
             self.pitch.set_value(self.obj.Pitch.Value)
 
+    def removes(self):
+        return self.obj.Method != core.EXTRUDE
+
     def preview_layers(self):
-        return [("result", pv.result_node(self.obj.AddSubShape,
-                                          self.obj.Method == core.EXTRUDE))]
+        return [("result", pv.result_node(self.obj.AddSubShape, not self.removes()))]

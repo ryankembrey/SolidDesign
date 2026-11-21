@@ -556,6 +556,8 @@ def depths(p, solids):
         if p.end == BLIND:
             L = p.depth
         elif p.end == THROUGH_ALL:
+            # The whole way (patterns move this hole's tool to other positions, where
+            # the part may be deeper).
             segs = _inside(pt, d, solids, big)
             exit_depth = segs[-1][1] if segs else None
             L = big

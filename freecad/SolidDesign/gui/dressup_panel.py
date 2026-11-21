@@ -72,7 +72,7 @@ class _EdgePanel(FeaturePanel):
         self.changed()
 
     def preview_layers(self):
-        layers = [("result", pv.result_node(self.obj.AddSubShape, True))]
+        layers = [("result", pv.result_node(self.changed_faces(), True))]
         picks = []
         base = self.obj.BaseFeature
         for s in self.items.payloads():

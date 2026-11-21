@@ -2127,6 +2127,37 @@ def ring_drag(ring, degrees):
     ev(Qc.QEvent.MouseButtonRelease, b, Qc.Qt.LeftButton, Qc.Qt.NoButton)
 
 
+def ball_drag(g, degrees):
+    """Press on an angle gizmo's ball and drag it round its pivot by ``degrees``."""
+    from PySide import QtCore as Qc, QtGui as Qg, QtWidgets as Qw
+    v = Gui.ActiveDocument.ActiveView
+    w = [x for x in Gui.getMainWindow().findChildren(Qw.QWidget)
+         if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+    h = v.getSize()[1]
+    piv = g.pivot(v)
+    r = (g.ball(v) - piv).Length
+
+    def at(deg):
+        return piv + App.Rotation(g.axis, deg).multVec(g.ref) * r
+
+    def px(q):
+        s = v.getPointOnViewport(q)
+        return Qc.QPointF(s[0], h - s[1])
+
+    def ev(t, pos, btn, btns):
+        e = Qg.QMouseEvent(t, pos, w.mapToGlobal(pos), btn, btns, Qc.Qt.NoModifier)
+        Qw.QApplication.sendEvent(w, e)
+    start = g.value
+    a = px(at(start))
+    ev(Qc.QEvent.MouseMove, a, Qc.Qt.NoButton, Qc.Qt.NoButton)
+    ev(Qc.QEvent.MouseButtonPress, a, Qc.Qt.LeftButton, Qc.Qt.LeftButton)
+    for i in range(1, 13):
+        ev(Qc.QEvent.MouseMove, px(at(start + degrees * i / 12.0)), Qc.Qt.NoButton,
+           Qc.Qt.LeftButton)
+    ev(Qc.QEvent.MouseButtonRelease, px(at(start + degrees)), Qc.Qt.LeftButton,
+       Qc.Qt.NoButton)
+
+
 @scenario
 def instant3d_on_a_selected_feature():
     doc, part = new_doc("I3E")
@@ -2180,6 +2211,196 @@ def instant3d_on_a_selected_feature():
 
 
 @scenario
+def previews_follow_picks_and_cuts():
+    """A fillet's preview is its rounds only, and goes when its edge is unpicked; a
+    cut shows the body as it comes out (the old one veiled), and Through All stops
+    at the model; values sit by their gizmos on a background."""
+    from freecad.SolidDesign.gui import extrude_panel
+    from freecad.SolidDesign.gui.selection import Sel
+    doc, part = new_doc("PvF")
+    sk = plate_sketch(doc, part)
+    box = extrude_ui(doc, part, sk, 10)
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    body = body_views(part)[0]
+    ei = [i for i, e in enumerate(body.Shape.Edges, 1)
+          if abs(e.CenterOfMass.z - 10) < 1e-6 and abs(e.CenterOfMass.y) < 1e-6][0]
+    Gui.Selection.clearSelection()
+    Gui.Selection.addSelection(doc.Name, body.Name, "Edge%d" % ei)
+    Gui.runCommand("SD_Fillet")
+    wait(900)
+    p = extrude_panel.LAST[0]
+    p.radius.spin.setProperty("rawValue", 3.0)
+    wait(900)
+    faces = p.changed_faces()
+    expect("result" in p.preview.layers and faces is not None and
+           abs(faces.Area - math.pi / 2 * 3 * 40) < 1.0,
+           "the fillet preview is the round only (%s)" % (faces and faces.Area))
+    d = p.draggers().get("Radius") if p.draggers() else None
+    if d is not None:
+        v = Gui.ActiveDocument.ActiveView
+        x0, y0, x1, y1 = d.label_rect(v)
+        tip = v.getPointOnViewport(d.tip(v))
+        gap = min(abs(x0 - tip[0]), abs(x1 - tip[0]), abs(y0 - tip[1]), abs(y1 - tip[1]))
+        expect(d.framed and gap < 25, "the radius sits by the arrow's tip, framed (%.0f px)"
+               % gap)
+    shot("fillet")
+    p.route(Sel(box, "Edge%d" % ei, None))      # click the edge again: unpicked
+    wait(900)
+    expect(not p.items.items, "clicking the edge again unpicks it")
+    expect("result" not in p.preview.layers and "picks" not in p.preview.layers,
+           "and the round and the highlight go with it (%s)" % sorted(p.preview.layers))
+    close_panel(False)
+    sk2 = sketch(doc, plane(part, "Top Plane"))
+    rect(sk2, 30, 10, 50, 20)
+    doc.recompute()
+    select(doc, sk2)
+    p = run_cmd("SD_Extrude")
+    p.mode.buttons["Cut"].click()
+    wait(300)
+    p.d1.cond.setCurrentText("Through All")
+    wait(1200)
+    expect(p.removes() and "after" in p.preview.layers, "a cut draws the body as it comes out")
+    expect(body.ViewObject.Transparency == 100, "and veils the body as it was (%s)" %
+           body.ViewObject.Transparency)
+    tool_h = p.obj.AddSubShape.BoundBox.ZLength if not p.obj.AddSubShape.isNull() else 0
+    expect(abs(tool_h - 10) < 1e-6, "Through All takes out the part's height (%s)" % tool_h)
+    shot("cut")
+    close_panel(False)
+    expect(body.ViewObject.Transparency == 0 and
+           body.ViewObject.LineMaterial.Transparency == 0, "closing puts the body back")
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
+def fillet_a_cylinders_rim():
+    """Fillet a cylinder's top edge: the radius gizmo shows, and only the round is
+    green."""
+    from freecad.SolidDesign.gui import extrude_panel
+    doc, part = new_doc("FcR")
+    sk = sketch(doc, plane(part, "Top Plane"))
+    circle(sk, 0, 0, 10)
+    doc.recompute()
+    extrude_ui(doc, part, sk, 20)
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    body = body_views(part)[0]
+    ei = [i for i, e in enumerate(body.Shape.Edges, 1)
+          if hasattr(e.Curve, "Radius") and abs(e.Curve.Center.z - 20) < 1e-6][0]
+    Gui.Selection.clearSelection()
+    Gui.Selection.addSelection(doc.Name, body.Name, "Edge%d" % ei)
+    Gui.runCommand("SD_Fillet")
+    wait(900)
+    p = extrude_panel.LAST[0]
+    p.radius.spin.setProperty("rawValue", 2.0)
+    wait(1200)
+    ds = p.draggers().draggers() if p.draggers() else []
+    expect(len(ds) == 1 and ds[0].KIND == "radial", "the radius gizmo shows (%s)" %
+           [(d.KIND, d.prop) for d in ds])
+    faces = p.changed_faces()
+    expect(faces is not None and [f.Surface.TypeId for f in faces.Faces] == ["Part::GeomToroid"],
+           "only the round is green (%s)" % ([f.Surface.TypeId for f in faces.Faces]
+                                            if faces else None))
+    shot("rim")
+    close_panel(False)
+
+
+@scenario
+def command_search_by_slash():
+    """"/" in the 3D view opens Solid Design's command search, a third of the way down
+    the view; typing filters by fuzzy match and Enter starts the tool. Not while a
+    tool is open."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import command_search, extrude_panel
+    doc, part = new_doc("CmS")
+    wait(300)
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+    Gui.getMainWindow().activateWindow()
+    gl.setFocus()
+    wait(200)
+    QtTest.QTest.keyClick(gl, QtCore.Qt.Key_Slash)
+    wait(500)
+    box = command_search.current()
+    expect(box is not None and box.isVisible(), "pressing / opens the command search")
+    if box is None or not box.isVisible():
+        return
+    view = command_search._view_widget()
+    top = view.mapToGlobal(view.rect().topLeft()).y() + view.height() // 3
+    expect(abs(box.geometry().top() - top) <= 1, "its top is a third of the way down the view "
+           "(%s, %s)" % (box.geometry().top(), top))
+    mid = view.mapToGlobal(view.rect().center()).x()
+    expect(abs(box.geometry().center().x() - mid) <= 1, "centred on the view")
+    labels = [box.list.item(i).text() for i in range(box.list.count())]
+    names = [box.list.item(i).data(QtCore.Qt.UserRole) for i in range(box.list.count())]
+    expect(len(names) > 60 and all(n.startswith("SD_") for n in names) and
+           "SD_Patterns" not in names and "SD_CommandSearch" not in names,
+           "it lists Solid Design's tools only (%d)" % len(names))
+    QtTest.QTest.keyClicks(box.edit, "filt")
+    wait(300)
+    expect(box.list.currentItem() is not None and box.list.currentItem().text() == "Fillet",
+           "typing \"filt\" picks Fillet (%s)" % [box.list.item(i).text()
+                                                  for i in range(min(3, box.list.count()))])
+    # The box is a pop-up window of its own: grab the screen to see it.
+    QtWidgets.QApplication.primaryScreen().grabWindow(0).save(
+        os.path.join(SHOTS, current[0] + "_search.png"))
+    QtTest.QTest.keyClick(box.edit, QtCore.Qt.Key_Return)
+    wait(1200)
+    p = extrude_panel.LAST[0] if extrude_panel.LAST else None
+    expect(not box.isVisible() and type(p).__name__ == "FilletPanel",
+           "Enter starts it (%s)" % type(p).__name__)
+    expect(not Gui.Command.get("SD_CommandSearch").isActive(),
+           "with a tool open, / doesn't search")
+    close_panel(False)
+    expect(len(labels) == len(set(names)), "each tool once")
+
+
+@scenario
+def gizmos_on_more_tools():
+    """The tools that gained gizmos: a Dome's height and a Move/Copy's Delta X (which
+    may go negative), dragged on the selected feature."""
+    from freecad.SolidDesign.app import bodytools, morefeatures as more
+    from freecad.SolidDesign.gui import instant3d
+    doc, part = new_doc("GzM")
+    sk = plate_sketch(doc, part)
+    box = extrude_ui(doc, part, sk, 10)
+    zmax = box.Shape.BoundBox.ZMax
+    top = next("Face%d" % i for i, f in enumerate(box.Shape.Faces, 1)
+               if abs(f.BoundBox.ZMin - zmax) < 1e-6 and abs(f.BoundBox.ZMax - zmax) < 1e-6)
+    d = more.create_dome(doc, part, Items=[top], Distance=4)
+    doc.recompute()
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(400)
+    select(doc, d)
+    wait(500)
+    i3 = instant3d.current()
+    ds = i3.set.draggers() if i3.set is not None else []
+    expect(len(ds) == 1 and ds[0].prop == "Distance", "a selected Dome shows its height arrow")
+    if ds:
+        mouse_drag(ds[0], 2.0)
+        wait(900)
+        expect(abs(d.Distance.Value - 6.0) < 1e-6, "dragging it sets the height (%s)" %
+               d.Distance.Value)
+        shot("dome")
+    m = bodytools.create_move(doc, part, Bodies=list(part.BodyIds), Copy=True)
+    doc.recompute()
+    select(doc, m)
+    wait(500)
+    ds = {a.prop: a for a in i3.set.draggers()} if i3.set is not None else {}
+    expect(sorted(ds) == ["DeltaX", "DeltaY", "DeltaZ"], "a selected Move/Copy shows Delta X, "
+           "Y and Z arrows (%s)" % sorted(ds))
+    if "DeltaX" in ds:
+        mouse_drag(ds["DeltaX"], -15.0)
+        wait(900)
+        expect(abs(m.DeltaX.Value + 15.0) < 1e-6, "dragging back past the start goes negative "
+               "(%s)" % m.DeltaX.Value)
+        shot("move")
+    Gui.Selection.clearSelection()
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
 def handles_on_more_features():
     """Fillet radius, Chamfer distance, Shell thickness and Hole depth arrows: in
     their panels and on a selected feature (Instant3D)."""
@@ -2195,13 +2416,17 @@ def handles_on_more_features():
     p.radius.spin.setProperty("rawValue", 2.0)
     wait(900)
     arrows = p._drag.draggers() if p._drag else []
-    expect(len(arrows) == 1 and arrows[0].prop == "Radius", "the fillet shows a radius arrow")
+    expect(len(arrows) == 1 and arrows[0].prop == "Radius" and arrows[0].KIND == "radial",
+           "the fillet shows a radial gizmo for its radius")
     if arrows:
         a = arrows[0]
         expect(abs(a.origin.z - 20) < 1e-6 and abs(a.origin.y) < 1e-6,
                "it starts on the edge (%s)" % a.origin)
-        expect(a.direction.z > 0.5 and a.direction.y < -0.5, "pointing out between the faces "
-               "(%s)" % a.direction)
+        dirs = sorted((tuple(round(c, 6) for c in d) for d in a.dirs))
+        expect(dirs == [(0.0, 0.0, -1.0), (0.0, 1.0, 0.0)], "an arrow along each face, away "
+               "from the edge (%s)" % dirs)
+        expect(all(abs((a.base(i) - a.origin).Length - 2.0) < 1e-6 for i in range(2)),
+               "each where a 2 mm round meets its face")
         before = p.obj.Radius.Value
         mouse_drag(a, 1.5)
         wait(900)
@@ -2439,6 +2664,25 @@ def extrude_drag_handles():
     p.d1.cond.setCurrentText("Mid Plane")
     wait(700)
     expect(h1.shown() and h1.factor == 2.0, "Mid Plane: the arrow is at half the depth")
+    p.d1.cond.setCurrentText("Blind")
+    wait(500)
+    expect(dr.get("DraftAngle") is None, "no draft arc while Draft is off")
+    p.d1.draft_on.setChecked(True)
+    p.d1.draft_angle.spin.setProperty("rawValue", 5.0)
+    wait(900)
+    g = dr.get("DraftAngle")
+    expect(g is not None and g.shown() and g.KIND == "angle" and abs(g.value - 5.0) < 1e-6,
+           "Draft on: an arc with a ball for the draft angle (%s)" % (g and g.value))
+    if g is not None:
+        ball_drag(g, 10.0)
+        wait(900)
+        # 5 + 10 degrees, give or take one 1-degree snap step (the pointer moves in
+        # whole pixels).
+        expect(abs(p.obj.DraftAngle.Value - 15.0) <= 1.0 + 1e-6, "dragging the ball sets the "
+               "draft angle (%s)" % p.obj.DraftAngle.Value)
+        expect(abs(float(p.d1.draft_angle.spin.property("rawValue")) -
+                   p.obj.DraftAngle.Value) < 1e-6, "and the Draft field follows")
+        shot("draft_arc")
     close_panel(True)
     expect(not h1.shown() and not h2.shown(), "the arrows go when the panel closes")
     expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))

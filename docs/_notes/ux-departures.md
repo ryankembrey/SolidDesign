@@ -222,6 +222,27 @@ These follow SolidWorks unless a line says otherwise.
   body, so it's the feature in the tree. Double-clicking a feature still opens its panel
   (FreeCAD's convention) rather than SolidWorks' "show dimensions".
 - The handles are drawn on top of the model, so the far one shows through it.
+- **Look (2026-11-20, owner's request):** FreeCAD's own gizmos (PartDesign's), not
+  our blue arrows: red, yellow under the pointer and while dragged, a constant
+  size on screen, and a blue line for the dimension. Four kinds, as FreeCAD has
+  them: Linear (an arrow: Extrude depth, Shell, Hole, Flex, Deform, Freeform,
+  Mounting Boss, Snap Hook, Chamfer), Radial (an arrow on each face at the radius:
+  a symmetric Fillet, an equal-distance Chamfer), Directed Rotation (an arrow at
+  the end of the swept angle, with a blue circle and radii: Revolve) and Rotation
+  (an arc with a ball: an Extrude's draft angle, new, as Pad's taper). Only the
+  shapes are FreeCAD's; the dragging, snapping, typed values and undo stay ours.
+  The arrows' stems are half FreeCAD's length (owner's request).
+- **Every tool with a dimension you can point at has gizmos (2026-11-21):** besides
+  the above, Draft (angle arc on the first face), Dome (height), Wrap (depth), Rib
+  (thickness), Thread (offset and length), Variable fillet (start and end radii at
+  the edge's ends), Extrude From Offset, Linear Pattern (spacing per direction),
+  Circular Pattern (angle ring through the seed), Move/Copy (Delta X/Y/Z, which may
+  go negative, or the distance along the picked edge; the angle ring round the
+  picked axis), Move Face (offset, translate, rotate), Offset Surface (signed),
+  Thicken, Extend (by distance), Ruled and Radiate surfaces, an Offset Distance
+  plane, Helix height and Cosmetic Thread length. Not yet: asymmetric fillets and
+  unequal chamfers keep one arrow (which face takes which distance is decided deep
+  in the fillet code), and an At Angle plane has no angle gizmo.
 
 ## Toolbars and menu (2026-11-18, owner's layout)
 - Toolbars, left to right: Part, Sketch, Features, Bodies (solid body tools), Reference
@@ -903,3 +924,36 @@ These follow SolidWorks unless a line says otherwise.
   Variable Pattern) use one hidden document that stays open for the session;
   opening and closing one each time ended the user's open transaction, so Cancel
   and Undo stopped working.
+
+## Previews, labels and Through All (2026-11-21, owner's fixes)
+
+- **Gizmo values** sit just past the gizmo's tip in FreeCAD's framed label (text on
+  a white background, a constant size), on the side away from the gizmo as it
+  points on screen; they follow when the view turns.
+- **Unpicking empties the preview:** on an error a panel still keeps the last good
+  result on screen (a value being typed doesn't blank it), but once every pick box
+  is empty the result and the highlights go.
+- **Fillet, Chamfer and Draft previews** are only the faces the feature makes (the
+  rounds, bevels, drafted faces) in green, as SolidWorks' partial preview, not the
+  whole changed body.
+- **Cuts preview on the result:** while a preview takes material away, the bodies it
+  changes are drawn as they come out (ghosted like the rest) and the old bodies are
+  veiled (invisible but still pickable), so the removed material shows only its
+  dashed red edges, not the old body's black edges inside it.
+- **Through All** (Extrude, solid and surface, both directions) stops just past the
+  far side of the model's bounding box along the direction, as SolidWorks, not at a
+  length "longer than anything". Hole's Through All still goes the whole way.
+  Sketch- and table-driven patterns now move copies only within the sketch's
+  (table's) plane, so a cut keeps its depth wherever it lands.
+
+## Command search (2026-11-21, owner's request)
+
+- **"/" opens a command search** (SolidWorks has one in its title bar): a box over
+  the 3D view, centred, its top a third of the way down. Typing filters Solid
+  Design's tools by fuzzy match (letters in order, best at word starts: "lp" finds
+  Linear Pattern); a whole word from a tool's tooltip finds it too, ranked lower
+  ("boss" finds Extrude). Up/Down choose, Enter starts the tool, Escape closes.
+  Tools that can't run now are greyed and skipped. Only Solid Design's tools are
+  listed, not the toolbar drop-downs. "/" does nothing while a tool or a sketch is
+  open, in other workbenches, or while typing in a field. Also in the Solid Design
+  menu as Command Search.

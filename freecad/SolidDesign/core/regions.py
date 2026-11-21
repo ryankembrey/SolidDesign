@@ -130,7 +130,9 @@ def regions(sketch, tag=None):
             mid = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
             for i, se in enumerate(edges, 1):
                 box = App.BoundBox(se.BoundBox)
-                box.enlarge(1e-5)
+                # Padded: a drawn shape's box comes from its display mesh, which
+                # cuts inside arcs.
+                box.enlarge(max(1e-5, 0.01 * box.DiagonalLength))
                 if not box.isInside(mid):
                     continue
                 try:

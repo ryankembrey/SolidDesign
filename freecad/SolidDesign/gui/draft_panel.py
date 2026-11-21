@@ -225,7 +225,7 @@ class DraftPanel(ToolPanel):
         self.faces.set_placeholder(empty="Found by Face propagation" if auto else "")
 
     def preview_layers(self):
-        layers = [("result", pv.result_node(self.obj.AddSubShape, True))]
+        layers = [("result", pv.result_node(self.changed_faces(), True))]
         picks = []
         base = self.obj.BaseFeature
         box = self.faces if self.kind.currentText() in (core.NEUTRAL_PLANE, core.DRAFTXPERT) \

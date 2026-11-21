@@ -43,6 +43,9 @@ class ToolPanel(FeaturePanel):
     ICON_NAME = ""
     PREVIEW_ADDS = True     # False: the preview is material taken away (drawn red)
 
+    def removes(self):
+        return not self.PREVIEW_ADDS
+
     def __init__(self, obj, is_new=False):
         LAST[0] = self
         self.ICON = icon(self.ICON_NAME or self.TITLE)

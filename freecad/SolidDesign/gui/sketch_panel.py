@@ -412,6 +412,9 @@ class SketchFeaturePanel(FeaturePanel):
                 return
 
     # ------------------------------------------------------------ preview
+    def removes(self):
+        return self.obj.Mode == "Cut"
+
     def preview_layers(self):
         shape = self.obj.AddSubShape
         add = self.obj.Mode != "Cut"

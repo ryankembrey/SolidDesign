@@ -193,14 +193,22 @@ def curve_driven(curve, ref, n, spacing, equal, align, reverse=False, skip=()):
 
 # ------------------------------------------------------------------ sketch / table
 
-def to_points(points, ref, skip=()):
+def to_points(points, ref, skip=(), normal=None):
     """Moves taking the seed's reference point to each point (one at the
-    reference is the seed itself)."""
+    reference is the seed itself). With the points' plane ``normal``, the moves stay
+    in that plane: the seed keeps its height off it (a cut keeps its depth)."""
     out = []
+    n = None
+    if normal is not None and App.Vector(normal).Length > 1e-12:
+        n = App.Vector(normal)
+        n.normalize()
     for k, p in enumerate(points, 1):
-        if (p - ref).Length < 1e-6 or k in skip:
+        move = p - ref
+        if n is not None:
+            move = move - n * move.dot(n)
+        if move.Length < 1e-6 or k in skip:
             continue
-        out.append(App.Placement(p - ref, App.Rotation()))
+        out.append(App.Placement(move, App.Rotation()))
     if not out:
         raise topo.GeometryError("There are no points for instances besides the seed.")
     return out

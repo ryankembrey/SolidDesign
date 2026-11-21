@@ -399,13 +399,117 @@ class FeaturePanel(object):
         err = self.obj.ErrorMessage
         self.show_error(err)
         self.show_warning(self.obj.WarningMessage)
-        if not err:
-            for name, node in self.preview_layers():
-                self.preview.set(name, node)
-        # On error the last good preview stays on screen (spec 8.2).
+        self._show_layers(err)
         self.after_preview()
         self.place_drag_handles()
         self._set_ok(not err, err)
+
+    def _show_layers(self, err):
+        """Draw the preview layers. On error the last good result stays on screen
+        (spec 8.2), so a value being typed doesn't blank it, but the other layers
+        (what's picked) follow the panel, and once nothing is picked the result
+        goes too: it showed picks that aren't there any more."""
+        try:
+            layers = self.preview_layers()
+        except Exception:
+            layers = []
+        gone = bool(err) and self.nothing_picked()
+        for name, node in layers:
+            if name == "result" and err:
+                if gone:
+                    self.preview.clear(name)
+                continue
+            self.preview.set(name, node)
+        if not err:
+            self._cut_view(self.removes())
+        elif gone:
+            self._cut_view(False)
+
+    def changed_faces(self):
+        """Of the bodies the feature changed (AddSubShape), the faces it made: what a
+        fillet, chamfer or draft preview shows, not the whole body."""
+        try:
+            base = self.obj.BaseFeature
+            return pv.new_faces(self.obj.AddSubShape, base.Shape if base is not None else None)
+        except Exception:
+            return self.obj.AddSubShape
+
+    def nothing_picked(self):
+        """Every pick box showing that needs a pick is empty."""
+        need = [b for b in self.visible_boxes() if b.empty is None]
+        return bool(need) and not any(b.items for b in need)
+
+    def removes(self):
+        """Whether the preview's result is material taken away (drawn red)."""
+        return False
+
+    # ------------------------------------------------------------ cut view
+    _veiled = None
+
+    def _cut_view(self, on):
+        """While the preview takes material away, the bodies it changes are drawn as
+        they come out (ghosted like the rest), and as they were before it made
+        invisible: so the removed material shows only its dashed red edges, not the
+        old body's edges inside it. The old bodies stay pickable."""
+        if self._veiled is None:
+            self._veiled = {}
+        changed = self._changed_bodies() if on else {}
+        views = {getattr(v, "BodyId", None): v for v in part_mod.body_views(self.part)} \
+            if self.part is not None else {}
+        hide = {views[i].Name for i in changed if i in views}
+        for name in [n for n in self._veiled if n not in hide]:
+            self._unveil(name)
+        for name in hide:
+            if name not in self._veiled:
+                self._veil(name)
+        after = [b for b in changed.values() if b is not None]
+        self.preview.set("after", pv.body_node(after) if after else None)
+
+    def _changed_bodies(self):
+        """{body id: its shape after the feature, or None if it's gone} for the
+        bodies the feature changes."""
+        try:
+            from ...core.bodies import BodySet
+            before = self.obj.Proxy.base_bodies(self.obj)
+            after = BodySet.from_columns(self.obj.Shape, list(self.obj.BodyIds),
+                                         list(self.obj.BodyKinds), list(self.obj.BodyFeatures))
+        except Exception:
+            return {}
+        out = {}
+        for i in before.ids():
+            b = after.get(i)
+            if b is None or not b.shape.isSame(before.get(i).shape):
+                out[i] = b.shape if b is not None else None
+        for i in after.ids():
+            if i not in before:
+                out[i] = after.get(i).shape
+        return out
+
+    def _veil(self, name):
+        v = self.doc.getObject(name)
+        if v is None:
+            return
+        vo = v.ViewObject
+        try:
+            self._veiled[name] = (vo.Transparency, vo.LineMaterial, vo.PointMaterial)
+            vo.Transparency = 100
+            for prop in ("LineMaterial", "PointMaterial"):
+                m = getattr(vo, prop)
+                m.Transparency = 1.0
+                setattr(vo, prop, m)
+        except Exception:
+            self._veiled.pop(name, None)
+
+    def _unveil(self, name):
+        saved = self._veiled.pop(name, None)
+        v = self.doc.getObject(name)
+        if saved is None or v is None:
+            return
+        try:
+            vo = v.ViewObject
+            vo.Transparency, vo.LineMaterial, vo.PointMaterial = saved
+        except Exception:
+            pass
 
     # ------------------------------------------------------------ drag handles
     _drag = None
@@ -417,7 +521,7 @@ class FeaturePanel(object):
             return
         try:
             from .. import handles as hmod
-            specs = hmod.SPECS.get(getattr(self.obj.Proxy, "TYPE", ""))
+            specs = hmod.SPECS.get(hmod.spec_key(self.obj))
             if specs is None:
                 return
             if self._drag is None:
@@ -538,6 +642,8 @@ class FeaturePanel(object):
                 pass
             self._drag = None
         try:
+            for name in list(self._veiled or {}):
+                self._unveil(name)
             self._ghost(False)
         except Exception:       # the document is being closed
             pass
@@ -552,6 +658,7 @@ class FeaturePanel(object):
         if self._closing:
             return
         self._ghosted = {}
+        self._veiled = {}
         self._cleanup()
         QtCore.QTimer.singleShot(0, _close_dialog)
 
