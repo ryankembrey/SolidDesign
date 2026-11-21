@@ -66,6 +66,31 @@ def _unselect(doc, name, sub):
     except Exception:
         pass
 
+class _DeleteGuard(QtCore.QObject):
+    """While a panel is open, the Delete key never reaches FreeCAD's Delete
+    command: it would delete what is selected in the tree (often the feature
+    being edited), and its own undo step would end the panel's, so Cancel
+    couldn't put the feature back. Delete still edits text, and still removes
+    rows from a selection list (the list takes it itself)."""
+
+    KEYS = (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() != QtCore.QEvent.ShortcutOverride:
+            return False
+        try:
+            if ev.key() not in self.KEYS or ev.modifiers() != QtCore.Qt.NoModifier:
+                return False
+        except Exception:
+            return False
+        if isinstance(obj, (QtWidgets.QLineEdit, QtWidgets.QAbstractSpinBox,
+                            QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit,
+                            QtWidgets.QListWidget)):
+            return False        # text editing, or a selection list's own Delete
+        ev.accept()             # a plain key press now: no shortcut runs
+        return True
+
+
 class _DocWatch(object):
     """Tells a panel that its document is being closed."""
 
@@ -130,6 +155,8 @@ class FeaturePanel(object):
         self._old_tip = None
         if not is_new:
             self.doc.openTransaction("Edit " + obj.Label)
+        self._delete_guard = _DeleteGuard()
+        QtWidgets.QApplication.instance().installEventFilter(self._delete_guard)
         target = obj
         if self.EDIT_SHOWS_BASE:
             from ...app import feature as feature_mod
@@ -755,6 +782,10 @@ class FeaturePanel(object):
     def _cleanup(self):
         from ...app import feature as feature_mod
         feature_mod.EDITING.discard(self._obj_name)
+        try:
+            QtWidgets.QApplication.instance().removeEventFilter(self._delete_guard)
+        except Exception:
+            pass
         try:
             App.removeDocumentObserver(self._doc_watch)
         except Exception:

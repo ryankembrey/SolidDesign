@@ -487,10 +487,30 @@ class _ClickEdit(QtWidgets.QLineEdit):
 
 class _ClickList(QtWidgets.QListWidget):
     pressed = QtCore.Signal()
+    delete_pressed = QtCore.Signal()
+
+    _DELETE_KEYS = (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace)
 
     def mousePressEvent(self, ev):
         self.pressed.emit()
         super(_ClickList, self).mousePressEvent(ev)
+
+    def event(self, ev):
+        # Delete belongs to the list while it has focus, even when nothing in it
+        # is left to remove: otherwise FreeCAD's own Delete shortcut runs and
+        # deletes what is selected in the tree (the feature being edited).
+        if ev.type() == QtCore.QEvent.ShortcutOverride and ev.key() in self._DELETE_KEYS \
+                and not ev.modifiers():
+            ev.accept()
+            return True
+        return super(_ClickList, self).event(ev)
+
+    def keyPressEvent(self, ev):
+        if ev.key() in self._DELETE_KEYS and not ev.modifiers():
+            self.delete_pressed.emit()
+            ev.accept()
+            return
+        super(_ClickList, self).keyPressEvent(ev)
 
 
 class _Selection(QtWidgets.QWidget):
@@ -656,9 +676,10 @@ class SelectionList(_Selection):
         self.list.pressed.connect(lambda: self.activated.emit(self))
         self.list.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
         remove = QtGui.QAction("Remove", self.list)
-        remove.setShortcut(QtGui.QKeySequence.Delete)
-        remove.setShortcutContext(QtCore.Qt.WidgetShortcut)
+        remove.setShortcut(QtGui.QKeySequence.Delete)     # shown in the menu; the
+        remove.setShortcutContext(QtCore.Qt.WidgetShortcut)  # key itself is the list's
         remove.triggered.connect(self.remove_selected)
+        self.list.delete_pressed.connect(self.remove_selected)
         clear_all = QtGui.QAction("Clear", self.list)
         clear_all.triggered.connect(self.clear_items)
         self.list.addAction(remove)

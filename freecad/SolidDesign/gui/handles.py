@@ -821,15 +821,36 @@ class DragSet(object):
 
     def _watch_release(self):
         """FreeCAD's navigation takes the button release before the scene's event
-        callbacks see it, so the end of a drag is caught on the view's widget."""
+        callbacks see it, so the end of a drag is caught on the view's widget.
+
+        A click on a value label is caught there too, before FreeCAD sees it:
+        otherwise, with no panel open (a feature selected in the tree), the click
+        also went through the label to the face behind it, selecting that face,
+        which put the handles away and opened the context toolbar."""
         from PySide import QtCore, QtWidgets
         handles = self
 
         class _Release(QtCore.QObject):
+            eat_release = False
+
             def eventFilter(self, obj, ev):
-                if ev.type() == QtCore.QEvent.MouseButtonRelease and \
-                        ev.button() == QtCore.Qt.LeftButton and handles.active is not None:
-                    QtCore.QTimer.singleShot(0, handles.end_drag)
+                t = ev.type()
+                if t == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.LeftButton \
+                        and handles.active is not None:
+                    return False
+                if t == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.LeftButton:
+                    a = handles.label_at(obj, ev)
+                    if a is not None:
+                        self.eat_release = True
+                        QtCore.QTimer.singleShot(0, lambda: handles.edit_value(a))
+                        return True
+                    return False
+                if t == QtCore.QEvent.MouseButtonRelease and ev.button() == QtCore.Qt.LeftButton:
+                    if self.eat_release:
+                        self.eat_release = False
+                        return True
+                    if handles.active is not None:
+                        QtCore.QTimer.singleShot(0, handles.end_drag)
                 return False
         try:
             self._gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
@@ -891,6 +912,29 @@ class DragSet(object):
             self.end_drag()
 
     # ------------------------------------------------------------ typing a value
+    def _scale(self, widget):
+        """View pixels per widget pixel (more than 1 on a high-DPI screen)."""
+        try:
+            return float(self.view.getSize()[1]) / max(1, widget.height())
+        except Exception:
+            return 1.0
+
+    def label_at(self, widget, ev):
+        """The shown handle whose value label is under a mouse event on the
+        view's widget, or None."""
+        if self.view is None:
+            return None
+        try:
+            pos = ev.position() if hasattr(ev, "position") else ev.pos()
+            s = self._scale(widget)
+            x, y = pos.x() * s, (widget.height() - pos.y()) * s
+        except Exception:
+            return None
+        for a in self.draggers:
+            if a.shown() and self.on_label(a, x, y):
+                return a
+        return None
+
     def on_label(self, a, x, y):
         """Whether (x, y) is on the handle's value label."""
         try:
@@ -914,7 +958,8 @@ class DragSet(object):
         ed.setText("{:g}".format(round(a.value, 4)))
         ed.setFixedWidth(90)
         ed.setToolTip("Type a value and press Enter (Escape: keep the old one)")
-        ed.move(int(x0) - 2, int(h - y1) - 2)          # over the label
+        s = self._scale(w)
+        ed.move(int(x0 / s) - 2, int((h - y1) / s) - 2)  # over the label
         ed.selectAll()
 
         def apply():

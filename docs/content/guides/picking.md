@@ -12,8 +12,11 @@ next box that needs something becomes active.
 A pick that the active box can't take goes to another box that can, if only one can. A pick no box
 takes is refused, and the box says why underneath.
 
-Click a box's arrow button to make it active. Click an item again in the 3D view to take it out;
-the **×** button clears the box.
+Click a box's arrow button to make it active. Click an item again in the 3D view to take it out,
+or select it in the list and press <kbd>Delete</kbd>; the **×** button clears the box.
+
+While a panel is open, <kbd>Delete</kbd> never deletes anything from the tree: close the panel
+first.
 
 ## What you picked
 

@@ -204,12 +204,31 @@ class PartVP(_DrawsNothing):
 
     def onDelete(self, vobj, sub):
         """Deleting a part deletes everything in it."""
+        if _panel_open(vobj.Object):
+            return False
         part_mod.delete_contents(vobj.Object)
         return True
 
     def doubleClicked(self, vobj):
         _set_active(vobj.Object)
         return True
+
+
+def _panel_open(obj):
+    """While a tool's panel is open, nothing is deleted from the tree or the 3D
+    view (as in SolidWorks, where the PropertyManager must be closed first).
+    The panel would lose the feature it edits, or what that feature is built
+    on. Pressing Delete with an empty selection list used to delete the
+    feature being edited this way."""
+    from .pick_tools import current_panel
+
+    p = current_panel()
+    if p is None:
+        return False
+    title = getattr(p, "TITLE", "") or "tool"
+    App.Console.PrintWarning("Solid Design: close the {} panel before deleting {}.\n"
+                             .format(title, obj.Label))
+    return True
 
 
 def _add_origin_folder(part, tries=20):
@@ -398,6 +417,8 @@ class FeatureVP(_DrawsNothing):
         return False
 
     def onDelete(self, vobj, subelements):
+        if _panel_open(vobj.Object):
+            return False
         part = util.part_of(vobj.Object)
         if part is not None:
             part_mod.remove_feature(part, vobj.Object)

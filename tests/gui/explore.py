@@ -2622,6 +2622,55 @@ def instant3d_on_a_selected_feature():
 
 
 @scenario
+def instant3d_value_click_stays_on_the_label():
+    """With a feature selected in the tree (no panel), a real click on a handle's
+    value opens the box to type in. It used to go through the label to the face
+    behind: that face was selected, the handles went away and the context toolbar
+    opened."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.app import dressup
+    from freecad.SolidDesign.gui import context_bar, instant3d
+    doc, part = new_doc("I3L")
+    box = extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10)
+    fil = dressup.create_fillet(doc, part, [edge_at(box, V(0, 0, 10), V(40, 0, 10))])
+    fil.Radius = 3
+    doc.recompute()
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(400)
+    select(doc, fil)
+    wait(500)
+    i3 = instant3d.current()
+    expect(i3.set is not None and i3.set.draggers(), "selecting the fillet shows its radius handle")
+    if i3.set is None or not i3.set.draggers():
+        App.closeDocument(doc.Name)
+        return
+    a = i3.set.draggers()[0]
+    v = Gui.ActiveDocument.ActiveView
+    x0, y0, x1, y1 = a.label_rect(v)
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+    s = float(v.getSize()[1]) / gl.height()
+    pos = QtCore.QPoint(int((x0 + x1) / 2 / s), int(gl.height() - (y0 + y1) / 2 / s))
+    QtTest.QTest.mouseMove(gl, pos, 10000000)
+    QtTest.QTest.mouseClick(gl, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, pos, 1000)
+    wait(700)
+    picked = [x.Object for x in Gui.Selection.getSelectionEx()]
+    expect(picked == [fil], "the click selects nothing behind the label (%s)"
+           % [o.Label for o in picked])
+    bar = context_bar.current().bar if context_bar.current() else None
+    expect(bar is None or not bar.isVisible(), "and opens no context toolbar")
+    ed = i3.set.set.editor if i3.set is not None else None
+    expect(ed is not None and ed.isVisible(), "it opens the box to type the value in")
+    if ed is not None:
+        QtTest.QTest.keyClicks(ed, "5")         # the old value is selected: typed over
+        QtTest.QTest.keyClick(ed, QtCore.Qt.Key_Return)
+        wait(900)
+        expect(abs(fil.Radius.Value - 5.0) < 1e-6, "Enter sets it (%s)" % fil.Radius.Value)
+    App.closeDocument(doc.Name)
+
+
+@scenario
 def previews_follow_picks_and_cuts():
     """A fillet's preview is its rounds only, and goes when its edge is unpicked; a
     cut shows the body as it comes out (the old one veiled), and Through All stops
@@ -3401,6 +3450,62 @@ def context_toolbar():
     expect(not bar.isVisible(), "turned off, it doesn't show")
     context_bar.set_enabled(True)
     expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
+def delete_key_in_a_list_keeps_the_feature():
+    """Editing a fillet, Delete in its emptied Items list removed the edge, then
+    (with nothing left to remove) let FreeCAD's Delete run on the tree's
+    selection: the fillet being edited, and the panel then failed on it. Delete
+    belongs to the list, and nothing is deleted while a panel is open."""
+    from PySide6 import QtCore as _QtCore
+    from PySide6.QtTest import QTest
+    from freecad.SolidDesign.app import dressup
+    from freecad.SolidDesign.gui import sketch_panel
+    doc, part = new_doc("DelKey")
+    box = extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10)
+    fil = dressup.create_fillet(doc, part, [edge_at(box, V(0, 0, 10), V(40, 0, 10))])
+    fil.Radius = 2
+    doc.recompute()
+    name = fil.Name
+    Gui.Selection.clearSelection()
+    Gui.Selection.addSelection(doc.Name, name)
+    Gui.ActiveDocument.setEdit(fil)
+    wait(800)
+    p = sketch_panel.LAST[0]
+    expect(p is not None and p.obj is fil, "the fillet's panel opens for editing")
+    lst = p.items.list
+    lst.setFocus()
+    lst.setCurrentRow(0)
+    wait(100)
+    QTest.keyClick(lst, _QtCore.Qt.Key_Delete)
+    wait(500)
+    expect(not p.items.payloads(), "the first Delete removes the edge from Items")
+    QTest.keyClick(lst, _QtCore.Qt.Key_Delete)
+    wait(500)
+    expect(doc.getObject(name) is not None, "the second Delete leaves the fillet in the document")
+    expect(sketch_panel.LAST[0] is p and not getattr(p, "_closing", False),
+           "and its panel stays open")
+    Gui.Selection.clearSelection()
+    Gui.Selection.addSelection(doc.Name, name)
+    view = Gui.getMainWindow().findChild(QtWidgets.QMdiArea).currentSubWindow().widget()
+    view.setFocus()
+    QTest.keyClick(view, _QtCore.Qt.Key_Delete)
+    wait(500)
+    expect(doc.getObject(name) is not None, "Delete in the 3D view deletes nothing while the panel is open")
+    expect(fil.ViewObject.Proxy.onDelete(fil.ViewObject, []) is False,
+           "and Edit > Delete is refused too")
+    p._click_cancel()
+    wait(600)
+    fil = doc.getObject(name)
+    expect(fil is not None and list(fil.Items[1]) and fil.isValid(),
+           "Cancel puts the fillet back as it was, edge and all")
+    Gui.Selection.clearSelection()
+    Gui.Selection.addSelection(doc.Name, name)
+    Gui.runCommand("Std_Delete", 0)
+    wait(500)
+    expect(doc.getObject(name) is None, "with the panel closed, Delete deletes it")
+    App.closeDocument(doc.Name)
 
 
 @scenario
