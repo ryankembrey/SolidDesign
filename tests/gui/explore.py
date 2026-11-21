@@ -2790,6 +2790,19 @@ def context_toolbar():
     expect(bar.feature is f, "Edit Feature is the extrude (%s)" % getattr(bar.feature, "Label",
                                                                         None))
     expect(all(b.toolTip() for b in bar.buttons), "every button says what it does")
+    expect(bar is not None and not bar.isWindow(),
+           "the bar lives inside the main window, not as its own window (Wayland)")
+    if bar is not None:
+        r = bar.global_rect()
+        near = bar.distance(centre) <= 60
+        expect(near, "it shows by the pointer (%.0f px away)" % bar.distance(centre))
+        Qg.QCursor.setPos(QtCore.QPoint(r.right() + 90, r.center().y()))
+        wait(250)
+        expect(bar.isVisible() and 0.15 <= bar.opacity() < 0.9,
+               "it fades as the pointer moves off (%.2f)" % bar.opacity())
+        Qg.QCursor.setPos(r.center())
+        wait(250)
+        expect(bar.opacity() == 1.0, "and comes back when the pointer returns")
     shot("context_face")
     if bar is not None:
         bar.grab().save(os.path.join(SHOTS, "context_bar.png"))
@@ -2798,7 +2811,7 @@ def context_toolbar():
     names = [b.name for b in bar.buttons]
     expect("SD_Chamfer" in names and "SD_Sketch" not in names, "an edge: Fillet, Chamfer... "
            "(%s)" % names)
-    Qg.QCursor.setPos(bar.frameGeometry().center() + QtCore.QPoint(400, 300))
+    Qg.QCursor.setPos(bar.global_rect().center() + QtCore.QPoint(400, 300))
     wait(300)
     expect(not bar.isVisible(), "it goes when the pointer moves well away")
     select(doc, v, edge_at(v, V(0, 0, 10), V(40, 0, 10)))

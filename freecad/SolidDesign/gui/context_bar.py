@@ -60,11 +60,13 @@ def _info(name):
 
 
 class ContextBar(QtWidgets.QFrame):
+    """A child of the main window, not a window of its own: Wayland ignores where an
+    app moves its own top-level windows and can't fade them (Qt prints "This plugin
+    does not support setting window opacity"), so it floats inside the main window
+    and fades with an opacity effect, which works on every platform."""
+
     def __init__(self):
-        super(ContextBar, self).__init__(
-            Gui.getMainWindow(), QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint |
-            QtCore.Qt.WindowStaysOnTopHint)
-        self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+        super(ContextBar, self).__init__(Gui.getMainWindow())
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.setFrameShadow(QtWidgets.QFrame.Raised)
         self.setFocusPolicy(QtCore.Qt.NoFocus)
@@ -77,7 +79,17 @@ class ContextBar(QtWidgets.QFrame):
         self.timer.setInterval(60)
         self.timer.timeout.connect(self._follow)
         self.setAutoFillBackground(True)
+        self.fade = QtWidgets.QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.fade)
+        self.set_opacity(1.0)
         self.hide()
+
+    def set_opacity(self, v):
+        self.fade.setOpacity(v)
+        self.fade.setEnabled(v < 0.999)     # fully shown: draw it plainly
+
+    def opacity(self):
+        return self.fade.opacity() if self.fade.isEnabled() else 1.0
 
     # ---- contents
     def fill(self, tools, feature):
@@ -129,8 +141,14 @@ class ContextBar(QtWidgets.QFrame):
 
     # ---- showing and fading
     def show_at(self, pos):
-        self.move(pos + QtCore.QPoint(18, -self.sizeHint().height() - 14))
-        self.setWindowOpacity(1.0)
+        """Shows the bar up and right of `pos` (global), kept inside the main window."""
+        host = self.parentWidget()
+        size = self.sizeHint()
+        p = host.mapFromGlobal(pos) + QtCore.QPoint(18, -size.height() - 14)
+        p.setX(max(0, min(p.x(), host.width() - size.width())))
+        p.setY(max(0, min(p.y(), host.height() - size.height())))
+        self.move(p)
+        self.set_opacity(1.0)
         self.show()
         self.raise_()
         self.timer.start()
@@ -142,8 +160,12 @@ class ContextBar(QtWidgets.QFrame):
             pass
         super(ContextBar, self).hide()
 
+    def global_rect(self):
+        return QtCore.QRect(self.mapToGlobal(QtCore.QPoint(0, 0)), self.size())
+
     def distance(self, p):
-        r = self.frameGeometry()
+        """Pixels from the global point `p` to the bar (0 inside it)."""
+        r = self.global_rect()
         dx = max(r.left() - p.x(), 0, p.x() - r.right())
         dy = max(r.top() - p.y(), 0, p.y() - r.bottom())
         return (dx * dx + dy * dy) ** 0.5
@@ -156,8 +178,8 @@ class ContextBar(QtWidgets.QFrame):
         if d > GONE_AT:
             self.hide()
             return
-        self.setWindowOpacity(1.0 if d <= FADE_FROM else
-                              max(0.15, 1.0 - (d - FADE_FROM) / (GONE_AT - FADE_FROM)))
+        self.set_opacity(1.0 if d <= FADE_FROM else
+                         max(0.15, 1.0 - (d - FADE_FROM) / (GONE_AT - FADE_FROM)))
 
 
 def _feature_icon(feature):
