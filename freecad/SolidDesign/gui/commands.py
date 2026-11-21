@@ -368,11 +368,6 @@ def _classify(o, sub):
     return kind, (o, sub)
 
 
-PLANE_GUESS = [(("plane",), "Offset Distance"), (("plane", "line"), "At Angle"),
-               (("point", "point", "point"), "Through Points"),
-               (("plane", "point"), "Parallel at Point"), (("line", "point"), "Normal to Curve"),
-               (("curve", "point"), "Normal to Curve"), (("curve",), "Normal to Curve"),
-               (("plane", "plane"), "Mid Plane")]
 AXIS_GUESS = [(("line",), "One Line/Edge/Axis"), (("plane", "plane"), "Two Planes"),
               (("point", "point"), "Two Points/Vertices"),
               (("round",), "Cylindrical/Conical Face"), (("point", "plane"), "Point and Face/Plane")]
@@ -467,8 +462,12 @@ class RefGeomTool(object):
             dirs = [r for k, r in picks if k in ("line", "plane")][:2]
             dirs += [None] * (2 - len(dirs))
             obj = app_refgeom.create_csys(doc, part, None, [origin] + dirs)
+        elif self.kind == "plane":
+            # Up to three references in the order picked; their constraints are
+            # guessed from what they are, as SolidWorks does.
+            obj = app_refgeom.create_plane(doc, part, None, [r for _k, r in picks][:3])
         else:
-            guesses = {"plane": PLANE_GUESS, "axis": AXIS_GUESS, "point": POINT_GUESS}[self.kind]
+            guesses = {"axis": AXIS_GUESS, "point": POINT_GUESS}[self.kind]
             kind = None
             for pattern, name in guesses:
                 if pattern == kinds:

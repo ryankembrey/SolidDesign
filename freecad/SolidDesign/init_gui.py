@@ -65,9 +65,11 @@ class SolidDesignWorkbench(Gui.Workbench):
         from freecad.SolidDesign.gui import commands
         from freecad.SolidDesign.app import part
         commands.register()
-        from freecad.SolidDesign.gui import evaluate, context_bar
+        from freecad.SolidDesign.gui import evaluate, context_bar, ref_labels
         evaluate.register()
         Gui.addCommand("SD_ContextToolbar", context_bar.ToggleCommand())
+        Gui.addCommand("SD_ReferenceLabels", ref_labels.ToggleCommand())
+        ref_labels.install()
         part.install_observer()
         from freecad.SolidDesign.gui import instant3d, sketch_edit, temp_axis
         sketch_edit.install()
@@ -90,7 +92,7 @@ class SolidDesignWorkbench(Gui.Workbench):
         self.appendMenu([m, "Curves"], self.CURVES)
         self.appendMenu([m, "Evaluate"], self.EVALUATE)
         self.appendMenu(m, ["Separator", "SD_CommandSearch", "SD_CommandLine", "SD_RepeatLast",
-                            "SD_ContextToolbar"])
+                            "SD_ContextToolbar", "SD_ReferenceLabels"])
         # SolidWorks' Insert menu structure, where FreeCAD lets it.
         self.appendMenu("&Insert", self.PART + self.SKETCH + ["Separator"])
         self.appendMenu(["&Insert", "Features"],

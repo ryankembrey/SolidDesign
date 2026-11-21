@@ -155,7 +155,8 @@ def run():
     Gui.runCommand("SD_Plane")
     wait(900)
     p = panel()
-    check(type(p).__name__ == "RefGeomPanel" and p.obj.Type == "Offset Distance",
+    check(type(p).__name__ == "RefGeomPanel" and
+          p.obj.Proxy.constraints(p.obj) == ["Offset Distance"],
           "Plane: preselected plane -> Offset Distance")
     p.dist.spin.setProperty("rawValue", 5.0)
     wait(600)

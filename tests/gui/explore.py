@@ -1643,6 +1643,187 @@ def edit_sketch_of_feature():
 
 
 @scenario
+def plane_three_references():
+    """Plane as SolidWorks has it: picks fill First, Second, Third Reference; each
+    shows the constraints that fit it, guessed from what was picked; changing one
+    keeps it; the panel says when the plane is fully defined."""
+    from freecad.SolidDesign.app import refgeom as app_refgeom
+    from freecad.SolidDesign.core import refgeom as core_ref
+    doc, part = new_doc("PL3")
+    sk = plate_sketch(doc, part, 40, 30)
+    extrude_ui(doc, part, sk, 10)
+    v = body_views(part)[0]
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Plane")
+    expect(p is not None and p.TITLE == "Plane", "Plane opens with nothing picked")
+    expect(p.active_box is p.ref_boxes[0], "the first reference waits for a pick")
+    expect(not p.ref_groups[1].isVisible(), "Second Reference shows once there is a first")
+
+    def cons():
+        return [b.value() for b in p.bars if b.isVisible()]
+
+    def z_of_plane():
+        return p.obj.Shape.Faces[0].CenterOfMass.z
+
+    pick(p, v, face_at(v, V(20, 15, 10), V(0, 0, 1)))
+    wait(600)
+    expect(cons() == ["Offset Distance"], "one face: Offset Distance (%s)" % cons())
+    expect(shown(p.dists[0].row) and not shown(p.angles[0].row),
+           "its distance shows under it")
+    visible = sorted(n for n, b in p.bars[0].buttons.items() if b.isVisible())
+    expect(visible == sorted(core_ref.CONSTRAINTS_FOR["plane"]),
+           "a face offers the plane constraints (%s)" % visible)
+    expect(p.status.value() == "Fully defined" and ok_enabled(), "fully defined")
+    expect(abs(z_of_plane() - 20) < 1e-6, "10 mm above the top (%.3f)" % z_of_plane())
+    expect(p.active_box is p.ref_boxes[1] and p.ref_groups[1].isVisible(),
+           "the next pick goes to the Second Reference")
+    shot("plane_one_face")
+
+    pick(p, v, edge_at(v, V(0, 0, 10), V(40, 0, 10)))
+    wait(600)
+    expect(cons() == ["At Angle", "Coincident"], "a face and an edge: At Angle about the "
+           "edge (%s)" % cons())
+    visible = sorted(n for n, b in p.bars[1].buttons.items() if b.isVisible())
+    expect(visible == sorted(core_ref.CONSTRAINTS_FOR["line"]),
+           "an edge offers its own constraints (%s)" % visible)
+    expect(shown(p.angles[0].row) and not shown(p.dists[0].row), "the angle shows instead")
+    p.angles[0].spin.setProperty("rawValue", 90.0)
+    wait(700)
+    n = p.obj.Shape.Faces[0].normalAt(0, 0)
+    expect(abs(abs(n.y) - 1) < 1e-6, "turned 90 degrees about the edge (%s)" % n)
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(400)
+    shot("plane_at_angle")
+
+    p.ref_boxes[1].clear_items()
+    wait(600)
+    expect(cons() == ["Offset Distance"], "the edge taken out: back to Offset (%s)" % cons())
+
+    pick(p, v, "Vertex%d" % [i for i, x in enumerate(v.Shape.Vertexes, 1)
+                             if (x.Point - V(40, 30, 0)).Length < 1e-6][0])
+    wait(600)
+    expect(cons() == ["Parallel", "Coincident"], "a face and a point: parallel, through "
+           "the point (%s)" % cons())
+    expect(abs(z_of_plane()) < 1e-6, "through the bottom corner (%.3f)" % z_of_plane())
+
+    p.bars[0].buttons["Coincident"].click()
+    wait(700)
+    expect(not ok_enabled() and p.error.value() and p.status.value() == "",
+           "Coincident with the top face and through the bottom corner can't be: said "
+           "(%s)" % p.error.value())
+    expect(cons()[0] == "Coincident", "the changed constraint is kept")
+    p.bars[0].buttons["Parallel"].click()
+    wait(700)
+    expect(ok_enabled() and p.status.value() == "Fully defined", "Parallel again: fine")
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(400)
+    shot("plane_face_and_point")
+    pl = p.obj
+    close_panel(True)
+    expect(pl.ErrorMessage == "" and abs(pl.Shape.Faces[0].CenterOfMass.z) < 1e-6,
+           "the plane is made")
+
+    Gui.ActiveDocument.setEdit(pl.Name, 0)
+    wait(800)
+    p = panel()
+    expect(p is not None and len([b for b in p.ref_boxes if b.items]) == 2 and
+           cons() == ["Parallel", "Coincident"], "editing shows both references and their "
+           "constraints (%s)" % (cons() if p else None))
+    close_panel(False)
+
+    # A plane made with the old types opens as the same plane, in constraints.
+    old = app_refgeom.create_plane(doc, part, core_ref.OFFSET,
+                                   [(part.Tip, face_at(part.Tip, V(20, 15, 10), V(0, 0, 1)))])
+    old.Distance = 4
+    doc.recompute()
+    before = old.Shape.Faces[0].CenterOfMass
+    Gui.ActiveDocument.setEdit(old.Name, 0)
+    wait(800)
+    p = panel()
+    expect(p is not None and cons() == ["Offset Distance"] and
+           abs(p.dist.value() - 4) < 1e-9, "an old Offset plane opens as Offset Distance")
+    close_panel(True)
+    expect((old.Shape.Faces[0].CenterOfMass - before).Length < 1e-6,
+           "and stays where it was")
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+def label_texts(obj):
+    """The names Solid Design draws for ``obj`` in the 3D view."""
+    from freecad.SolidDesign.gui import ref_labels
+    return ref_labels.texts(obj)
+
+
+@scenario
+def reference_names_in_view():
+    """Planes, axes and points show their names in the view at a fixed size on
+    screen, the origin planes too; a rename follows; Reference Names turns them
+    off and on; a hidden plane's name hides with it."""
+    from freecad.SolidDesign.app import refgeom as app_refgeom
+    from freecad.SolidDesign.core import refgeom as core_ref
+    from freecad.SolidDesign.gui import ref_labels
+    doc, part = new_doc("RN")
+    sk = plate_sketch(doc, part, 40, 30)
+    extrude_ui(doc, part, sk, 10)
+    top = plane(part, "Top Plane")
+    front = plane(part, "Front Plane")
+    for o in (top, front):
+        o.ViewObject.Visibility = True
+    expect(label_texts(top) == ["Top Plane"] and label_texts(front) == ["Front Plane"],
+           "the origin planes are named (%s, %s)" % (label_texts(top), label_texts(front)))
+    v = body_views(part)[0]
+    select(doc, v, face_at(v, V(20, 15, 10), V(0, 0, 1)))
+    p = run_cmd("SD_Plane")
+    close_panel(True)
+    pl = [o for o in part.Group if util.role(o) == "refgeom"][-1]
+    ax = app_refgeom.create_axis(doc, part, core_ref.TWO_PLANES,
+                                 [(front, ""), (plane(part, "Right Plane"), "")])
+    doc.recompute()
+    wait(300)
+    expect(label_texts(pl) == ["Plane1"], "a new plane is named (%s)" % label_texts(pl))
+    expect(label_texts(ax) == ["Axis1"], "an axis is named (%s)" % label_texts(ax))
+    pl.Label = "Datum Top"
+    top.Label = "Base"
+    wait(300)
+    expect(label_texts(pl) == ["Datum Top"] and label_texts(top) == ["Base"],
+           "renamed: the names follow (%s, %s)" % (label_texts(pl), label_texts(top)))
+    top.Label = "Top Plane"
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(500)
+    shot("names")
+    Gui.ActiveDocument.ActiveView.saveImage(os.path.join(SHOTS, "names_view.png"),
+                                            1000, 700, "White")
+    # Zoomed right out, the text is the same size on screen.
+    cam = Gui.ActiveDocument.ActiveView.getCameraNode()
+    try:
+        h = cam.height.getValue()
+        cam.height.setValue(h * 4)
+    except Exception:
+        pass
+    wait(300)
+    Gui.ActiveDocument.ActiveView.saveImage(os.path.join(SHOTS, "names_zoomed_out.png"),
+                                            1000, 700, "White")
+    Gui.runCommand("SD_ReferenceLabels", 0)        # the menu item unticked
+    wait(200)
+    expect(not ref_labels.enabled() and not label_texts(pl) and not label_texts(top),
+           "Reference Names off: no names")
+    Gui.runCommand("SD_ReferenceLabels", 1)        # ticked again
+    wait(200)
+    expect(ref_labels.enabled() and label_texts(pl) == ["Datum Top"] and
+           label_texts(top) == ["Top Plane"], "and back on (%s %s %s %s)" % (
+               ref_labels.enabled(), label_texts(pl), label_texts(top),
+               pl.ViewObject.Visibility))
+    pl.ViewObject.Visibility = False
+    wait(200)
+    expect(not label_texts(pl), "a hidden plane's name hides with it")
+    pl.ViewObject.Visibility = True
+    wait(200)
+    expect(label_texts(pl) == ["Datum Top"], "and shows with it (%s, %s)" % (
+        label_texts(pl), ref_labels.anchor(pl)))
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+@scenario
 def plane_and_sketch_on_it():
     doc, part = new_doc("S19")
     sk = plate_sketch(doc, part)

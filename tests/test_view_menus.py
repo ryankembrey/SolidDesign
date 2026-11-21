@@ -68,3 +68,28 @@ class TestFeatureOfElement(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRestoreWhileQuitting(unittest.TestCase):
+    """Leaving the workbench as FreeCAD quits: a document still listed whose GUI side
+    is already gone must be skipped, not raise "Unknown document"."""
+
+    def test_missing_gui_document_is_skipped(self):
+        import FreeCADGui as Gui
+        from freecad.SolidDesign.gui import view_menus
+        doc = new_doc("QuitRestore")[0]
+        had = hasattr(Gui, "getDocument")
+        old = getattr(Gui, "getDocument", None)
+
+        def gone(name):
+            raise NameError("Unknown document '%s'" % name)
+
+        Gui.getDocument = gone
+        try:
+            view_menus.restore()        # must not raise
+        finally:
+            if had:
+                Gui.getDocument = old
+            else:
+                del Gui.getDocument
+            App.closeDocument(doc.Name)

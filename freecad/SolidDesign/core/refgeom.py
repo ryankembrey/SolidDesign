@@ -20,7 +20,12 @@ THREE_POINTS = "Through Points"
 PARALLEL_AT_POINT = "Parallel at Point"
 NORMAL_TO_CURVE = "Normal to Curve"
 MID_PLANE = "Mid Plane"
-PLANE_TYPES = [COINCIDENT, OFFSET, ANGLE, THREE_POINTS, PARALLEL_AT_POINT, NORMAL_TO_CURVE, MID_PLANE]
+# SolidWorks' way, and the one the panel uses: up to three references, each with
+# its own constraint (see "Planes from constraints" below). The types above are
+# kept for planes made before it and for scripts.
+REFERENCES = "References"
+PLANE_TYPES = [REFERENCES, COINCIDENT, OFFSET, ANGLE, THREE_POINTS, PARALLEL_AT_POINT,
+               NORMAL_TO_CURVE, MID_PLANE]
 
 # Axis types
 LINE = "One Line/Edge/Axis"
@@ -153,8 +158,12 @@ def placement(origin, normal, xdir=None):
 
 # ------------------------------------------------------------------ planes
 
-def plane(kind, refs, distance=10.0, angle=45.0, flip=False):
-    """``refs``: resolved shapes in the order of PLANE_NEEDS[kind]."""
+def plane(kind, refs, distance=10.0, angle=45.0, flip=False, constraints=()):
+    """``refs``: resolved shapes in the order of PLANE_NEEDS[kind]; for
+    REFERENCES, in pick order, each with its entry of ``constraints`` ("" or a
+    missing entry: guessed)."""
+    if kind == REFERENCES:
+        return plane_from(refs, constraints, distance, angle, flip)
     need = PLANE_NEEDS[kind]
     req = [k for k in need if not k.endswith("?")]
     if len([r for r in refs if r is not None]) < len(req):
@@ -229,6 +238,392 @@ def plane_face(pl, size):
     # turn it into a B-spline.
     f.transformShape(pl.toMatrix(), True)
     return f
+
+
+# ------------------------------------------------------------------ planes from constraints
+# SolidWorks' Plane: up to three references, each with a constraint that fits
+# what it is. The constraints only have to agree; the order they were picked in
+# doesn't matter.
+
+C_COINCIDENT = "Coincident"
+C_PARALLEL = "Parallel"
+C_PERPENDICULAR = "Perpendicular"
+C_OFFSET = "Offset Distance"
+C_ANGLE = "At Angle"
+C_MID = "Mid Plane"
+C_TANGENT = "Tangent"
+
+# What each kind of reference can be (the first is the panel's order).
+CONSTRAINTS_FOR = {
+    "plane": [C_COINCIDENT, C_PARALLEL, C_PERPENDICULAR, C_OFFSET, C_ANGLE, C_MID],
+    "line": [C_COINCIDENT, C_PERPENDICULAR, C_PARALLEL],
+    "curve": [C_PERPENDICULAR, C_COINCIDENT],
+    "point": [C_COINCIDENT],
+    "round": [C_TANGENT, C_COINCIDENT],
+}
+KIND_WORDS = {"plane": "plane or planar face", "line": "straight edge or axis",
+              "curve": "edge", "point": "point or vertex", "round": "cylindrical face"}
+
+# Planes made with the old types, as constraints (the panel turns them into these).
+FROM_TYPE = {
+    COINCIDENT: (C_COINCIDENT,), OFFSET: (C_OFFSET,), ANGLE: (C_ANGLE, C_COINCIDENT),
+    THREE_POINTS: (C_COINCIDENT,) * 3, PARALLEL_AT_POINT: (C_PARALLEL, C_COINCIDENT),
+    NORMAL_TO_CURVE: (C_PERPENDICULAR, C_COINCIDENT), MID_PLANE: (C_MID, C_MID),
+}
+
+_LIN = 1e-6         # mm
+_ANG = 1e-7         # 1 - |cos| for parallel
+
+
+def _single(shape):
+    """The one face, edge or vertex a reference is, or None."""
+    if shape is None:
+        return None
+    if shape.ShapeType in ("Face", "Edge", "Vertex"):
+        return shape
+    for subs in (shape.Faces, shape.Edges, shape.Vertexes):
+        if subs:
+            return subs[0] if len(subs) == 1 else None
+    return None
+
+
+def ref_kind(shape):
+    """"plane", "line", "curve", "point", "round" (a cylinder or cone), or None."""
+    s = _single(shape)
+    if s is None:
+        return None
+    if s.ShapeType == "Face":
+        t = s.Surface.TypeId
+        if t == "Part::GeomPlane":
+            return "plane"
+        if t in ("Part::GeomCylinder", "Part::GeomCone"):
+            return "round"
+        return None
+    if s.ShapeType == "Edge":
+        return "line" if s.Curve.TypeId in ("Part::GeomLine", "Part::GeomLineSegment") \
+            else "curve"
+    return "point"
+
+
+def _parallel(a, b):
+    return 1.0 - abs(a.dot(b)) < _ANG
+
+
+def _on_line(q, p, d):
+    w = q - p
+    return (w - d * w.dot(d)).Length < _LIN
+
+
+def guess(shapes):
+    """The constraints SolidWorks would start with for these references, one per
+    shape (None for a shape that can't be used)."""
+    kinds = [ref_kind(s) for s in shapes]
+    out = [None] * len(kinds)
+    idx = {}
+    for i, k in enumerate(kinds):
+        idx.setdefault(k, []).append(i)
+    n = len([k for k in kinds if k])
+    planes, lines, curves_, points, rounds = (idx.get(k, []) for k in
+                                              ("plane", "line", "curve", "point", "round"))
+
+    def put(ids, c):
+        for i in ids:
+            out[i] = c
+
+    if n == 1:
+        put(planes, C_OFFSET)
+        put(lines + curves_, C_PERPENDICULAR)
+        put(points, C_COINCIDENT)
+        put(rounds, C_TANGENT)
+    elif len(planes) == 2 and n == 2:
+        put(planes, C_MID)
+    elif len(planes) == 1 and len(lines) == 1 and n == 2:
+        put(planes, C_ANGLE)
+        put(lines, C_COINCIDENT)
+    elif len(planes) == 1 and rounds and n == 2:
+        put(planes, C_PARALLEL)
+        put(rounds, C_TANGENT)
+    elif len(rounds) == 1 and len(points) == 1 and n == 2:
+        put(rounds, C_TANGENT)
+        put(points, C_COINCIDENT)
+    elif len(planes) == 1 and len(points) == 1 and n == 2:
+        put(planes, C_PARALLEL)
+        put(points, C_COINCIDENT)
+    elif (lines or curves_) and len(points) == 1 and n == 2:
+        put(points, C_COINCIDENT)
+        if curves_:
+            put(curves_, C_PERPENDICULAR)
+        else:
+            # A point on the line: the plane square to the line there; off it:
+            # the plane through both.
+            p, d = line_of(shapes[lines[0]])
+            put(lines, C_PERPENDICULAR if _on_line(point_of(shapes[points[0]]), p, d)
+                else C_COINCIDENT)
+    else:
+        # Points and lines lie in it; a plane among them is square to it when two
+        # other references place it, otherwise it is parallel to it.
+        put(points + lines, C_COINCIDENT)
+        put(curves_, C_PERPENDICULAR)
+        put(rounds, C_COINCIDENT)
+        put(planes, C_PERPENDICULAR if n - len(planes) >= 1 and n >= 3 or len(planes) >= 2
+            else C_PARALLEL)
+    return out
+
+
+def effective(shapes, constraints):
+    """The constraint each reference is under: its own where it fits, else the
+    guess for the whole set."""
+    g = guess(shapes)
+    out = []
+    for i, s in enumerate(shapes):
+        c = constraints[i] if i < len(constraints) else ""
+        k = ref_kind(s)
+        out.append(c if c and k and c in CONSTRAINTS_FOR[k] else g[i])
+    return out
+
+
+def plane_from(refs, constraints=(), distance=10.0, angle=45.0, flip=False):
+    """A plane from references and their constraints (SolidWorks' Plane)."""
+    items = [(i, s) for i, s in enumerate(refs) if s is not None]
+    if not items:
+        raise topo.GeometryError("Pick a plane, face, edge or point to start from.")
+    shapes = [s for _i, s in items]
+    cons = effective(shapes, [constraints[i] if i < len(constraints) else ""
+                              for i, _s in items])
+    kinds = []
+    for (i, s), c in zip(items, cons):
+        k = ref_kind(s)
+        if k is None:
+            raise topo.GeometryError(
+                "Reference {} can't place a plane: pick a plane, a planar or cylindrical "
+                "face, an edge or a point.".format(i + 1))
+        kinds.append(k)
+    refs_ = list(zip(kinds, shapes, cons, [i + 1 for i, _s in items]))
+    valued = [r for r in refs_ if r[2] in (C_OFFSET, C_ANGLE)]
+    if len(valued) > 1:
+        raise topo.GeometryError("Only one reference can set a distance or an angle.")
+    if any(r[2] == C_MID for r in refs_):
+        return _mid(refs_, flip)
+    if any(r[2] == C_ANGLE for r in refs_):
+        return _at_angle(refs_, angle, flip)
+    if any(r[2] == C_TANGENT for r in refs_):
+        return _tangent(refs_, flip)
+    return _solve(refs_, distance, flip)
+
+
+def _mid(refs_, flip):
+    mids = [r for r in refs_ if r[2] == C_MID]
+    if len(mids) != 2 or len(refs_) != 2:
+        raise topo.GeometryError("Mid Plane: pick two planes or planar faces, both set to "
+                                 "Mid Plane.")
+    c1, n1, x1 = plane_of(mids[0][1], "first reference")
+    c2, n2, _x2 = plane_of(mids[1][1], "second reference")
+    if _parallel(n1, n2):
+        mid = (c1 + c2) * 0.5
+        return placement(mid, -n1 if flip else n1, x1)
+    # Two planes that meet: the plane that halves the angle between them, through
+    # the line where they meet (between two sides of a block: the one inside it).
+    d = n1.cross(n2)
+    h1, h2 = n1.dot(c1), n2.dot(c2)
+    p = (n2.cross(d) * h1 + d.cross(n1) * h2) * (1.0 / d.dot(d))
+    m = _unit(n1 - n2)
+    return placement(p, -m if flip else m, _unit(d))
+
+
+def _line_ref(r):
+    """(point, direction) of a line, a round face's axis or a straight edge."""
+    return line_of(r[1], "reference {}".format(r[3]))
+
+
+def _at_angle(refs_, angle, flip):
+    pl = [r for r in refs_ if r[2] == C_ANGLE][0]
+    rest = [r for r in refs_ if r is not pl]
+    axes = [r for r in rest if r[0] in ("line", "round") and r[2] == C_COINCIDENT]
+    if len(axes) != 1 or len(rest) != 1:
+        raise topo.GeometryError("At Angle: pick one edge or axis to turn about, set to "
+                                 "Coincident.")
+    _c, n, _x = plane_of(pl[1], "reference {}".format(pl[3]))
+    p, a = _line_ref(axes[0])
+    if _parallel(n, a):
+        raise topo.GeometryError("At Angle: the edge is square to the plane, so turning "
+                                 "about it changes nothing.")
+    n2 = App.Rotation(a, -angle if flip else angle).multVec(n)
+    return placement(p, n2, a)
+
+
+def _tangent(refs_, flip):
+    t = [r for r in refs_ if r[2] == C_TANGENT]
+    rest = [r for r in refs_ if r[2] != C_TANGENT]
+    if len(t) != 1 or len(rest) != 1:
+        raise topo.GeometryError("Tangent: pick a cylindrical face, and a plane or a point "
+                                 "to say which tangent plane.")
+    f = _single(t[0][1])
+    s = f.Surface
+    if s.TypeId != "Part::GeomCylinder":
+        raise topo.GeometryError("Tangent works on cylindrical faces.")
+    p0, d, r = App.Vector(s.Center), _unit(s.Axis), s.Radius
+    side = -1.0 if flip else 1.0
+    k, shape, c, num = rest[0]
+    if k == "plane" and c in (C_PARALLEL, C_PERPENDICULAR):
+        _c, n, _x = plane_of(shape, "reference {}".format(num))
+        if c == C_PARALLEL:
+            if abs(n.dot(d)) > 1e-7:
+                raise topo.GeometryError("Tangent: the plane must be parallel to the "
+                                         "cylinder's axis.")
+            u = n
+        else:
+            if _parallel(n, d):
+                raise topo.GeometryError("Tangent: the plane is square to the cylinder's "
+                                         "axis; every tangent plane is square to it.")
+            u = _unit(n.cross(d))
+        return placement(p0 + u * (r * side), u, d)
+    if k == "point" and c == C_COINCIDENT:
+        q = point_of(shape)
+        w = (q - p0) - d * (q - p0).dot(d)
+        h = w.Length
+        if h < r - _LIN:
+            raise topo.GeometryError("Tangent: the point is inside the cylinder, so no "
+                                     "tangent plane passes through it.")
+        w = _unit(w)
+        if h - r <= _LIN:
+            u = w
+        else:
+            # From a point outside, two planes touch the cylinder; Flip picks the other.
+            u = App.Rotation(d, side * math.degrees(math.acos(r / h))).multVec(w)
+        return placement(q, u, d)
+    raise topo.GeometryError("Tangent: the other reference must be a plane (Parallel or "
+                             "Perpendicular) or a point (Coincident).")
+
+
+def _curve_at(shape, near):
+    """(point, unit tangent) of an edge at the point nearest ``near``, or at its start."""
+    e = _single(shape)
+    u = e.FirstParameter if near is None else e.Curve.parameter(near)
+    if near is not None and not (e.FirstParameter - 1e-9 <= u <= e.LastParameter + 1e-9):
+        u = e.FirstParameter if (e.valueAt(e.FirstParameter) - near).Length <= \
+            (e.valueAt(e.LastParameter) - near).Length else e.LastParameter
+    return e.valueAt(u), _unit(e.tangentAt(u))
+
+
+def _solve(refs_, distance, flip):
+    """Coincident, Parallel, Perpendicular and Offset: each reference fixes the
+    normal, asks the normal to be square to a direction, or puts a point in the
+    plane; together they must give exactly one plane."""
+    fixed, square, points, xdirs = [], [], [], []
+    loose = []          # where a lone edge or line puts it, if nothing else does
+    first_point = next((point_of(r[1]) for r in refs_
+                        if r[0] == "point" and r[2] == C_COINCIDENT), None)
+    offset = any(r[2] == C_OFFSET for r in refs_)
+    for k, s, c, num in refs_:
+        what = "reference {}".format(num)
+        if k == "plane":
+            pc, n, x = plane_of(s, what)
+            if c in (C_COINCIDENT, C_PARALLEL, C_OFFSET):
+                fixed.append((n, num))
+                xdirs.append(x)
+                if c == C_COINCIDENT:
+                    points.append(pc)
+                elif c == C_OFFSET:
+                    points.append(pc + n * (-distance if flip else distance))
+            elif c == C_PERPENDICULAR:
+                square.append(n)
+        elif k in ("line", "round"):
+            p, d = line_of(s, what)
+            if c == C_COINCIDENT:
+                square.append(d)
+                points.append(p)
+                xdirs.append(d)
+            elif c == C_PARALLEL:
+                square.append(d)
+                xdirs.append(d)
+            elif c == C_PERPENDICULAR:
+                fixed.append((d, num))
+                loose.append(p)
+        elif k == "curve":
+            if c == C_PERPENDICULAR:
+                p, t = _curve_at(s, first_point)
+                fixed.append((t, num))
+                loose.append(p)
+            else:
+                pl = _single(s).findPlane()
+                if pl is None:
+                    raise topo.GeometryError("Reference {}: the edge doesn't lie in a "
+                                             "plane.".format(num))
+                fixed.append((_unit(pl.Axis), num))
+                points.append(_single(s).valueAt(_single(s).FirstParameter))
+        else:
+            points.append(point_of(s, what))
+    # The normal.
+    if fixed:
+        n = fixed[0][0]
+        for v, num in fixed[1:]:
+            if not _parallel(n, v):
+                raise topo.GeometryError("References {} and {} ask for different "
+                                         "directions; change one's constraint."
+                                         .format(fixed[0][1], num))
+    else:
+        n = None
+        for i in range(len(square)):
+            for j in range(i + 1, len(square)):
+                if not _parallel(square[i], square[j]):
+                    n = square[i].cross(square[j])
+                    break
+            if n is not None:
+                break
+        if n is None and square:
+            for i in range(len(points)):
+                for j in range(i + 1, len(points)):
+                    w = points[j] - points[i]
+                    if w.Length > _LIN and not _parallel(_unit(w), square[0]):
+                        n = square[0].cross(w)
+                        break
+                if n is not None:
+                    break
+        if n is None and not square and len(points) >= 3:
+            for j in range(1, len(points)):
+                for k in range(j + 1, len(points)):
+                    m = (points[j] - points[0]).cross(points[k] - points[0])
+                    if m.Length > _LIN * _LIN:
+                        n = m
+                        break
+                if n is not None:
+                    break
+            if n is None:
+                raise topo.GeometryError("The points are in a line; a plane through them "
+                                         "can turn about it. Pick a point off the line.")
+        if n is None:
+            raise topo.GeometryError(_underdefined(refs_))
+        n = _unit(n)
+        xdirs.append(next((points[j] - points[0] for j in range(1, len(points))
+                           if (points[j] - points[0]).Length > _LIN), None))
+    for v in square:
+        if abs(v.dot(n)) > 1e-7:
+            raise topo.GeometryError("The references don't agree: no plane meets them all. "
+                                     "Change a constraint.")
+    # Where it is.
+    if not points:
+        if not loose:
+            raise topo.GeometryError("Not fully defined: pick a point or an edge for the "
+                                     "plane to pass through.")
+        points = loose[:1]
+    o = points[0]
+    for q in points[1:]:
+        if abs((q - o).dot(n)) > _LIN * max(1.0, (q - o).Length):
+            raise topo.GeometryError("The references don't lie in one plane. Change a "
+                                     "constraint or pick something else.")
+    if flip and not offset:
+        n = -n
+    x = next((v for v in xdirs if v is not None and v.Length > _LIN and
+              not _parallel(_unit(v), n)), None)
+    return placement(o, n, x)
+
+
+def _underdefined(refs_):
+    kinds = [r[0] for r in refs_]
+    if kinds and all(k == "point" for k in kinds):
+        return "Not fully defined: three points make a plane; pick {} more.".format(
+            3 - len(kinds))
+    return "Not fully defined: add a reference, or change a constraint."
 
 
 # ------------------------------------------------------------------ axes

@@ -358,20 +358,45 @@ These follow SolidWorks unless a line says otherwise.
 
 ## Plane and Axis
 
-### Type first, then exactly the references it needs  (PROPOSED: owner to decide)
-- **SolidWorks:** up to three reference boxes; each offers constraints
-  (coincident, parallel, perpendicular, distance, angle, mid plane) and the plane
-  is solved from whichever combination is set.
-- **Solid Design:** pick a type (Offset Distance, At Angle, Through Points,
-  Parallel at Point, Normal to Curve, Mid Plane; for axes One Line/Edge/Axis, Two
-  Planes, Two Points/Vertices, Cylindrical/Conical Face, Point and Face/Plane),
-  then the panel shows only the boxes that type needs, labelled with what goes in
-  them. With a preselection the type is guessed from it, as SolidWorks guesses
-  its constraints.
-- **Why:** the per-reference constraint grid lets the user build combinations
-  that don't define a plane, and the error only says the plane is
-  under-defined. This is a changed workflow, so it is listed for the owner to
-  overrule; the same geometry results.
+### Plane: SolidWorks' three references (2026-11-21, owner's decision)
+The owner overruled the type-first panel for Plane. It is now SolidWorks' own:
+First, Second and Third Reference, each a box and the constraints that fit what
+is in it (icon buttons, the chosen one named beside them), the distance or angle
+under the reference whose constraint has one, and "Fully defined" at the top.
+Picks fill the boxes in turn; taking one out closes the gap. The constraints are
+guessed from what was picked, as SolidWorks does: a face Offset Distance; two
+planes Mid Plane; a plane and an edge At Angle about the edge; a plane and a
+point Parallel through the point; an edge and a point on it Perpendicular there
+(off it: through both); three points Coincident; a plane and two points
+Perpendicular through them; a cylinder and a plane or point Tangent. A new pick
+guesses again; a constraint the user chose stays until then.
+- **Departures:** Tangent works on cylinders only (not cones). Mid Plane of two
+  planes that meet halves the angle inside the corner; Flip turns it round.
+  SolidWorks' "number of planes" isn't there. An edge alone set to
+  Perpendicular places the plane at the edge's start (SolidWorks waits for a
+  point). A circle or other flat edge can be Coincident: the plane it lies in.
+  Errors say what is wrong ("References 1 and 2 ask for different
+  directions", "three points make a plane; pick 1 more") rather than only
+  "not fully defined".
+- Planes made with the old types still solve the old way; opening one in the
+  panel turns it into the same plane, as constraints. Scripts can still give a
+  type.
+
+### Axis, Point: type first  (PROPOSED: owner to decide)
+- **SolidWorks:** reference boxes; the axis or point is solved from what is picked.
+- **Solid Design:** pick a type (for axes One Line/Edge/Axis, Two Planes, Two
+  Points/Vertices, Cylindrical/Conical Face, Point and Face/Plane), then the panel
+  shows only the boxes that type needs. With a preselection the type is guessed.
+- **Why:** kept from before; Plane moved to SolidWorks' way at the owner's request.
+
+### Names in the 3D view (2026-11-21, owner's request)
+- Planes, axes, points and coordinate systems show their names, as SolidWorks
+  shows plane names: at a plane's corner, an axis' end, beside a point or a
+  coordinate system's origin; the origin planes (Front, Top, Right) too. The text
+  is the same size on screen at any zoom, hides with the object, and follows a
+  rename. Solid Design > Reference Names turns them off.
+- Like the geometry, a name behind a body is hidden. The origin axes keep
+  FreeCAD's own small X/Y/Z labels.
 
 ## Split
 

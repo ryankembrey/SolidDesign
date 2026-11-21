@@ -174,6 +174,7 @@ def create(doc, label=None):
         viewproviders.attach_folder(folder(obj, core_bodies.SURFACE))
         viewproviders.attach_folder(folder(obj, ORIGIN_FOLDER))
         viewproviders.attach_rollback(bar)
+        viewproviders._label_origin(obj)
     obj.purgeTouched()
     return obj
 

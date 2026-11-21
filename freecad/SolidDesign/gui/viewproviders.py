@@ -111,6 +111,8 @@ class PartVP(_DrawsNothing):
         self.Object = vobj.Object
         self._add_group_mode(vobj)
         QtCore.QTimer.singleShot(0, lambda: _add_origin_folder(vobj.Object))
+        part = vobj.Object
+        QtCore.QTimer.singleShot(0, lambda: _label_origin(part))
 
     def getIcon(self):
         obj = getattr(self, "Object", None)
@@ -739,6 +741,8 @@ class RefGeomVP(_Stateless):
         if getattr(vobj.Object.Proxy, "KIND", "") == "axis":
             self._make_overlay(vobj)
             QtCore.QTimer.singleShot(0, lambda: _dashed(vobj))
+        obj = vobj.Object
+        QtCore.QTimer.singleShot(0, lambda: _label(obj))
 
     # An axis is a dashed line drawn on top of everything, so it shows through
     # the bodies (as a centerline does). The overlay goes in every display mode,
@@ -781,6 +785,10 @@ class RefGeomVP(_Stateless):
         except Exception:
             pass
 
+    def onChanged(self, vobj, prop):
+        if prop == "Visibility":
+            _label(vobj.Object)
+
     def canDelete(self, obj):
         return _is_base_of(getattr(self, "Object", None), obj)
 
@@ -812,8 +820,10 @@ class RefGeomVP(_Stateless):
             _refresh_icon(obj.ViewObject)
             if prop == "RolledBack":
                 obj.ViewObject.Visibility = not obj.RolledBack
-        elif prop in ("Shape", "Placement"):
-            self._update_overlay(obj)
+        elif prop in ("Shape", "Placement", "Label"):
+            if prop != "Label":
+                self._update_overlay(obj)
+            _label(obj)
             if prop == "Shape" and getattr(obj.Proxy, "KIND", "") == "csys":
                 _csys_colours(obj.ViewObject)
 
@@ -850,6 +860,24 @@ class RefGeomVP(_Stateless):
         a = menu.addAction(QtGui.QIcon(self.getIcon()), "Edit Feature")
         a.triggered.connect(lambda: Gui.ActiveDocument.setEdit(obj.Name, 0))
         return True
+
+
+def _label(obj):
+    """The object's name in the 3D view (planes, axes, points...)."""
+    try:
+        from . import ref_labels
+        if obj.Document is not None and ref_labels.labelled(obj):
+            ref_labels.refresh(obj)
+    except Exception:
+        pass
+
+
+def _label_origin(part):
+    try:
+        from . import ref_labels
+        ref_labels.label_part(part)
+    except Exception:
+        pass
 
 
 def attach_refgeom(obj, new=False):

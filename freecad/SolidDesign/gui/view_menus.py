@@ -518,10 +518,16 @@ def install():
 
 
 def restore():
-    """FreeCAD's own menus back in every 3D view (leaving the workbench)."""
-    for d in App.listDocuments().values():
-        g = Gui.getDocument(d.Name)
-        for v in (g.mdiViewsOfType("Gui::View3DInventor") if g else []):
+    """FreeCAD's own menus back in every 3D view (leaving the workbench). Runs while
+    FreeCAD quits too, when a document's GUI side can already be gone while the
+    document is still listed, so a missing one is skipped, never an error."""
+    for d in list(App.listDocuments().values()):
+        try:
+            g = Gui.getDocument(d.Name)
+            views = g.mdiViewsOfType("Gui::View3DInventor") if g else []
+        except Exception:
+            continue
+        for v in views:
             try:
                 v.setPopupMenuEnabled(True)
             except Exception:

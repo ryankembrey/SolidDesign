@@ -282,3 +282,172 @@ class TestMeasured(unittest.TestCase):
 
 
 REEXPORTED = (Part,)
+
+
+class TestPlaneConstraints(unittest.TestCase):
+    """SolidWorks' Plane: up to three references, each with a constraint, guessed
+    from what was picked and changeable; the order they were picked in doesn't
+    matter. A 20 x 10 x 5 block from the origin."""
+
+    def setUp(self):
+        self.doc, self.part = new_doc("RefC")
+        sk = sketch(self.doc, plane(self.part, "Top Plane"))
+        rect(sk, 0, 0, 20, 10)
+        self.doc.recompute()
+        self.box = extrude(self.doc, self.part, sk, Depth=5)
+        b = self.box
+        self.top = (b, face_at(b, V(10, 5, 5), V(0, 0, 1)))
+        self.bottom = (b, face_at(b, V(10, 5, 0), V(0, 0, -1)))
+        self.side = (b, face_at(b, V(20, 5, 2.5), V(1, 0, 0)))
+        self.front = (b, face_at(b, V(10, 0, 2.5), V(0, -1, 0)))
+        self.edge_x = (b, edge_at(b, V(10, 0, 5)))          # along X, front top
+        self.edge_up = (b, edge_at(b, V(20, 0, 2.5)))       # upright, front right
+
+    def tearDown(self):
+        App.closeDocument(self.doc.Name)
+
+    def vtx(self, p):
+        return (self.box, vertex_at(self.box, p))
+
+    def make(self, refs, cons=(), **props):
+        p = refgeom.create_plane(self.doc, self.part, None, refs, cons)
+        for k, v in props.items():
+            setattr(p, k, v)
+        self.doc.recompute()
+        return p
+
+    def face(self, p):
+        self.assertEqual(p.ErrorMessage, "", p.ErrorMessage)
+        f = p.Shape.Faces[0]
+        n = f.normalAt(0, 0)
+        return f, n
+
+    def guessed(self, refs):
+        shapes = [Part.getShape(o, s, needSubElement=True) if s else o.Shape for o, s in refs]
+        return core.guess(shapes)
+
+    # ---- guessing, as SolidWorks starts each combination
+    def test_guesses(self):
+        g = self.guessed
+        self.assertEqual(g([self.top]), [core.C_OFFSET])
+        self.assertEqual(g([self.top, self.bottom]), [core.C_MID, core.C_MID])
+        self.assertEqual(g([self.edge_x, self.top]), [core.C_COINCIDENT, core.C_ANGLE])
+        self.assertEqual(g([self.vtx(V(20, 10, 5)), (plane(self.part, "Top Plane"), "")]),
+                         [core.C_COINCIDENT, core.C_PARALLEL])
+        pts = [self.vtx(V(0, 0, 5)), self.vtx(V(20, 0, 5)), self.vtx(V(0, 10, 0))]
+        self.assertEqual(g(pts), [core.C_COINCIDENT] * 3)
+        # A point on the edge: square to it there; off it: through both.
+        self.assertEqual(g([self.edge_x, self.vtx(V(20, 0, 5))]),
+                         [core.C_PERPENDICULAR, core.C_COINCIDENT])
+        self.assertEqual(g([self.edge_x, self.vtx(V(20, 10, 0))]),
+                         [core.C_COINCIDENT, core.C_COINCIDENT])
+        # A plane and two points: square to the plane, through the points.
+        self.assertEqual(g([self.top, self.vtx(V(0, 0, 5)), self.vtx(V(20, 10, 5))]),
+                         [core.C_PERPENDICULAR, core.C_COINCIDENT, core.C_COINCIDENT])
+
+    # ---- the planes the guesses make
+    def test_one_face_offsets_it(self):
+        f, n = self.face(self.make([self.top], Distance=7))
+        self.assertAlmostEqual(f.CenterOfMass.z, 12)
+
+    def test_face_and_point_parallel_through_it(self):
+        f, n = self.face(self.make([(plane(self.part, "Top Plane"), ""),
+                                    self.vtx(V(20, 10, 5))]))
+        self.assertAlmostEqual(f.CenterOfMass.z, 5)
+        self.assertAlmostEqual(abs(n.z), 1)
+
+    def test_picked_in_any_order(self):
+        """Edge then face is the same At Angle plane as face then edge."""
+        a = self.make([self.top, self.edge_x], Angle=90)
+        b = self.make([self.edge_x, self.top], Angle=90)
+        _f, na = self.face(a)
+        _f, nb = self.face(b)
+        self.assertAlmostEqual(abs(na.y), 1, 6)
+        self.assertAlmostEqual(abs(na.dot(nb)), 1, 6)
+
+    def test_three_points(self):
+        pts = [self.vtx(V(0, 0, 5)), self.vtx(V(20, 0, 5)), self.vtx(V(0, 10, 0))]
+        f, n = self.face(self.make(pts))
+        for p in (V(0, 0, 5), V(20, 0, 5), V(0, 10, 0)):
+            self.assertAlmostEqual(f.Surface.projectPoint(p).distanceToPoint(p), 0, 6)
+
+    def test_normal_to_edge_at_point(self):
+        f, n = self.face(self.make([self.edge_x, self.vtx(V(20, 0, 5))]))
+        self.assertAlmostEqual(abs(n.x), 1, 6)
+        self.assertAlmostEqual(f.Surface.Position.x if hasattr(f.Surface, "Position")
+                               else f.CenterOfMass.x, 20, 6)
+
+    def test_through_edge_and_point(self):
+        """The diagonal plane through the front top edge and the back bottom corner."""
+        f, n = self.face(self.make([self.edge_x, self.vtx(V(20, 10, 0))]))
+        for p in (V(0, 0, 5), V(20, 0, 5), V(20, 10, 0)):
+            self.assertAlmostEqual(f.Surface.projectPoint(p).distanceToPoint(p), 0, 6)
+
+    def test_two_faces_that_meet_halve_the_corner(self):
+        """Mid Plane of the top and the right side: through their edge, at 45°,
+        into the block."""
+        f, n = self.face(self.make([self.top, self.side]))
+        self.assertAlmostEqual(abs(n.x), math.sqrt(0.5), 6)
+        self.assertAlmostEqual(abs(n.z), math.sqrt(0.5), 6)
+        for p in (V(20, 0, 5), V(20, 10, 5), V(17, 5, 2)):
+            self.assertAlmostEqual(f.Surface.projectPoint(p).distanceToPoint(p), 0, 6)
+
+    def test_square_to_face_through_two_points(self):
+        f, n = self.face(self.make([self.top, self.vtx(V(0, 0, 5)), self.vtx(V(20, 10, 5))]))
+        self.assertAlmostEqual(n.z, 0, 6)
+        self.assertAlmostEqual(f.Surface.projectPoint(V(20, 10, 0)).distanceToPoint(
+            V(20, 10, 0)), 0, 6)
+
+    def test_changed_constraint_is_kept(self):
+        """Top face set to Coincident instead of the guessed Offset."""
+        p = self.make([self.top], [core.C_COINCIDENT])
+        f, n = self.face(p)
+        self.assertAlmostEqual(f.CenterOfMass.z, 5)
+        self.assertEqual(p.Proxy.constraints(p), [core.C_COINCIDENT])
+
+    def test_a_constraint_that_doesnt_fit_is_guessed_again(self):
+        """Mid Plane left over from a face, now that a point is there instead."""
+        p = self.make([self.vtx(V(20, 10, 5)), self.top], [core.C_MID, ""])
+        self.face(p)
+        self.assertEqual(p.Proxy.constraints(p), [core.C_COINCIDENT, core.C_PARALLEL])
+
+    def test_tangent_to_a_cylinder(self):
+        sk = sketch(self.doc, plane(self.part, "Top Plane"))
+        sk.addGeometry(Part.Circle(V(40, 0, 0), V(0, 0, 1), 4))
+        self.doc.recompute()
+        cyl = extrude(self.doc, self.part, sk, Depth=10)
+        round_face = (cyl, face_at(cyl, V(44, 0, 5), V(1, 0, 0)))
+        f, n = self.face(self.make([round_face, (plane(self.part, "Right Plane"), "")]))
+        self.assertAlmostEqual(abs(n.x), 1, 6)
+        self.assertAlmostEqual(abs(f.CenterOfMass.x - 40), 4, 6)
+        far = self.make([round_face, (plane(self.part, "Right Plane"), "")], Flip=True)
+        g, _n = self.face(far)
+        self.assertAlmostEqual(f.CenterOfMass.x + g.CenterOfMass.x, 80, 6)
+        # Through a point outside it: touches the cylinder.
+        t = self.make([round_face, self.vtx(V(20, 0, 5))])
+        h, m = self.face(t)
+        c = V(40, 0, 5)
+        self.assertAlmostEqual(abs((c - h.Surface.projectPoint(c)).Length), 4, 6)
+
+    def test_what_is_wrong_is_said(self):
+        p = self.make([self.vtx(V(0, 0, 5)), self.vtx(V(20, 0, 5))])
+        self.assertIn("three points", p.ErrorMessage)
+        p = self.make([self.top, self.side], [core.C_PARALLEL, core.C_PARALLEL])
+        self.assertIn("different directions", p.ErrorMessage)
+        p = self.make([self.top, self.edge_x], [core.C_OFFSET, core.C_COINCIDENT])
+        self.assertIn("don't lie in one plane", p.ErrorMessage)
+        p = self.make([self.top, self.bottom, self.vtx(V(0, 0, 0))],
+                      [core.C_ANGLE, core.C_OFFSET, core.C_COINCIDENT])
+        self.assertIn("Only one reference", p.ErrorMessage)
+
+    def test_old_types_read_as_constraints(self):
+        a = refgeom.create_plane(self.doc, self.part, core.ANGLE, [self.top, self.edge_x])
+        self.doc.recompute()
+        self.assertEqual(a.Proxy.constraints(a), [core.C_ANGLE, core.C_COINCIDENT])
+        # The same plane made either way.
+        b = self.make([self.top, self.edge_x], list(core.FROM_TYPE[core.ANGLE]))
+        fa, na = self.face(a)
+        fb, nb = self.face(b)
+        self.assertAlmostEqual(na.dot(nb), 1, 9)
+        q = fb.CenterOfMass
+        self.assertAlmostEqual(fa.Surface.projectPoint(q).distanceToPoint(q), 0, 9)

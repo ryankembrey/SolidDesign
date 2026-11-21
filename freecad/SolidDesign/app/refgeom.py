@@ -125,9 +125,24 @@ class RefPlaneProxy(_RefGeomProxy):
         super(RefPlaneProxy, self).setup(obj)
         util.add_prop(obj, "App::PropertyLength", "Distance", "Reference", "Offset distance", 10.0)
         util.add_prop(obj, "App::PropertyAngle", "Angle", "Reference", "Angle", 45.0)
+        util.add_prop(obj, "App::PropertyStringList", "Constraints", "Reference",
+                      "Type References: each reference's constraint (Coincident, Parallel, "
+                      "Perpendicular, Offset Distance, At Angle, Mid Plane, Tangent); "
+                      "empty: guessed from what the references are")
+
+    def constraints(self, obj, shapes=None):
+        """Each reference's constraint as the plane uses it, guesses filled in."""
+        if shapes is None:
+            shapes = self.resolved(obj, [])
+        if obj.Type != core.REFERENCES:
+            return list(core.FROM_TYPE.get(obj.Type, ()))[:len(shapes)]
+        live = [s for s in shapes if s is not None]
+        given = [c for s, c in zip(shapes, list(obj.Constraints) + [""] * 3) if s is not None]
+        return core.effective(live, given)
 
     def make(self, obj, shapes):
-        pl = core.plane(obj.Type, shapes, obj.Distance.Value, obj.Angle.Value, obj.Flip)
+        pl = core.plane(obj.Type, shapes, obj.Distance.Value, obj.Angle.Value, obj.Flip,
+                        constraints=list(obj.Constraints))
         bb = self.model_size(obj)
         size = max(20.0, 1.2 * bb.DiagonalLength) if bb is not None else 50.0
         if bb is not None:
@@ -442,9 +457,14 @@ def _create(cls, doc, part, name, kind=None, references=()):
     return obj
 
 
-def create_plane(doc, part, kind=None, references=()):
-    """``references``: [(object, sub-element name or "")] in the type's order."""
-    return _create(RefPlaneProxy, doc, part, "Plane", kind, references)
+def create_plane(doc, part, kind=None, references=(), constraints=()):
+    """``references``: [(object, sub-element name or "")] in the type's order. With
+    no type, the plane takes SolidWorks' way: each reference has a constraint
+    (``constraints``, "" or left out: guessed from what it is)."""
+    obj = _create(RefPlaneProxy, doc, part, "Plane", kind or core.REFERENCES, references)
+    if constraints:
+        obj.Constraints = list(constraints)
+    return obj
 
 
 def create_axis(doc, part, kind=None, references=()):

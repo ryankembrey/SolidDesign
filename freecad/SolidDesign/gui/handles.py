@@ -1432,19 +1432,45 @@ def helix_specs(obj, part):
 
 
 def plane_specs(obj, part):
-    """An Offset Distance plane: the distance, from the reference along its normal
-    to the plane."""
+    """Offset Distance: the distance, from the reference along its normal to the
+    plane. At Angle: the angle, round the edge it turns about."""
     from ..core import refgeom as core_ref
-    if obj.Type != core_ref.OFFSET:
+    if obj.Shape.isNull():
         return []
-    ref = _line(_sub_shape(obj, "Reference1"))
-    if ref is None or obj.Shape.isNull():
+    try:
+        cons = obj.Proxy.constraints(obj)
+    except Exception:
         return []
-    p0, n = ref
+    shapes = [_sub_shape(obj, "Reference%d" % i) for i in (1, 2, 3)]
+    by_ref = dict(zip([i for i, s in enumerate(shapes) if s is not None], cons))
     c = obj.Shape.BoundBox.Center
-    s = (c - p0).dot(n)
-    d = n if s >= 0 else -n
-    return [Spec.arrow("Distance", c - n * s, d, obj.Distance.Value)]
+    for i, con in by_ref.items():
+        if con == core_ref.C_OFFSET:
+            ref = _line(shapes[i])
+            if ref is None:
+                return []
+            p0, n = ref
+            s = (c - p0).dot(n)
+            d = n if s >= 0 else -n
+            return [Spec.arrow("Distance", c - n * s, d, obj.Distance.Value)]
+        if con == core_ref.C_ANGLE:
+            axis = next((shapes[j] for j, k in by_ref.items()
+                         if k == core_ref.C_COINCIDENT and j != i), None)
+            try:
+                p, a = core_ref.line_of(axis)
+                _pc, n, _x = core_ref.plane_of(shapes[i])
+            except Exception:
+                return []
+            # The arc starts in the reference plane, square to the edge, and turns
+            # with the plane.
+            w = n.cross(a)
+            if w.Length < 1e-9:
+                return []
+            w.normalize()
+            size = 0.25 * obj.Shape.BoundBox.DiagonalLength
+            return ring_about("Angle", p, -a if obj.Flip else a, p + w * size,
+                              obj.Angle.Value)
+    return []
 
 
 def linear_pattern_specs(obj, part):
