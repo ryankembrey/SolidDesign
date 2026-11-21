@@ -89,7 +89,8 @@ def entries():
     from . import commands
     out = []
     for name in Gui.listCommands():
-        if not name.startswith("SD_") or name in commands.GROUPS or name == "SD_CommandSearch":
+        if not name.startswith("SD_") or name in commands.GROUPS or name in (
+                "SD_CommandSearch", "SD_CommandLine", "SD_RepeatLast"):
             continue
         try:
             c = Gui.Command.get(name)
@@ -123,13 +124,14 @@ _box = [None]
 
 
 def current():
-    """The search box, if it has been opened."""
-    return _box[0]
+    """The search box, if it has been opened (and Qt hasn't deleted it)."""
+    from .command_line import _alive
+    return _box[0] if _alive(_box[0]) else None
 
 
 def show():
     """Open the search box over the 3D view."""
-    if _box[0] is None:
+    if current() is None:
         _box[0] = _make_box()
     _box[0].open()
     return _box[0]

@@ -2356,6 +2356,285 @@ def command_search_by_slash():
 
 
 @scenario
+def command_line_and_repeat():
+    """":" opens the command line at the bottom of the view: "fillet 2" fillets the
+    selected edge with no panel; "." repeats it on another; a VarSet's variable makes
+    a live expression; with nothing picked the panel opens with the value in; Tab
+    completes; a panel's OK is repeatable too."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import command_line, extrude_panel
+    from freecad.SolidDesign.gui.selection import Sel
+    doc, part = new_doc("CmL")
+    sk = plate_sketch(doc, part)
+    extrude_ui(doc, part, sk, 10)
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(300)
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+
+    def top_edge(y=None, x=None, z=10):
+        body = body_views(part)[0]
+        for i, e in enumerate(body.Shape.Edges, 1):
+            c = e.CenterOfMass
+            if abs(c.z - z) < 1e-6 and (y is None or abs(c.y - y) < 1e-6) and \
+                    (x is None or abs(c.x - x) < 1e-6):
+                return body, "Edge%d" % i
+        return None, None
+
+    def pick(body, sub):
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(doc.Name, body.Name, sub)
+
+    def type_line(text):
+        gl.setFocus()
+        wait(100)
+        QtTest.QTest.keyClick(gl, ":")
+        wait(300)
+        bar = command_line.current()
+        if bar is None or not bar.isVisible():
+            return None
+        QtTest.QTest.keyClicks(bar.edit, text)
+        wait(200)
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+        wait(1500)
+        return bar
+
+    def fillets():
+        return [o for o in doc.Objects if getattr(getattr(o, "Proxy", None), "TYPE", "") ==
+                "Fillet"]
+
+    undo0 = doc.UndoCount
+    pick(*top_edge(y=0))
+    bar = type_line("fillet 2")
+    expect(bar is not None, "pressing : opens the command line")
+    if bar is None:
+        return
+    view = command_line._bar[0].parentWidget()
+    expect(abs(bar.geometry().bottom() - (view.height() - 1)) <= 1 and
+           bar.width() == view.width(), "along the bottom of the 3D view")
+    f = fillets()
+    expect(len(f) == 1 and abs(f[0].Radius.Value - 2) < 1e-9 and not f[0].ErrorMessage and
+           not Gui.Control.activeDialog(), "\"fillet 2\" fillets the selected edge, no panel")
+    expect(doc.UndoCount == undo0 + 1, "one undo step (%s)" % (doc.UndoCount - undo0))
+    shot("fillet")
+    pick(*top_edge(y=30))
+    gl.setFocus()
+    QtTest.QTest.keyClick(gl, ".")
+    wait(1500)
+    f = fillets()
+    expect(len(f) == 2 and abs(f[1].Radius.Value - 2) < 1e-9 and not f[1].ErrorMessage,
+           "\".\" repeats it on the next edge")
+    vs = doc.addObject("App::VarSet", "VarSet")
+    vs.addProperty("App::PropertyLength", "Width")
+    vs.Width = 2
+    doc.recompute()
+    pick(*top_edge(x=0, z=0))
+    type_line("chamfer Width/2")
+    ch = [o for o in doc.Objects if getattr(getattr(o, "Proxy", None), "TYPE", "") == "Chamfer"]
+    expect(len(ch) == 1 and abs(ch[0].Distance.Value - 1) < 1e-9 and
+           dict(ch[0].ExpressionEngine).get("Distance", "").replace(" ", "") ==
+           "VarSet.Width/2",
+           "a VarSet variable makes a live expression (%s)" %
+           (ch and dict(ch[0].ExpressionEngine)))
+    if ch:
+        vs.Width = 3
+        doc.recompute()
+        expect(abs(ch[0].Distance.Value - 1.5) < 1e-9 and not ch[0].ErrorMessage,
+               "and follows the variable")
+    Gui.Selection.clearSelection()
+    gl.setFocus()
+    QtTest.QTest.mouseMove(gl, QtCore.QPoint(5, 5))      # nothing under the pointer
+    wait(200)
+    type_line("fillet 1.5")
+    p = extrude_panel.LAST[0]
+    expect(bool(Gui.Control.activeDialog()) and type(p).__name__ == "FilletPanel" and
+           abs(p.obj.Radius.Value - 1.5) < 1e-9 and abs(p.radius.value() - 1.5) < 1e-9,
+           "with nothing picked, the panel opens with the value in (%s)" % type(p).__name__)
+    if type(p).__name__ == "FilletPanel":
+        b, e = top_edge(x=40, z=0)
+        p.route(Sel(b, e, None))
+    wait(900)
+    close_panel(True)
+    f = fillets()
+    expect(len(f) == 3 and abs(f[-1].Radius.Value - 1.5) < 1e-9, "picking and OK finishes it")
+    pick(*top_edge(y=0, z=0))
+    gl.setFocus()
+    QtTest.QTest.keyClick(gl, ".")
+    wait(1500)
+    expect(len(fillets()) == 4 and abs(fillets()[-1].Radius.Value - 1.5) < 1e-9 and
+           not Gui.Control.activeDialog(),
+           "a panel's OK is what \".\" repeats next")
+    gl.setFocus()
+    QtTest.QTest.keyClick(gl, ":")
+    wait(300)
+    bar = command_line.current()
+    QtTest.QTest.keyClicks(bar.edit, "fil")
+    wait(200)
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Tab)
+    expect(bar.edit.text() == "fillet ", "Tab completes the tool (%r)" % bar.edit.text())
+    bar.edit.setText("extrude thr")
+    bar.suggest()
+    shown = [bar.list.item(i).text() for i in range(bar.list.count())]
+    expect(any(t.startswith("Through All") for t in shown), "and its options (%s)" % shown[:4])
+    QtWidgets.QApplication.primaryScreen().grabWindow(0).save(
+        os.path.join(SHOTS, current[0] + "_bar.png"))
+    bar.edit.setText("")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Up)
+    expect(bar.edit.text() == "fillet 1.5", "Up brings back the last line (%r)" %
+           bar.edit.text())
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    expect(not bar.isVisible(), "Escape closes it")
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
+def command_line_after_a_sketch():
+    """The command line still opens after sketching on a face (the user's report: the
+    bar's widget had gone and ":" raised an error)."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import command_line
+    doc, part = new_doc("CmK")
+    sk = plate_sketch(doc, part)
+    extrude_ui(doc, part, sk, 10)
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(300)
+
+    def colon():
+        gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+              if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+        gl.setFocus()
+        wait(100)
+        QtTest.QTest.keyClick(gl, ":")
+        wait(300)
+        return command_line.current()
+    bar = colon()
+    expect(bar is not None and bar.isVisible(), "the bar opens")
+    if bar is not None:
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    v = body_views(part)[0]
+    select(doc, v, face_at(v, V(20, 15, 10)))
+    Gui.runCommand("SD_Sketch")
+    wait(900)
+    vp = Gui.ActiveDocument.getInEdit()
+    expect(vp is not None, "a sketch on the face")
+    if vp is not None:
+        circle(vp.Object, 20, 15, 5)
+        vp.Object.recompute()
+        Gui.ActiveDocument.resetEdit()
+        wait(900)
+    if Gui.Control.activeDialog():
+        close_panel(False)
+    log("  widget alive after the sketch:", command_line._alive(bar) if bar else None)
+    bar = colon()
+    expect(bar is not None and bar.isVisible(), "after the sketch, : opens the bar again")
+    if bar is not None:
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+        import shiboken6                    # as when FreeCAD replaces the view's widget
+        shiboken6.delete(bar)
+        wait(100)
+        bar = colon()
+        expect(bar is not None and bar.isVisible(), "with its widget gone, : makes a new bar")
+        if bar is not None:
+            QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+
+
+@scenario
+def right_click_menus():
+    """Right-click in the 3D view opens Solid Design's menu for what's under the
+    pointer (space, face, edge, vertex), selecting it; FreeCAD's comes back while a
+    tool is open; a right-drag opens nothing."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import extrude_panel, view_menus
+    doc, part = new_doc("RcM")
+    sk = plate_sketch(doc, part)
+    box = extrude_ui(doc, part, sk, 10)
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(400)
+    v = Gui.ActiveDocument.ActiveView
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+    h = v.getSize()[1]
+
+    def at(p):
+        q = v.getPointOnViewport(p)
+        return QtCore.QPoint(int(q[0]), int(h - q[1]))
+
+    def right_click(pt):
+        view_menus._shown[0] = None
+        QtTest.QTest.mouseMove(gl, pt)
+        wait(150)
+        QtTest.QTest.mouseClick(gl, QtCore.Qt.RightButton, QtCore.Qt.NoModifier, pt)
+        wait(500)
+        m = view_menus._shown[0]
+        if m is not None:
+            m.qmenu.hide()
+        return m
+
+    def labels(m):
+        return [a.text().split("\t")[0] for a in m.actions()] if m else []
+
+    def sections(m):
+        return [m.title()] if m and m.title() else []
+
+    def picked():
+        return [n for x in Gui.Selection.getSelectionEx() for n in x.SubElementNames]
+
+    m = right_click(QtCore.QPoint(15, 15))
+    expect(m is not None and "Command Search…" in labels(m) and "Sketch" in labels(m) and
+           "View" in labels(m), "empty space: the general menu (%s)" % labels(m)[:6])
+    expect(not v.isPopupMenuEnabled(), "FreeCAD's own menu is off for it")
+    m = right_click(at(V(20, 15, 10)))
+    expect(m is not None and sections(m) and sections(m)[0].startswith("Face") and
+           "Sketch on Face" in labels(m) and "Edit " + box.Label in labels(m),
+           "a face: the face menu, with Edit for the feature that made it (%s / %s)" %
+           (sections(m), labels(m)[:4]))
+    expect(len(picked()) == 1 and picked()[0].startswith("Face"),
+           "and the face is selected (%s)" % picked())
+    QtWidgets.QApplication.primaryScreen().grabWindow(0)
+    m = right_click(at(V(20, 0, 10)))
+    expect(m is not None and sections(m)[:1] and sections(m)[0].startswith("Edge") and
+           "Fillet" in labels(m), "an edge: the edge menu (%s)" % sections(m))
+    if m is not None:
+        fil = [a for a in m.actions() if a.text().split("\t")[0] == "Fillet"][0]
+        expect(fil.isEnabled(), "Fillet is ready")
+        fil.trigger()
+        wait(1200)
+        p = extrude_panel.LAST[0]
+        expect(type(p).__name__ == "FilletPanel" and len(p.items.items) == 1,
+               "Fillet from the menu starts with that edge")
+        mm = right_click(at(V(20, 15, 10)))
+        expect(mm is None and v.isPopupMenuEnabled(),
+               "with a tool open, FreeCAD's own menu is back")
+        close_panel(False)
+    m = right_click(at(V(40, 0, 10)))
+    expect(m is not None and sections(m)[:1] and sections(m)[0].startswith("Vertex") and
+           "Point at Vertex" in labels(m), "a vertex: the vertex menu (%s)" % sections(m))
+    view_menus._shown[0] = None
+    a, b = QtCore.QPoint(200, 200), QtCore.QPoint(260, 240)
+    QtTest.QTest.mousePress(gl, QtCore.Qt.RightButton, QtCore.Qt.NoModifier, a)
+    QtTest.QTest.mouseMove(gl, b)
+    QtTest.QTest.mouseRelease(gl, QtCore.Qt.RightButton, QtCore.Qt.NoModifier, b)
+    wait(400)
+    expect(view_menus._shown[0] is None, "a right-drag opens no menu")
+    m = right_click(at(V(20, 15, 10)))
+    if m is not None:
+        m.qmenu.popup(gl.mapToGlobal(at(V(20, 15, 10))))
+        wait(300)
+        QtWidgets.QApplication.primaryScreen().grabWindow(0).save(
+            os.path.join(SHOTS, current[0] + "_face.png"))
+        m.qmenu.hide()
+    Gui.activateWorkbench("PartWorkbench")
+    wait(300)
+    expect(v.isPopupMenuEnabled(), "leaving Solid Design gives FreeCAD's menus back")
+    Gui.activateWorkbench("SolidDesignWorkbench")
+    wait(300)
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
 def gizmos_on_more_tools():
     """The tools that gained gizmos: a Dome's height and a Move/Copy's Delta X (which
     may go negative), dragged on the selected feature."""

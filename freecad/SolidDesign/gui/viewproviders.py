@@ -310,6 +310,8 @@ class FeatureVP(_DrawsNothing):
     def setEdit(self, vobj, mode=0):
         if mode != 0:
             return None
+        if _held(vobj):
+            return False
         panel = panel_class(vobj.Object)
         if panel is None:
             return None
@@ -414,6 +416,21 @@ def _index_after(part, moving, target):
 def _is_base_of(feature, obj):
     try:
         return obj is not None and feature is not None and feature.BaseFeature is obj
+    except Exception:
+        return False
+
+
+# The command line holds back the panel of a feature a tool just made: it sets the
+# values first, and opens the panel only if the feature then needs it.
+EDIT_HOOK = [None]
+
+
+def _held(vobj):
+    hook = EDIT_HOOK[0]
+    if hook is None or not getattr(vobj.Proxy, "_new", False):
+        return False
+    try:
+        return bool(hook(vobj.Object))
     except Exception:
         return False
 
@@ -803,6 +820,8 @@ class RefGeomVP(_Stateless):
     def setEdit(self, vobj, mode=0):
         if mode != 0:
             return None
+        if _held(vobj):
+            return False
         if getattr(vobj.Object.Proxy, "PANEL", None):
             from .measure_panels import panel_for as measured
             Gui.Control.showDialog(measured(vobj.Object)(vobj.Object,

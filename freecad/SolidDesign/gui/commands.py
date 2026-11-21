@@ -1179,5 +1179,7 @@ def register():
                         ("SD_Fastening", FasteningGroup()), ("SD_Threads", ThreadGroup())):
         GROUPS.add(name)
         Gui.addCommand(name, group)
-    from . import command_search
+    from . import command_line, command_search
     Gui.addCommand("SD_CommandSearch", command_search.SearchCommand())
+    Gui.addCommand("SD_CommandLine", command_line.LineCommand())
+    Gui.addCommand("SD_RepeatLast", command_line.RepeatCommand())

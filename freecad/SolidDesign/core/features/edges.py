@@ -120,3 +120,27 @@ def tangent_chain(shape, edges, tol=1e-6):
                     out.append(f)
                     todo.append(f)
     return out
+
+
+def tangent_faces(shape, faces, tol=1e-4):
+    """Add the faces that meet the picks smoothly (SolidWorks' Select Tangency for
+    faces): neighbours sharing an edge whose normals agree along it."""
+    out = list(faces)
+    todo = list(faces)
+    while todo:
+        f = todo.pop()
+        for e in f.Edges:
+            u = 0.5 * (e.FirstParameter + e.LastParameter)
+            p = e.valueAt(u)
+            for g in shape.ancestorsOfType(e, type(f)):
+                if any(g.isSame(x) for x in out):
+                    continue
+                try:
+                    n0 = f.normalAt(*f.Surface.parameter(p))
+                    n1 = g.normalAt(*g.Surface.parameter(p))
+                except Exception:
+                    continue
+                if n0.dot(n1) > 1.0 - tol:
+                    out.append(g)
+                    todo.append(g)
+    return out

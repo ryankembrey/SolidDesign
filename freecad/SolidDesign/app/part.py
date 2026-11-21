@@ -770,3 +770,51 @@ def install_observer():
     if _observer[0] is None:
         _observer[0] = _Observer()
         App.addDocumentObserver(_observer[0])
+
+
+def element_point(elem):
+    """A point on a face, edge or vertex (inside it, not on its boundary)."""
+    import Part
+    if elem.ShapeType == "Vertex":
+        return App.Vector(elem.Point)
+    if elem.ShapeType == "Edge":
+        return elem.valueAt(0.5 * (elem.FirstParameter + elem.LastParameter))
+    u0, u1, v0, v1 = elem.ParameterRange
+    p = elem.valueAt(0.5 * (u0 + u1), 0.5 * (v0 + v1))
+    if elem.isInside(p, 1e-6, True):
+        return p
+    return elem.distToShape(Part.Vertex(elem.CenterOfMass))[1][0][0]
+
+
+def feature_of_element(part, elem, tol=1e-6):
+    """The feature that made a face, edge or vertex of the model at the rollback bar:
+    the earliest one whose own result (what it added, removed or changed) has an
+    element of that kind through it. None when none does."""
+    import Part
+    kinds = {"Face": "Faces", "Edge": "Edges", "Vertex": "Vertexes"}
+    attr = kinds.get(elem.ShapeType)
+    if attr is None:
+        return None
+    p = element_point(elem)
+    vp = Part.Vertex(p)
+    feats = util.features(part)
+    tip = part.Tip
+    if tip in feats:
+        feats = feats[:feats.index(tip) + 1]
+    for f in feats:
+        if getattr(f, "Suppressed", False):
+            continue
+        s = getattr(f, "AddSubShape", None)
+        if s is None or s.isNull():
+            continue
+        for g in getattr(s, attr):
+            bb = App.BoundBox(g.BoundBox)
+            # Padded: a drawn shape's box comes from its display mesh.
+            bb.enlarge(max(10 * tol, 0.01 * bb.DiagonalLength))
+            if bb.isInside(p):
+                try:
+                    if g.distToShape(vp)[0] <= tol * 10:
+                        return f
+                except Exception:
+                    pass
+    return None

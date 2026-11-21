@@ -74,6 +74,9 @@ class SolidDesignWorkbench(Gui.Workbench):
         temp_axis.install()
         instant3d.install()
         context_bar.install()
+        from freecad.SolidDesign.gui import command_line, view_menus
+        command_line.install()
+        view_menus.install()
         for name, cmds in self.TOOLBARS:
             self.appendToolbar(name, cmds)
         # The workbench's own menu, with every tool.
@@ -86,7 +89,8 @@ class SolidDesignWorkbench(Gui.Workbench):
         self.appendMenu([m, "Surfaces"], self.SURFACES_MENU)
         self.appendMenu([m, "Curves"], self.CURVES)
         self.appendMenu([m, "Evaluate"], self.EVALUATE)
-        self.appendMenu(m, ["Separator", "SD_CommandSearch", "SD_ContextToolbar"])
+        self.appendMenu(m, ["Separator", "SD_CommandSearch", "SD_CommandLine", "SD_RepeatLast",
+                            "SD_ContextToolbar"])
         # SolidWorks' Insert menu structure, where FreeCAD lets it.
         self.appendMenu("&Insert", self.PART + self.SKETCH + ["Separator"])
         self.appendMenu(["&Insert", "Features"],
@@ -102,7 +106,8 @@ class SolidDesignWorkbench(Gui.Workbench):
         tooltips.install()
 
     def Deactivated(self):
-        pass
+        from freecad.SolidDesign.gui import view_menus
+        view_menus.restore()            # FreeCAD's own right-click menus back
 
     def ContextMenu(self, recipient):
         pass

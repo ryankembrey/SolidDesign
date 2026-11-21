@@ -104,6 +104,13 @@ class FeaturePanel(object):
         self._doc_name = self.doc.Name
         self.part = util.part_of(obj)
         self.is_new = is_new
+        self._before = None
+        if is_new:
+            try:
+                from .. import command_line
+                self._before = command_line.snapshot(obj)
+            except Exception:
+                pass
         self.boxes = []
         self.active_box = None
         self.preview = pv.Preview()
@@ -678,6 +685,9 @@ class FeaturePanel(object):
             part_mod.roll_to(self.part, self._old_tip)
         self.doc.recompute()
         self.doc.commitTransaction()
+        if self._before is not None:        # "." repeats it
+            from .. import command_line
+            command_line.remember_panel(self.obj, self._before)
         self._close_edit()
         return True
 

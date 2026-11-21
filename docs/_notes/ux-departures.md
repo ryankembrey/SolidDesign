@@ -957,3 +957,57 @@ These follow SolidWorks unless a line says otherwise.
   listed, not the toolbar drop-downs. "/" does nothing while a tool or a sketch is
   open, in other workbenches, or while typing in a field. Also in the Solid Design
   menu as Command Search.
+
+## Command line and repeat (2026-11-21, owner's request)
+
+Beyond SolidWorks, for power users; normal use is untouched (both keys act only when
+typed in the 3D view, in Solid Design, with no tool or sketch open, and not in a
+text field).
+
+- **":" opens a command line** along the bottom of the 3D view (vim's): a tool,
+  then values in order, option words and name=value pairs:
+  `fillet 2`, `extrude 10 cut`, `extrude throughall`, `lp 20 4`,
+  `chamfer d=1.5 flip`, `fillet Width/2`, `fillet =Width/2 + 1mm`.
+  Tools match fuzzily; option names match by start or fuzzily, narrowed by the
+  value's kind ("dra=3" is DraftAngle, not Draft); choices by their words, spaces
+  and case ignored; yes/no options by name ("reverse", "noreverse"). Units work
+  anywhere. A VarSet's variable makes a live expression (the feature follows it).
+- **What it works on:** the selection; with none, what was under the pointer when
+  ":" was pressed; with neither, the tool's panel opens with the values in,
+  waiting for picks. A feature that builds cleanly is made with no panel (one undo
+  step); one that doesn't opens its panel with the values in and the error shown.
+- **Tab / Shift+Tab** complete tools, options, choices and variables (a tool's
+  options are known before it's made: its class declares them to a recorder);
+  **Up / Down** go through the history, kept between sessions; **Escape** closes.
+- **"." repeats the last feature** (made from the line, or by OK in a panel) with
+  the same settings, on the selection or what's under the pointer. From a panel it
+  repeats what was changed there (and on the line before it), not the defaults.
+- Also in the Solid Design menu: Command Line, Repeat Last Feature.
+
+## Right-click menus in the 3D view (2026-11-21, owner's request)
+
+Solid Design's own, made from scratch, one per thing under the pointer; FreeCAD's
+menu is switched off for the click (setPopupMenuEnabled) only while Solid Design
+is the workbench and no tool or sketch is open, and comes back otherwise (and when
+leaving the workbench). Right-drag navigation is untouched: only a click opens one.
+Right-clicking selects what's under the pointer, unless it's already selected (then
+the menu acts on the selection), as SolidWorks. The context toolbar shows above it,
+as SolidWorks' does.
+
+- **Empty space:** Command Search, Command Line, Repeat <last feature>; Sketch,
+  Part, Reference Geometry; View (fit, standard views, perspective/orthographic,
+  draw style); Exit Isolate, Show Hidden Bodies; Rebuild, What's Wrong; Undo, Redo.
+- **Face:** Sketch on Face, Extrude from Face, Edit <the feature that made it>;
+  Fillet, Chamfer, Shell, More Face Tools (Draft, Dome, Move Face, Offset Surface,
+  Delete Face, Replace Face, Thicken); Plane on Face, Normal To, Zoom to Selection,
+  Measure; Select Tangency, Clarify Selection; Body (Hide, Isolate, Move/Copy,
+  Combine, Split, Delete/Keep, Appearance, Random Color).
+- **Edge:** Fillet, Chamfer, Edit <feature>; Reference Geometry (axis along, plane
+  normal to, point on the edge), Zoom to Selection, Measure; Select Tangency,
+  Clarify Selection; Body.
+- **Vertex:** Point at Vertex, Coordinate System at Vertex, Edit <feature>; Zoom,
+  Measure, Clarify Selection; Body.
+- **A plane, axis or sketch:** Sketch on Plane / Edit Sketch, Extrude, Revolve;
+  Edit; Normal To, Zoom; Hide, Delete.
+- "The feature that made it" is the earliest feature whose own result (what it
+  added, removed or changed) has a face (edge, vertex) through the clicked one.
