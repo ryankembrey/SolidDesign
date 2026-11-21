@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<path d="M28.66 13.66 L58.76 31.03 L35.34 44.55 L5.24 27.17 Z" fill="#f5f6f8" fill-rule="evenodd" stroke="#f5f6f8" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M28.66 13.66 L58.76 31.03 M58.76 31.03 L35.34 44.55 M35.34 44.55 L5.24 27.17 M5.24 27.17 L28.66 13.66" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M5.24 27.17 L35.34 44.55 L35.34 60.00 L5.24 42.62 Z" fill="#d3d8de" fill-rule="evenodd" stroke="#d3d8de" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M5.24 27.17 L35.34 44.55 M35.34 44.55 L35.34 60.00 M35.34 60.00 L5.24 42.62 M5.24 42.62 L5.24 27.17" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M58.76 46.48 L35.34 60.00 L35.34 44.55 L58.76 31.03 Z" fill="#a7aeb8" fill-rule="evenodd" stroke="#a7aeb8" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M58.76 46.48 L35.34 60.00 M35.34 60.00 L35.34 44.55 M35.34 44.55 L58.76 31.03 M58.76 31.03 L58.76 46.48" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M52.07 5.93 L52.07 29.10" fill="none" stroke="#2b3038" stroke-width="2.20" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3.5 2.5"/>
+<path d="M30.33 11.72 L30.33 34.90" fill="none" stroke="#2b3038" stroke-width="2.20" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3.5 2.5"/>
+<path d="M8.59 4.00 L8.59 27.17" fill="none" stroke="#2b3038" stroke-width="2.20" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3.5 2.5"/>
+<path d="M52.07 5.93 L49.89 7.12 L47.72 8.17 L45.55 9.09 L43.37 9.87 L41.20 10.52 L39.02 11.03 L36.85 11.41 L34.68 11.65 L32.50 11.75 L30.33 11.72 L28.15 11.56 L25.98 11.26 L23.81 10.83 L21.63 10.26 L19.46 9.55 L17.28 8.71 L15.11 7.74 L12.94 6.63 L10.76 5.38 L8.59 4.00" fill="none" stroke="#2b3038" stroke-width="2.20" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M52.07 29.10 L49.89 30.29 L47.72 31.34 L45.55 32.26 L43.37 33.04 L41.20 33.69 L39.02 34.20 L36.85 34.58 L34.68 34.82 L32.50 34.93 L30.33 34.90 L28.15 34.73 L25.98 34.43 L23.81 34.00 L21.63 33.43 L19.46 32.72 L17.28 31.88 L15.11 30.91 L12.94 29.80 L10.76 28.55 L8.59 27.17" fill="none" stroke="#d24992" stroke-width="3.60" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

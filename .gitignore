@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+*.FCBak
+.pixi/
+docs/build/
+docs/content/changelog.md

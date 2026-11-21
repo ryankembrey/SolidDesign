@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileNotice: Part of the Solid Design addon.
+#
+# A pinned environment for building the documentation site and running the
+# tests: the same FreeCAD, OCCT, Qt and Zensical on every machine, so the
+# generated pages and screenshots come out the same locally and in CI.
+#
+#   pixi run docs       regenerate everything in docs/ and build the site
+#   pixi run docs-gen   regenerate docs/ only (no site build)
+#   pixi run serve      preview the site at http://localhost:8000
+#   pixi run docs-check fail if anything generated in docs/ is out of date
+#   pixi run test       the headless tests
+#
+# Screenshots also need Xvfb from your system
+# (Debian/Ubuntu: `sudo apt install xvfb xauth`; Fedora: `sudo dnf install xorg-x11-server-Xvfb xauth`).
+
+[workspace]
+name = "solid-design"
+channels = ["conda-forge"]
+platforms = [{ name = "linux-64-glibc", platform = "linux-64", glibc = "2.31" }]
+
+[dependencies]
+python = "3.12.*"
+freecad = "1.1.*"
+numpy = "*"
+
+[pypi-dependencies]
+zensical = "==0.1.1"
+
+[activation.env]
+# Keep the environment sealed: ignore any PYTHONPATH from your shell (such as
+# a FreeCAD development setup) and packages in ~/.local.
+PYTHONPATH = ""
+PYTHONNOUSERSITE = "1"
+
+[tasks]
+docs-gen = { cmd = "python docs/build.py", env = { QT_QPA_PLATFORM = "offscreen" } }
+docs = { cmd = "zensical build --clean -f docs/zensical.toml", depends-on = ["docs-gen"] }
+serve = { cmd = "zensical serve -f docs/zensical.toml", depends-on = ["docs-gen"] }
+docs-check = { cmd = "python docs/build.py --check", env = { QT_QPA_PLATFORM = "offscreen" } }
+test = { cmd = "freecadcmd tests/run.py" }

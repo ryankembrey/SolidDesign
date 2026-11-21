@@ -1026,6 +1026,43 @@ text field).
   repeats what was changed there (and on the line before it), not the defaults.
 - Also in the Solid Design menu: Command Line, Repeat Last Feature.
 
+## What's Wrong and the health badge (2026-11-22, owner's request: "the best tool possible")
+
+SolidWorks' What's Wrong lists features and messages. Solid Design's also says
+why and what to do, shows it in the view, and has the fixes at hand.
+
+- **Status bar badge**, always in sight: "No problems", or "1 error, 2 warnings"
+  with the worst one's icon; a click opens What's Wrong. It follows every rebuild
+  and the document shown.
+- **The list** covers features, reference geometry and sketches (a sketch whose
+  face is gone, or that won't solve, is listed, which SolidWorks only flags in the
+  tree). A problem that follows from another is under it ("It may come right once
+  Cut-Extrude1 is fixed: fix that first"), and the summary says how many to fix
+  first. Rows wrap; Enter or a double-click edits.
+- **Details** for the one picked: what happened, *Why* (where it can be told: the
+  feature after the one the reference was picked on that changed the model where
+  it was), *What to do*, and a key to what is drawn in the view.
+- **In the view**, on top of the model, every line labelled in words:
+  - dashed orange: where a lost face or edge was ("Lost fillet edge (was here)");
+  - green: what it was repaired to ("Now uses this edge");
+  - numbered yellow: what could replace it, when several could;
+  - translucent blue: what the feature that changed it changed ("Changed by …");
+  - magenta, with a dot: tiny edges and slivers from Check Geometry.
+  When the repaired element is exactly where the lost one was, the details say so
+  ("Good sign").
+- **Buttons:** Edit; Looks Right (a repair checked: no more warning); Zoom to It;
+  Roll Back to Here (and Roll to End while a part is rolled back); Suppress /
+  Unsuppress (suppressed ones stay listed so they can be put back).
+- **Check Geometry** (on demand): bodies that aren't valid solids, edges under
+  0.01 mm, faces thinner than 0.005 mm, each with the feature that made it; Edit
+  opens that feature. **Rebuild All** as before.
+- **Repairs are remembered:** a reference found again by its fingerprint stays a
+  warning until it is checked (Looks Right, OK in the feature's panel, or picking
+  it again), instead of vanishing at the next rebuild. Fingerprints keep a few
+  points along the element so where it was can be drawn after it is gone.
+- **Departures:** no "will this break?" preview while editing yet, and no stress
+  test (nudging dimensions to find fragile features); both are possible next steps.
+
 ## Picks show in the view; picking more edges at once (2026-11-21, owner's request)
 - Whatever is in a tool's selection boxes is drawn in the selection blue as soon
   as it is picked (edges thick, faces tinted), in every tool. Fillet, Chamfer and

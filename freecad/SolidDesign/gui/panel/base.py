@@ -818,6 +818,14 @@ class FeaturePanel(object):
             self.show_error(self.obj.ErrorMessage)
             return False
         self._cleanup()
+        # OK in the feature's own panel: its repaired references have been seen.
+        try:
+            from ...app import refs as refs_mod
+            if refs_mod.repairs(self.obj):
+                refs_mod.accept_repairs(self.obj)
+                self.obj.touch()
+        except Exception:
+            pass
         if self._old_tip is not None and self.part is not None:
             part_mod.roll_to(self.part, self._old_tip)
         self.doc.recompute()

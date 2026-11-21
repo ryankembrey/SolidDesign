@@ -70,6 +70,8 @@ class SolidDesignWorkbench(Gui.Workbench):
         Gui.addCommand("SD_ContextToolbar", context_bar.ToggleCommand())
         Gui.addCommand("SD_ReferenceLabels", ref_labels.ToggleCommand())
         ref_labels.install()
+        from freecad.SolidDesign.gui import health_badge
+        health_badge.install()
         part.install_observer()
         from freecad.SolidDesign.gui import instant3d, sketch_edit, temp_axis
         sketch_edit.install()

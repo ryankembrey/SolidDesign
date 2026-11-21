@@ -3404,6 +3404,127 @@ def context_toolbar():
 
 
 @scenario
+def whats_wrong_explains_and_fixes():
+    """The status bar's badge counts the problems and opens What's Wrong. A
+    repaired fillet edge shows where it was (dashed, labelled) and what it is now
+    (green, labelled), with a key; Looks Right clears it. A lost edge: Roll Back
+    to Here and back; Suppress and Unsuppress. Check Geometry finds a sliver and
+    names the feature that made it."""
+    import json as _json
+    from freecad.SolidDesign.app import dressup, refs as refs_mod
+    from freecad.SolidDesign.gui import evaluate, health_badge
+    doc, part = new_doc("WWX")
+    box = extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10)
+    e = edge_at(box, V(0, 0, 10), V(40, 0, 10))
+    fil = dressup.create_fillet(doc, part, [e])
+    fil.Radius = 2
+    doc.recompute()
+    target, _subs = fil.Items
+    fil.Items = (target, ["Edge999"])        # its name goes stale, as after an edit
+    doc.recompute()
+    wait(500)
+    badge = health_badge.current()
+    expect(badge is not None and badge.isVisible() and badge.text() == "1 warning",
+           "the badge shows 1 warning (%s)" % (badge.text() if badge else None))
+    Gui.ActiveDocument.ActiveView.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    badge.click()
+    wait(900)
+    d = evaluate.LAST[0]
+    expect(isinstance(d, evaluate.WhatsWrongDialog) and d.form.isVisible(),
+           "clicking it opens What's Wrong")
+    i = d.current()
+    expect(i is not None and i.obj is fil and i.repaired, "the repaired fillet is picked")
+    expect(d.preview.layers.get("problem") is not None, "and drawn in the view")
+    key = d.key.text()
+    expect("Where the lost fillet edge was" in key and "repaired to" in key,
+           "the key says what each colour is (%s)" % key)
+    expect("Looks Right" in d.detail.text() and d.b_ok.isEnabled(),
+           "what to do: check it, then Looks Right")
+    d.b_zoom.click()
+    wait(400)
+    shot("repaired")
+    d.b_ok.click()
+    wait(900)
+    expect(not d.items and "Nothing is wrong" in d.summary.value(),
+           "Looks Right: nothing is wrong (%s)" % d.summary.value())
+    expect(fil.WarningMessage == "", "and the fillet's warning is gone")
+    wait(400)
+    expect(badge.text() == "No problems", "the badge follows (%s)" % badge.text())
+    close_panel(False)
+
+    # A lost edge (nothing matches any more): an error, shown where it was.
+    m = dict(fil.RefFingerprints)
+    fp = _json.loads(m["Items"])
+    fp["type"] = "Part::GeomBSplineCurve"
+    m["Items"] = _json.dumps(fp)
+    fil.RefFingerprints = m
+    fil.Items = (fil.Items[0], ["Edge999"])
+    doc.recompute()
+    wait(400)
+    expect(badge.text() == "1 error", "the badge: 1 error (%s)" % badge.text())
+    Gui.runCommand("SD_WhatsWrong")
+    wait(900)
+    d = evaluate.LAST[0]
+    i = d.current()
+    expect(i is not None and i.lost and "Where the lost fillet edge was" in d.key.text(),
+           "the lost edge is shown where it was")
+    shot("lost")
+    d.b_roll.click()
+    wait(700)
+    expect(not app_part.is_at_end(part) and d.b_roll.text() == "Roll to End",
+           "Roll Back to Here moves the bar above the fillet")
+    expect("Rolled back" in d.summary.value(), "and says so (%s)" % d.summary.value())
+    # Rolled back, the fillet isn't built, so it isn't listed: Roll to End is still there.
+    expect(d.b_roll.isEnabled(), "Roll to End stays at hand")
+    d.b_roll.click()
+    wait(700)
+    expect(app_part.is_at_end(part), "and rolls the bar back to the end")
+    i = d.current()
+    expect(i is not None and i.obj is fil, "rolled to the end: listed again")
+    d.b_supp.click()
+    wait(700)
+    expect(fil.Suppressed and any(x.title == fil.Label for x in d.items) and
+           d.current() is not None and d.b_supp.text() == "Unsuppress",
+           "Suppress: left out, listed under Suppressed here, can be unsuppressed")
+    d.b_supp.click()
+    wait(700)
+    expect(not fil.Suppressed, "Unsuppress puts it back")
+    close_panel(False)
+    refs_mod.set_ref(fil, "Items", fil.BaseFeature, [e])
+    doc.recompute()
+
+    # Check Geometry: a boss 0.005 mm wider than the block leaves a sliver.
+    sk2 = sketch(doc, plane(part, "Top Plane"))
+    rect(sk2, 0, 0, 40.005, 20)
+    app_part.add_to_part(part, sk2)
+    doc.recompute()
+    boss = extrude_ui(doc, part, sk2, 10)
+    Gui.runCommand("SD_WhatsWrong")
+    wait(900)
+    d = evaluate.LAST[0]
+    d.b_geom.click()
+    wait(1200)
+    g = [x for x in d.items if x.kind == "geometry"]
+    expect(g, "Check Geometry finds trouble (%s)" % [x.message for x in d.items])
+    i = d.current()
+    expect(i is not None and i.kind == "geometry" and i.culprit is boss and
+           "Made by" in d.detail.text(), "and names the feature that made it (%s)"
+           % (d.detail.text()[:200]))
+    expect(d.preview.layers.get("problem") is not None and d.b_edit.isEnabled(),
+           "shows it, and Edit opens that feature")
+    shot("geometry")
+    rows = []
+    it_ = QtWidgets.QTreeWidgetItemIterator(d.tree)
+    while it_.value() is not None:
+        rows.append(it_.value().text(0))
+        it_ += 1
+    expect(all("..." not in r and u"\u2026" not in r for r in rows) and
+           any("\n" in r for r in rows), "long rows wrap, none cut short (%s)" % rows)
+    close_panel(False)
+    expect(evaluate.LAST[0].preview.layers == {}, "closing clears the view")
+
+@scenario
 def whats_wrong_and_rebuild():
     """What's Wrong lists a broken feature; double-clicking it edits it; Force Rebuild
     runs every feature again."""
@@ -3417,16 +3538,27 @@ def whats_wrong_and_rebuild():
     wait(600)
     d = evaluate.LAST[0]
     expect(isinstance(d, evaluate.WhatsWrongDialog), "What's Wrong opens")
-    expect(len(d.items) == 1 and d.items[0][0] is f2, "it lists the broken cut (%s)"
-           % [(x.Label, k) for x, k, _t in d.items])
+    expect(len(d.items) == 1 and d.items[0].obj is f2, "it lists the broken cut (%s)"
+           % [(i.title, i.severity) for i in d.items])
     shot("whats_wrong")
     # A real double-click, as a hand does it (emitting the signal didn't catch
     # the crash: closing the dialog inside the click deleted the list under it).
     from PySide6 import QtTest
-    rect = d.list.visualItemRect(d.list.item(0))
+    wait(300)                   # the list fits itself to its rows first
+    d.list.scrollToItem(d.list.topLevelItem(0))
+    d.list.setFocus()
+    wait(100)
+    rect = d.list.visualItemRect(d.list.topLevelItem(0))
     vp = d.list.viewport()
-    QtTest.QTest.mouseClick(vp, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, rect.center())
-    QtTest.QTest.mouseDClick(vp, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, rect.center())
+    # A real double-click (closing the dialog inside it is what crashed). QtTest
+    # stamps its clicks from its own clock; after a scenario that moved the real
+    # cursor (stamped by the X server's clock) Qt would take the press for part of
+    # an older click, so move QtTest's clock well past it first.
+    QtTest.QTest.mouseMove(vp, rect.center(), 10000000)
+    QtTest.QTest.mouseClick(vp, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, rect.center(),
+                            1000)
+    QtTest.QTest.mouseDClick(vp, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, rect.center(),
+                             20)
     wait(900)
     p = panel()
     expect(p is not None and p.obj is f2, "double-clicking edits it")
@@ -3436,7 +3568,7 @@ def whats_wrong_and_rebuild():
     Gui.runCommand("SD_WhatsWrong")
     wait(600)
     d = evaluate.LAST[0]
-    expect(not d.items and d.list.count() == 1, "fixed: nothing is wrong")
+    expect(not d.items and d.list.topLevelItemCount() == 1, "fixed: nothing is wrong")
     close_panel(False)
     vol = body_views(part)[0].Shape.Volume
     Gui.runCommand("SD_Rebuild")

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<path d="M60.00 40.88 L56.74 42.76 L44.00 14.85 L44.10 13.94 Z" fill="#70bc79" fill-rule="evenodd" stroke="#70bc79" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M60.00 40.88 L56.74 42.76 M44.00 14.85 L44.10 13.94 M44.10 13.94 L60.00 40.88" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M7.26 42.76 L4.00 40.88 L19.90 13.94 L20.00 14.85 Z" fill="#8ad78d" fill-rule="evenodd" stroke="#8ad78d" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M7.26 42.76 L4.00 40.88 M4.00 40.88 L19.90 13.94 M19.90 13.94 L20.00 14.85" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M56.74 42.76 L54.08 44.30 L43.69 15.75 L44.00 14.85 Z" fill="#6ab874" fill-rule="evenodd" stroke="#6ab874" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M56.74 42.76 L54.08 44.30 M43.69 15.75 L44.00 14.85" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M9.92 44.30 L7.26 42.76 L20.00 14.85 L20.31 15.75 Z" fill="#86d589" fill-rule="evenodd" stroke="#86d589" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M9.92 44.30 L7.26 42.76 M20.00 14.85 L20.31 15.75" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M54.08 44.30 L51.80 45.62 L43.18 16.61 L43.69 15.75 Z" fill="#65b570" fill-rule="evenodd" stroke="#65b570" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M54.08 44.30 L51.80 45.62 M43.18 16.61 L43.69 15.75" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M12.20 45.62 L9.92 44.30 L20.31 15.75 L20.82 16.61 Z" fill="#83d486" fill-rule="evenodd" stroke="#83d486" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M12.20 45.62 L9.92 44.30 M20.31 15.75 L20.82 16.61" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M14.25 46.80 L12.20 45.62 L20.82 16.61 L21.52 17.43 Z" fill="#80d384" fill-rule="evenodd" stroke="#80d384" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M14.25 46.80 L12.20 45.62 M20.82 16.61 L21.52 17.43" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M51.80 45.62 L49.75 46.80 L42.48 17.43 L43.18 16.61 Z" fill="#61b36c" fill-rule="evenodd" stroke="#61b36c" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M51.80 45.62 L49.75 46.80 M42.48 17.43 L43.18 16.61" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M16.16 47.90 L14.25 46.80 L21.52 17.43 L22.40 18.19 Z" fill="#7ed282" fill-rule="evenodd" stroke="#7ed282" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M16.16 47.90 L14.25 46.80 M21.52 17.43 L22.40 18.19" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M49.75 46.80 L47.84 47.90 L41.60 18.19 L42.48 17.43 Z" fill="#5fb16a" fill-rule="evenodd" stroke="#5fb16a" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M49.75 46.80 L47.84 47.90 M41.60 18.19 L42.48 17.43" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M18.00 48.96 L16.16 47.90 L22.40 18.19 L23.44 18.88 Z" fill="#7dd281" fill-rule="evenodd" stroke="#7dd281" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M18.00 48.96 L16.16 47.90 M22.40 18.19 L23.44 18.88" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M47.84 47.90 L46.00 48.96 L40.56 18.88 L41.60 18.19 Z" fill="#5db069" fill-rule="evenodd" stroke="#5db069" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M47.84 47.90 L46.00 48.96 M40.56 18.88 L41.60 18.19" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M40.56 18.88 L39.37 19.48 L38.05 19.99 L36.63 20.39 L35.13 20.69 L33.58 20.86 L32.00 20.92 L30.42 20.86 L28.87 20.69 L27.37 20.39 L25.95 19.99 L24.63 19.48 L23.44 18.88 L22.40 18.19 L21.52 17.43 L20.82 16.61 L20.31 15.75 L20.00 14.85 L19.90 13.94 L20.00 13.03 L20.31 12.13 L20.82 11.27 L21.52 10.45 L22.40 9.69 L23.44 9.00 L24.63 8.40 L25.95 7.89 L27.37 7.48 L28.87 7.19 L30.42 7.01 L32.00 6.95 L33.58 7.01 L35.13 7.19 L36.63 7.48 L38.05 7.89 L39.37 8.40 L40.56 9.00 L41.60 9.69 L42.48 10.45 L43.18 11.27 L43.69 12.13 L44.00 13.03 L44.10 13.94 L44.00 14.85 L43.69 15.75 L43.18 16.61 L42.48 17.43 L41.60 18.19 Z" fill="#c8f0c3" fill-rule="evenodd" stroke="#c8f0c3" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M40.56 18.88 L39.37 19.48 M39.37 19.48 L38.05 19.99 M38.05 19.99 L36.63 20.39 M36.63 20.39 L35.13 20.69 M35.13 20.69 L33.58 20.86 M33.58 20.86 L32.00 20.92 M32.00 20.92 L30.42 20.86 M30.42 20.86 L28.87 20.69 M28.87 20.69 L27.37 20.39 M27.37 20.39 L25.95 19.99 M25.95 19.99 L24.63 19.48 M24.63 19.48 L23.44 18.88 M23.44 18.88 L22.40 18.19 M22.40 18.19 L21.52 17.43 M21.52 17.43 L20.82 16.61 M20.82 16.61 L20.31 15.75 M20.31 15.75 L20.00 14.85 M20.00 14.85 L19.90 13.94 M19.90 13.94 L20.00 13.03 M20.00 13.03 L20.31 12.13 M20.31 12.13 L20.82 11.27 M20.82 11.27 L21.52 10.45 M21.52 10.45 L22.40 9.69 M22.40 9.69 L23.44 9.00 M23.44 9.00 L24.63 8.40 M24.63 8.40 L25.95 7.89 M25.95 7.89 L27.37 7.48 M27.37 7.48 L28.87 7.19 M28.87 7.19 L30.42 7.01 M30.42 7.01 L32.00 6.95 M32.00 6.95 L33.58 7.01 M33.58 7.01 L35.13 7.19 M35.13 7.19 L36.63 7.48 M36.63 7.48 L38.05 7.89 M38.05 7.89 L39.37 8.40 M39.37 8.40 L40.56 9.00 M40.56 9.00 L41.60 9.69 M41.60 9.69 L42.48 10.45 M42.48 10.45 L43.18 11.27 M43.18 11.27 L43.69 12.13 M43.69 12.13 L44.00 13.03 M44.00 13.03 L44.10 13.94 M44.10 13.94 L44.00 14.85 M44.00 14.85 L43.69 15.75 M43.69 15.75 L43.18 16.61 M43.18 16.61 L42.48 17.43 M42.48 17.43 L41.60 18.19 M41.60 18.19 L40.56 18.88" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M46.00 48.96 L44.16 50.03 L39.37 19.48 L40.56 18.88 Z" fill="#5eb16a" fill-rule="evenodd" stroke="#5eb16a" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M46.00 48.96 L44.16 50.03 M39.37 19.48 L40.56 18.88" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M19.84 50.03 L18.00 48.96 L23.44 18.88 L24.63 19.48 Z" fill="#7dd181" fill-rule="evenodd" stroke="#7dd181" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M19.84 50.03 L18.00 48.96 M23.44 18.88 L24.63 19.48" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44.16 50.03 L42.25 51.13 L38.05 19.99 L39.37 19.48 Z" fill="#60b26b" fill-rule="evenodd" stroke="#60b26b" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M44.16 50.03 L42.25 51.13 M38.05 19.99 L39.37 19.48" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M21.75 51.13 L19.84 50.03 L24.63 19.48 L25.95 19.99 Z" fill="#7dd181" fill-rule="evenodd" stroke="#7dd181" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M21.75 51.13 L19.84 50.03 M24.63 19.48 L25.95 19.99" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M42.25 51.13 L40.20 52.31 L36.63 20.39 L38.05 19.99 Z" fill="#63b56e" fill-rule="evenodd" stroke="#63b56e" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M42.25 51.13 L40.20 52.31 M36.63 20.39 L38.05 19.99" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M23.80 52.31 L21.75 51.13 L25.95 19.99 L27.37 20.39 Z" fill="#7ed082" fill-rule="evenodd" stroke="#7ed082" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M23.80 52.31 L21.75 51.13 M25.95 19.99 L27.37 20.39" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M40.20 52.31 L37.92 53.63 L35.13 20.69 L36.63 20.39 Z" fill="#68b872" fill-rule="evenodd" stroke="#68b872" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M40.20 52.31 L37.92 53.63 M35.13 20.69 L36.63 20.39" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M26.08 53.63 L23.80 52.31 L27.37 20.39 L28.87 20.69 Z" fill="#80d184" fill-rule="evenodd" stroke="#80d184" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M26.08 53.63 L23.80 52.31 M27.37 20.39 L28.87 20.69" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M37.92 53.63 L35.26 55.17 L33.58 20.86 L35.13 20.69 Z" fill="#6dbb76" fill-rule="evenodd" stroke="#6dbb76" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M37.92 53.63 L35.26 55.17 M33.58 20.86 L35.13 20.69" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M28.74 55.17 L26.08 53.63 L28.87 20.69 L30.42 20.86 Z" fill="#83d287" fill-rule="evenodd" stroke="#83d287" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M28.74 55.17 L26.08 53.63 M28.87 20.69 L30.42 20.86" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M35.26 55.17 L32.00 57.05 L32.00 20.92 L33.58 20.86 Z" fill="#74bf7b" fill-rule="evenodd" stroke="#74bf7b" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M35.26 55.17 L32.00 57.05 M32.00 57.05 L32.00 20.92 M32.00 20.92 L33.58 20.86" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M32.00 57.05 L28.74 55.17 L30.42 20.86 L32.00 20.92 Z" fill="#87d38b" fill-rule="evenodd" stroke="#87d38b" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M32.00 57.05 L28.74 55.17 M30.42 20.86 L32.00 20.92 M32.00 20.92 L32.00 57.05" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

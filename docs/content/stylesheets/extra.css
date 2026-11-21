@@ -1,0 +1,36 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* Small additions to the Zensical theme for the Solid Design docs. */
+
+/* A tool page's icon, beside its one-line description. */
+.md-typeset img.tool-icon {
+  float: left;
+  width: 3rem;
+  height: 3rem;
+  margin: 0 0.9rem 0.4rem 0;
+}
+
+.md-typeset .tool-lead {
+  font-size: 1.05rem;
+  min-height: 3rem;
+}
+
+/* Icons in the tool tables. */
+.md-typeset img.tool-icon-small {
+  width: 1.5rem;
+  height: 1.5rem;
+  vertical-align: middle;
+}
+
+/* Screenshots: never wider than the text, a hairline so white panels don't
+   melt into the page. */
+.md-typeset a > img[src*="assets/shots/"] {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.2rem;
+}
+
+/* Long tables: cells start at the top. */
+.md-typeset table:not([class]) td {
+  vertical-align: top;
+}

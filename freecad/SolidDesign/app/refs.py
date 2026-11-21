@@ -81,10 +81,39 @@ def _size(elem):
     return 0.0
 
 
+SAMPLES = 24             # points kept along an edge, or round a face's outline
+
+
+def outline(elem):
+    """A few points along an element (round a face's outer edges), so where it was
+    can be drawn after it is gone: [[x, y, z], ...]."""
+    try:
+        if elem.ShapeType == "Vertex":
+            pts = [elem.Point]
+        elif elem.ShapeType == "Edge":
+            if getattr(elem, "Degenerated", False) or elem.Length <= 1e-9:
+                pts = [elem.Vertexes[0].Point] if elem.Vertexes else []
+            else:
+                pts = elem.discretize(SAMPLES)
+        else:
+            # Edge by edge, never the wire at once: OCC can crash (not raise) on a
+            # wire with a degenerate edge, as at the tip of a sweep.
+            edges = [e for e in elem.OuterWire.OrderedEdges
+                     if not getattr(e, "Degenerated", False) and e.Length > 1e-9]
+            k = max(2, min(12, 96 // max(1, len(edges))))
+            pts = []
+            for e in edges:
+                pts.extend(e.discretize(k))
+    except Exception:
+        return []
+    return [[round(p.x, 4), round(p.y, 4), round(p.z, 4)] for p in pts]
+
+
 def fingerprint(elem, body_id=""):
     c = topo.centroid(elem) if elem.ShapeType != "Vertex" else elem.Point
     return {"kind": elem.ShapeType, "type": _type_name(elem), "dir": _orientation(elem),
-            "c": [c.x, c.y, c.z], "size": _size(elem), "body": body_id or ""}
+            "c": [c.x, c.y, c.z], "size": _size(elem), "body": body_id or "",
+            "pts": outline(elem)}
 
 
 def _children(obj):
@@ -151,6 +180,8 @@ def set_ref(obj, prop, target, subs=""):
         return
     if isinstance(subs, str):
         subs = [subs] if subs else []
+    if any(r.get("prop") == prop for r in repairs(obj)):
+        accept_repairs(obj, prop)           # picked again: nothing left to check
     setattr(obj, prop, (target, list(subs)))
     fps = []
     for sub in subs:
@@ -160,6 +191,99 @@ def set_ref(obj, prop, target, subs=""):
         except Exception:
             fps.append(None)
     _store(obj, prop, fps)
+
+
+# ------------------------------------------------------------------ what went wrong
+# A feature keeps, in two hidden properties, what happened to its references:
+# RefRepairs: references found again by their fingerprint, with where they were
+#   (the old fingerprint, points included) and what they are now; kept, and
+#   warned about, until the user checks them (What's Wrong > Looks Right, or OK
+#   in the feature's panel, or picking the reference again).
+# RefLost: references that couldn't be found at the last recompute, with what
+#   they were; written afresh each recompute.
+
+def _issues(obj, prop):
+    if prop not in obj.PropertiesList:
+        return []
+    try:
+        v = json.loads(getattr(obj, prop) or "[]")
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
+def _set_issues(obj, prop, items):
+    if prop not in obj.PropertiesList:
+        return
+    text = json.dumps(items)
+    if getattr(obj, prop) != text:
+        setattr(obj, prop, text)
+
+
+def repairs(obj):
+    """[{prop, what, old, new, sub, target, msg}] not yet checked."""
+    return _issues(obj, "RefRepairs")
+
+
+def lost(obj):
+    """[{prop, what, old, target, msg}] from the last recompute."""
+    return _issues(obj, "RefLost")
+
+
+def _note_repair(obj, prop, what, old_fp, target, sub, elem, msg, origin=None):
+    items = [r for r in repairs(obj) if not (r.get("prop") == prop and r.get("sub") == sub)]
+    first = next((r for r in repairs(obj) if r.get("prop") == prop), None)
+    # Repaired twice before it was checked: where it was first is what matters.
+    old = first["old"] if first is not None and first.get("old") else old_fp
+    items.append({"prop": prop, "what": what, "old": old,
+                  "new": fingerprint(elem, body_of_element(target, elem)),
+                  "sub": sub, "target": target.Name if target is not None else "",
+                  "origin": (first or {}).get("origin") or
+                  (origin.Name if origin is not None else ""), "msg": msg})
+    _set_issues(obj, "RefRepairs", items)
+
+
+def _note_lost(obj, prop, what, fp, target, msg, origin=None):
+    """``origin``: the feature the reference was picked on (what changed it is
+    after that one)."""
+    items = lost(obj)
+    items.append({"prop": prop, "what": what, "old": fp,
+                  "target": target.Name if target is not None else "",
+                  "origin": origin.Name if origin is not None else "", "msg": msg})
+    _set_issues(obj, "RefLost", items)
+
+
+def start_recompute(obj):
+    """Before a feature's recompute: forget the last one's lost references."""
+    _set_issues(obj, "RefLost", [])
+
+
+def accept_repairs(obj, prop=None):
+    """The user checked them: no more warning (``prop``: just that reference's)."""
+    _set_issues(obj, "RefRepairs", [r for r in repairs(obj)
+                                    if prop is not None and r.get("prop") != prop])
+
+
+def pending_warnings(obj):
+    """The warnings of repairs not yet checked (each once)."""
+    out = []
+    for r in repairs(obj):
+        m = r.get("msg") or "A reference was repaired. Check it."
+        if m not in out:
+            out.append(m)
+    return out
+
+
+def candidates(obj, issue):
+    """The elements that could replace a lost reference (for "several could")."""
+    try:
+        target = obj.Document.getObject(issue.get("target") or "")
+        fp = issue.get("old")
+        if target is None or not fp:
+            return []
+        return _match(target, fp)
+    except Exception:
+        return []
 
 
 # ------------------------------------------------------------------ following
@@ -328,7 +452,13 @@ def get_refs(obj, prop, what="reference", base=None):
         fps = stored if isinstance(stored, list) else [stored]
         elems, subs, warns = [], [], []
         for fp in fps:
-            e, _t, s, w = _resolve(None, "", fp, base, what)
+            try:
+                e, _t, s, w = _resolve(None, "", fp, base, what)
+            except topo.GeometryError as ex:
+                _note_lost(obj, prop, what, fp, base, str(ex))
+                raise
+            if w:
+                _note_repair(obj, prop, what, fp, base, s, e, w)
             elems.append(e)
             subs.append(s)
             warns.append(w)
@@ -342,12 +472,18 @@ def get_refs(obj, prop, what="reference", base=None):
     elems, new_subs, warns = [], [], []
     new_target = target
     for sub, fp in zip(subs, fps):
-        e, t, s, w = _resolve(target, sub, fp, base, what)
+        try:
+            e, t, s, w = _resolve(target, sub, fp, base, what)
+        except topo.GeometryError as ex:
+            _note_lost(obj, prop, what, fp, base if base is not None else target, str(ex),
+                       origin=target)
+            raise
         elems.append(e)
         new_subs.append(s)
         new_target = t
         if w:
             warns.append(w)
+            _note_repair(obj, prop, what, fp, t, s, e, w, origin=target)
     if new_target is not target or list(new_subs) != list(subs):
         setattr(obj, prop, (new_target, new_subs))
     new_fps = [fingerprint(e, body_of_element(new_target, e)) for e in elems]

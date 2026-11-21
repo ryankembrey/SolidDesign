@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<path d="M28.50 24.93 L60.00 43.11 L35.50 57.26 L4.00 39.07 Z" fill="#ebedf0" fill-rule="evenodd" stroke="#ebedf0" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M28.50 24.93 L60.00 43.11 M60.00 43.11 L35.50 57.26 M35.50 57.26 L4.00 39.07 M4.00 39.07 L28.50 24.93" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M28.50 6.74 L60.00 24.93 L35.50 39.07 L4.00 20.89 Z" fill="#87d8de" fill-rule="evenodd" stroke="#87d8de" stroke-width="0.6" stroke-linejoin="round"/>
+<path d="M28.50 6.74 L60.00 24.93 M60.00 24.93 L35.50 39.07 M35.50 39.07 L4.00 20.89 M4.00 20.89 L28.50 6.74" fill="none" stroke="#2b3038" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M19.75 48.17 L19.75 35.67" fill="none" stroke="#2b3038" stroke-width="3.00" stroke-linecap="round" stroke-linejoin="round"/><path d="M19.75 30.99 L25.75 38.79 L13.75 38.79 Z" fill="#2b3038" stroke="#2b3038" stroke-width="1" stroke-linejoin="round"/>
+</svg>

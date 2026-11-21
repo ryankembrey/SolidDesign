@@ -22,7 +22,7 @@ import Part
 
 from ..core import topo
 from ..core.bodies import BodySet
-from . import util
+from . import refs, util
 
 # Features being edited in a panel that shows the model before them (Fillet,
 # Chamfer): they still compute their result for the preview while the rollback
@@ -64,6 +64,11 @@ class FeatureProxy(object):
                       "Pieces made by a split, for Bodies to Keep (JSON)", "[]")
         util.add_prop(obj, "App::PropertyMap", "RefFingerprints", "Result",
                       "Fingerprints of picked faces/edges, to repair lost references")
+        util.add_prop(obj, "App::PropertyString", "RefRepairs", "Result",
+                      "References repaired from their fingerprints, not yet checked (JSON)",
+                      "[]")
+        util.add_prop(obj, "App::PropertyString", "RefLost", "Result",
+                      "References that couldn't be found at the last recompute (JSON)", "[]")
         util.add_prop(obj, "App::PropertyBool", "RolledBack", "Result",
                       "True when the feature is below the rollback bar", False)
         util.add_prop(obj, "App::PropertyString", "AutoLabel", "Base",
@@ -72,7 +77,7 @@ class FeatureProxy(object):
                       "File format version of this feature", util.SCHEMA_VERSION)
         for p in ("BaseFeature", "BodyIds", "BodyKinds", "BodyFeatures", "AddSubShape",
                   "IdMemory", "Pieces", "RefFingerprints", "AutoLabel", "SchemaVersion",
-                  "RolledBack"):
+                  "RolledBack", "RefRepairs", "RefLost"):
             util.hide_prop(obj, p)
         for p in ("ErrorMessage", "WarningMessage"):
             util.readonly_prop(obj, p)
@@ -136,6 +141,7 @@ class FeatureProxy(object):
             self.write(obj, base, None)
             return
         warnings = []
+        refs.start_recompute(obj)
         try:
             res, preview = self.compute(obj, base)
             out = res.bodies
@@ -153,6 +159,10 @@ class FeatureProxy(object):
         del topo.map_warnings[:]
         if obj.ErrorMessage != error:
             obj.ErrorMessage = error
+        # A repaired reference stays a warning until it has been checked.
+        for m in refs.pending_warnings(obj):
+            if m not in warnings:
+                warnings.append(m)
         w = "; ".join(warnings)
         if obj.WarningMessage != w:
             obj.WarningMessage = w

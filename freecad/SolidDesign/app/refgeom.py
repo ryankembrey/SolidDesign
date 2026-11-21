@@ -42,10 +42,15 @@ class _RefGeomProxy(object):
         a(obj, "App::PropertyString", "ErrorMessage", "Result", "Why it failed", "")
         a(obj, "App::PropertyString", "WarningMessage", "Result", "Warnings", "")
         a(obj, "App::PropertyMap", "RefFingerprints", "Result", "Fingerprints of references")
+        a(obj, "App::PropertyString", "RefRepairs", "Result",
+          "References repaired from their fingerprints, not yet checked (JSON)", "[]")
+        a(obj, "App::PropertyString", "RefLost", "Result",
+          "References that couldn't be found at the last recompute (JSON)", "[]")
         a(obj, "App::PropertyBool", "RolledBack", "Result", "Below the rollback bar", False)
         a(obj, "App::PropertyString", "AutoLabel", "Base", "Automatic label", "")
         a(obj, "App::PropertyInteger", "SchemaVersion", "Base", "File format", util.SCHEMA_VERSION)
-        for p in ("BaseFeature", "RefFingerprints", "RolledBack", "AutoLabel", "SchemaVersion"):
+        for p in ("BaseFeature", "RefFingerprints", "RolledBack", "AutoLabel", "SchemaVersion",
+                  "RefRepairs", "RefLost"):
             util.hide_prop(obj, p)
         for p in ("ErrorMessage", "WarningMessage"):
             util.readonly_prop(obj, p)
@@ -100,6 +105,7 @@ class _RefGeomProxy(object):
         if rolled and not obj.Shape.isNull():
             return          # frozen below the rollback bar (see FeatureProxy.execute)
         warns = []
+        refs.start_recompute(obj)
         try:
             shape = self.make(obj, self.resolved(obj, warns))
             err = ""
@@ -109,6 +115,9 @@ class _RefGeomProxy(object):
             shape, err = None, "Internal error: {}".format(e)
         if obj.ErrorMessage != err:
             obj.ErrorMessage = err
+        for m in refs.pending_warnings(obj):
+            if m not in warns:
+                warns.append(m)
         w = "; ".join(warns)
         if obj.WarningMessage != w:
             obj.WarningMessage = w

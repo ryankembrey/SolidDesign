@@ -1,0 +1,212 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileNotice: Part of the Solid Design addon.
+#
+# Site configuration for the Solid Design documentation (Zensical).
+# Build: `pixi run docs` from the repository root. See docs/README.md.
+#
+# The nav is written by hand, except the blocks between "BEGIN GENERATED" and
+# "END GENERATED" markers: docs/build.py rewrites those. Edit around them.
+
+[project]
+site_name = "Solid Design"
+site_description = "Model parts in FreeCAD the SolidWorks way, multi-body from the start: how to use the Solid Design workbench, and every tool in it."
+site_url = "https://ryankembrey.github.io/SolidDesign/"
+repo_url = "https://github.com/ryankembrey/SolidDesign"
+repo_name = "SolidDesign"
+copyright = "Solid Design by Ryan Kembrey, LGPL-2.1-or-later. This site is generated from the latest main branch."
+docs_dir = "content"
+site_dir = "build/site"
+extra_css = ["stylesheets/extra.css"]
+
+nav = [
+  { "Home" = [
+    "index.md",
+    { "Changelog" = "changelog.md" },
+  ] },
+  { "Getting started" = [
+    { "Install" = "getting-started/install.md" },
+    { "Around the workbench" = "getting-started/interface.md" },
+    { "Your first part" = "getting-started/first-part.md" },
+    { "Working with bodies" = "getting-started/bodies.md" },
+  ] },
+  { "Guides" = [
+    "guides/index.md",
+    { "Sketches and sketch features" = "guides/sketch-features.md" },
+    { "Picking things" = "guides/picking.md" },
+    { "Drag handles" = "guides/drag-handles.md" },
+    { "Keyboard modelling" = "guides/keyboard.md" },
+    { "Reference geometry" = "guides/reference-geometry.md" },
+    { "Patterns and mirrors" = "guides/patterns.md" },
+    { "Surfaces" = "guides/surfaces.md" },
+    { "When something breaks" = "guides/fixing-problems.md" },
+  ] },
+  { "Concepts" = [
+    "concepts/index.md",
+    { "Parts and bodies" = "concepts/parts-and-bodies.md" },
+    { "Add, Cut and Surface" = "concepts/add-cut-surface.md" },
+    { "History and rollback" = "concepts/history.md" },
+    { "How features remember picks" = "concepts/references.md" },
+  ] },
+  { "Reference" = [
+    "reference/index.md",
+    { "Tools" = [
+      # BEGIN GENERATED tools
+      "reference/tools/index.md",
+      { "Part and sketch" = [
+        { "Part" = "reference/tools/part.md" },
+        { "Sketch" = "reference/tools/sketch.md" },
+      ] },
+      { "Features" = [
+        { "Extrude" = "reference/tools/extrude.md" },
+        { "Revolve" = "reference/tools/revolve.md" },
+        { "Sweep" = "reference/tools/sweep.md" },
+        { "Loft" = "reference/tools/loft.md" },
+        { "Boundary" = "reference/tools/boundary.md" },
+        { "Fillet" = "reference/tools/fillet.md" },
+        { "Chamfer" = "reference/tools/chamfer.md" },
+        { "Rib" = "reference/tools/rib.md" },
+        { "Wrap" = "reference/tools/wrap.md" },
+        { "Draft" = "reference/tools/draft.md" },
+        { "Shell" = "reference/tools/shell.md" },
+        { "Dome" = "reference/tools/dome.md" },
+        { "Intersect" = "reference/tools/intersect.md" },
+        { "Hole Wizard" = "reference/tools/hole-wizard.md" },
+        { "Thread" = "reference/tools/thread.md" },
+        { "Cosmetic Thread" = "reference/tools/cosmetic-thread.md" },
+        { "Mounting Boss" = "reference/tools/mounting-boss.md" },
+        { "Snap Hook" = "reference/tools/snap-hook.md" },
+        { "Lip/Groove" = "reference/tools/lip-groove.md" },
+        { "Vent" = "reference/tools/vent.md" },
+        { "Mirror" = "reference/tools/mirror.md" },
+      ] },
+      { "Patterns" = [
+        { "Linear Pattern" = "reference/tools/linear-pattern.md" },
+        { "Circular Pattern" = "reference/tools/circular-pattern.md" },
+        { "Curve Driven Pattern" = "reference/tools/curve-driven-pattern.md" },
+        { "Sketch Driven Pattern" = "reference/tools/sketch-driven-pattern.md" },
+        { "Table Driven Pattern" = "reference/tools/table-driven-pattern.md" },
+        { "Fill Pattern" = "reference/tools/fill-pattern.md" },
+        { "Variable Pattern" = "reference/tools/variable-pattern.md" },
+      ] },
+      { "Bodies" = [
+        { "Combine" = "reference/tools/combine.md" },
+        { "Split" = "reference/tools/split.md" },
+        { "Delete/Keep Body" = "reference/tools/delete-keep-body.md" },
+        { "Move/Copy Body" = "reference/tools/move-copy-body.md" },
+        { "Flex" = "reference/tools/flex.md" },
+        { "Deform" = "reference/tools/deform.md" },
+        { "Indent" = "reference/tools/indent.md" },
+        { "Freeform" = "reference/tools/freeform.md" },
+        { "Scale" = "reference/tools/scale.md" },
+        { "Move Face" = "reference/tools/move-face.md" },
+        { "Delete Face" = "reference/tools/delete-face.md" },
+        { "Replace Face" = "reference/tools/replace-face.md" },
+      ] },
+      { "Reference Geometry" = [
+        { "Plane" = "reference/tools/plane.md" },
+        { "Axis" = "reference/tools/axis.md" },
+        { "Coordinate System" = "reference/tools/coordinate-system.md" },
+        { "Point" = "reference/tools/point.md" },
+        { "Bounding Box" = "reference/tools/bounding-box.md" },
+        { "Center of Mass" = "reference/tools/center-of-mass.md" },
+      ] },
+      { "Surfaces" = [
+        { "Extruded Surface" = "reference/tools/extruded-surface.md" },
+        { "Revolved Surface" = "reference/tools/revolved-surface.md" },
+        { "Swept Surface" = "reference/tools/swept-surface.md" },
+        { "Lofted Surface" = "reference/tools/lofted-surface.md" },
+        { "Boundary Surface" = "reference/tools/boundary-surface.md" },
+        { "Planar Surface" = "reference/tools/planar-surface.md" },
+        { "Offset Surface" = "reference/tools/offset-surface.md" },
+        { "Filled Surface" = "reference/tools/filled-surface.md" },
+        { "Extend Surface" = "reference/tools/extend-surface.md" },
+        { "Trim Surface" = "reference/tools/trim-surface.md" },
+        { "Untrim Surface" = "reference/tools/untrim-surface.md" },
+        { "Knit Surface" = "reference/tools/knit-surface.md" },
+        { "Ruled Surface" = "reference/tools/ruled-surface.md" },
+        { "Radiate Surface" = "reference/tools/radiate-surface.md" },
+        { "Mid-Surface" = "reference/tools/mid-surface.md" },
+        { "Surface Flatten" = "reference/tools/surface-flatten.md" },
+        { "Thicken" = "reference/tools/thicken.md" },
+        { "Cut With Surface" = "reference/tools/cut-with-surface.md" },
+      ] },
+      { "Curves" = [
+        { "Split Line" = "reference/tools/split-line.md" },
+        { "Projected Curve" = "reference/tools/projected-curve.md" },
+        { "Composite Curve" = "reference/tools/composite-curve.md" },
+        { "Curve Through XYZ Points" = "reference/tools/curve-through-xyz-points.md" },
+        { "Curve Through Reference Points" = "reference/tools/curve-through-reference-points.md" },
+        { "Helix/Spiral" = "reference/tools/helix-spiral.md" },
+      ] },
+      { "Evaluate" = [
+        { "Force Rebuild" = "reference/tools/force-rebuild.md" },
+        { "What's Wrong" = "reference/tools/whats-wrong.md" },
+      ] },
+      { "Working faster" = [
+        { "Command Search" = "reference/tools/command-search.md" },
+        { "Command Line" = "reference/tools/command-line.md" },
+        { "Repeat Last Feature" = "reference/tools/repeat-last-feature.md" },
+        { "Context Toolbar" = "reference/tools/context-toolbar.md" },
+        { "Reference Names" = "reference/tools/reference-names.md" },
+      ] },
+      # END GENERATED tools
+    ] },
+    { "Toolbars" = "reference/toolbars.md" },
+    { "Keyboard shortcuts" = "reference/keyboard.md" },
+    { "Command line words" = "reference/command-line.md" },
+    { "Drag handles" = "reference/drag-handles.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+logo = "assets/logo.svg"
+favicon = "assets/logo.svg"
+features = [
+  "content.tabs.link",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.betterem = {}
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.superfences = {}
+pymdownx.tabbed.alternate_style = true
+pymdownx.tasklist.custom_checkbox = true

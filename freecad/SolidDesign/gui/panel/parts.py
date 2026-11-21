@@ -732,6 +732,26 @@ class SelectionList(_Selection):
             pass
 
 
+# A list whose picked row stays plainly picked when it isn't focused (some styles
+# draw it white on near-white then), with room round each row's words.
+WRAPPED_TREE_CSS = ("QTreeWidget::item { padding: 2px 0px; }"
+                    "QTreeWidget::item:selected { background: palette(highlight); "
+                    "color: palette(highlighted-text); }")
+
+
+def wrapped_tree():
+    """A tree for rows of wrapped text (What's Wrong): no header, picked row kept
+    visible, rows as tall as their own words."""
+    t = QtWidgets.QTreeWidget()
+    t.setHeaderHidden(True)
+    t.setWordWrap(True)
+    t.setUniformRowHeights(False)
+    t.setIndentation(14)
+    t.setTextElideMode(QtCore.Qt.ElideNone)
+    t.setStyleSheet(WRAPPED_TREE_CSS)
+    return t
+
+
 def panel_form(title, icon=None):
     """The panel's widget: a vertical stack of groups, as in the DFM workbench."""
     form = QtWidgets.QWidget()

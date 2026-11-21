@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<path d="M27.69 37.60 L46.26 48.32" fill="none" stroke="#2b3038" stroke-width="2.20" stroke-linecap="round" stroke-linejoin="round"/><path d="M49.23 50.03 L42.08 50.98 L46.48 43.36 Z" fill="#2b3038" stroke="#2b3038" stroke-width="1" stroke-linejoin="round"/>
+<path d="M27.69 37.60 L9.13 48.32" fill="none" stroke="#2b3038" stroke-width="2.20" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.15 50.03 L8.91 43.36 L13.31 50.98 Z" fill="#2b3038" stroke="#2b3038" stroke-width="1" stroke-linejoin="round"/>
+<path d="M27.69 37.60 L27.69 16.16" fill="none" stroke="#2b3038" stroke-width="2.20" stroke-linecap="round" stroke-linejoin="round"/><path d="M27.69 12.73 L32.09 18.45 L23.29 18.45 Z" fill="#2b3038" stroke="#2b3038" stroke-width="1" stroke-linejoin="round"/>
+<path d="M4.00 51.27 L5.40 48.91 L6.80 46.58 L8.20 44.33 L9.60 42.19 L11.00 40.20 L12.40 38.38 L13.80 36.75 L15.20 35.35 L16.60 34.17 L18.00 33.24 L19.40 32.56 L20.80 32.11 L22.20 31.90 L23.60 31.91 L25.00 32.12 L26.40 32.49 L27.80 33.02 L29.20 33.65 L30.60 34.36 L32.00 35.11 L33.40 35.86 L34.80 36.57 L36.20 37.20 L37.60 37.72 L39.00 38.10 L40.40 38.31 L41.80 38.31 L43.20 38.10 L44.60 37.66 L46.00 36.97 L47.40 36.04 L48.80 34.87 L50.20 33.46 L51.60 31.84 L53.00 30.02 L54.40 28.02 L55.80 25.88 L57.20 23.63 L58.60 21.31 L60.00 18.94" fill="none" stroke="#d24992" stroke-width="3.60" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="4.00" cy="51.27" r="3.40" fill="#2b3038" stroke="#2b3038" stroke-width="1"/>
+<circle cx="22.48" cy="31.89" r="3.40" fill="#2b3038" stroke="#2b3038" stroke-width="1"/>
+<circle cx="41.52" cy="38.33" r="3.40" fill="#2b3038" stroke="#2b3038" stroke-width="1"/>
+<circle cx="60.00" cy="18.94" r="3.40" fill="#2b3038" stroke="#2b3038" stroke-width="1"/>
+</svg>
