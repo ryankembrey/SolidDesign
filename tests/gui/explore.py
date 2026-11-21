@@ -1778,8 +1778,14 @@ def reference_names_in_view():
     pl = [o for o in part.Group if util.role(o) == "refgeom"][-1]
     ax = app_refgeom.create_axis(doc, part, core_ref.TWO_PLANES,
                                  [(front, ""), (plane(part, "Right Plane"), "")])
+    corner = [i for i, x in enumerate(v.Shape.Vertexes, 1)
+              if (x.Point - V(40, 30, 10)).Length < 1e-6][0]
+    pt = app_refgeom.create_point(doc, part, core_ref.ON_POINT, [(part.Tip, "Vertex%d" % [
+        i for i, x in enumerate(part.Tip.Shape.Vertexes, 1)
+        if (x.Point - V(40, 30, 10)).Length < 1e-6][0])])
     doc.recompute()
     wait(300)
+    expect(label_texts(pt) == ["Point1"] and corner, "a point is named (%s)" % label_texts(pt))
     expect(label_texts(pl) == ["Plane1"], "a new plane is named (%s)" % label_texts(pl))
     expect(label_texts(ax) == ["Axis1"], "an axis is named (%s)" % label_texts(ax))
     pl.Label = "Datum Top"
@@ -1819,8 +1825,7 @@ def reference_names_in_view():
     expect(not label_texts(pl), "a hidden plane's name hides with it")
     pl.ViewObject.Visibility = True
     wait(200)
-    expect(label_texts(pl) == ["Datum Top"], "and shows with it (%s, %s)" % (
-        label_texts(pl), ref_labels.anchor(pl)))
+    expect(label_texts(pl) == ["Datum Top"], "and shows with it (%s)" % label_texts(pl))
     expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
 
 @scenario
@@ -2668,6 +2673,160 @@ def command_line_and_repeat():
     expect(not bar.isVisible(), "Escape closes it")
     expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
 
+
+@scenario
+def command_line_link_hints():
+    """Pick by letters: on the command line, sel= labels every edge in view that
+    Fillet can use (none of the hidden ones); typing a label picks the edge and
+    adds the comma; Enter fillets them. Backspace past a label unpicks it, Esc
+    drops the picks, ":sel=.." alone leaves them selected, and after the view
+    turns a picked edge keeps its label."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import command_line
+    doc, part = new_doc("LH")
+    sk = plate_sketch(doc, part, 40, 30)
+    extrude_ui(doc, part, sk, 10)
+    view = Gui.ActiveDocument.ActiveView
+    view.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(300)
+    Gui.Selection.clearSelection()
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+    body = body_views(part)[0]
+
+    def edge(p0, p1):
+        return edge_at(body, p0, p1)
+
+    def open_line(text):
+        gl.setFocus()
+        wait(100)
+        QtTest.QTest.keyClick(gl, ":")
+        wait(300)
+        bar = command_line.current()
+        QtTest.QTest.keyClicks(bar.edit, text)
+        wait(300)
+        return bar
+
+    def code_of(bar, sub):
+        return next((h.code for h in bar.hints if h.sub == sub), None)
+
+    def selected():
+        return sorted(sub for s in Gui.Selection.getSelectionEx() for sub in s.SubElementNames)
+
+    bar = open_line("fillet 2 s")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Tab)
+    wait(300)
+    expect(bar.edit.text() == "fillet 2 sel=" and bar.overlay.isVisible(),
+           "Tab completes sel= and shows the labels straight away (%s)" % bar.edit.text())
+    subs = sorted(h.sub for h in bar.hints)
+    hidden = [edge(V(0, 30, 0), V(0, 30, 10)), edge(V(0, 30, 0), V(40, 30, 0)),
+              edge(V(0, 0, 0), V(0, 30, 0))]
+    expect(len(subs) == 9 and all(s.startswith("Edge") for s in subs),
+           "the nine edges in view are labelled, edges only (%s)" % subs)
+    expect(not set(hidden) & set(subs), "none of the three hidden ones (%s)" % hidden)
+    codes = [h.code for h in bar.hints]
+    expect(all(len(c) == 2 and set(c) <= set("jfkdlsahg") for c in codes) and
+           len(set(codes)) == 9, "two home-row letters each, all different (%s)" % codes)
+    shot("labels")
+    front = edge(V(0, 0, 10), V(40, 0, 10))
+    right = edge(V(40, 0, 10), V(40, 30, 10))
+    c1, c2 = code_of(bar, front), code_of(bar, right)
+    QtTest.QTest.keyClicks(bar.edit, c1[0])
+    wait(200)
+    expect(len(bar.overlay.shown()) < 9 and all(h.code.startswith(c1[0])
+                                                for h in bar.overlay.shown()),
+           "one letter typed: only labels starting with it show")
+    QtTest.QTest.keyClicks(bar.edit, c1[1])
+    wait(200)
+    expect(bar.edit.text().endswith("sel=%s," % c1), "a whole label adds the comma (%s)"
+           % bar.edit.text())
+    expect(selected() == [front], "and picks its edge (%s)" % selected())
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Backspace)
+    wait(200)
+    expect(bar.edit.text().endswith("sel=%s" % c1) and selected() == [front],
+           "Backspace over the comma leaves the pick (%s)" % bar.edit.text())
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Backspace)
+    wait(200)
+    expect(selected() == [], "Backspace into the label unpicks it (%s)" % selected())
+    QtTest.QTest.keyClicks(bar.edit, c1[1] + c2)
+    wait(300)
+    expect(selected() == sorted([front, right]) and bar.edit.text() == "fillet 2 sel=%s,%s,"
+           % (c1, c2), "two picked (%s)" % bar.edit.text())
+    shot("picked")
+    n_feats = len(util.features(part))
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+    wait(1200)
+    feats = util.features(part)
+    f = feats[-1] if len(feats) > n_feats else None
+    expect(f is not None and f.ErrorMessage == "" and "Fillet" in f.Label,
+           "Enter fillets them (%s)" % (f.Label if f else None))
+    body = body_views(part)[0]
+    expect(len(body.Shape.Faces) >= 8, "two round faces added (%d faces)"
+           % len(body.Shape.Faces))
+    expect(not Gui.Control.activeDialog(), "no panel: it was all on the line")
+
+    # A label can be clicked too; clicked again, it is taken out. Esc drops picks.
+    Gui.Selection.clearSelection()
+    bar = open_line("sel=")
+    sub0 = bar.hints[0].sub if bar.hints else None
+    expect(bar.hints and {h.kind for h in bar.hints} <= {"Face", "Edge"},
+           "no tool: faces and edges are labelled")
+    r = next(rr for rr, h in bar.overlay.rects() if h.sub == sub0)
+    off = QtCore.QPoint(int(r.right()) + 40, int(r.bottom()) + 40)
+    expect(bar.overlay.mask().contains(r.center().toPoint()) and
+           not bar.overlay.mask().contains(off), "only the labels take clicks")
+    QtTest.QTest.mouseClick(bar.overlay, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier,
+                            r.center().toPoint())
+    wait(300)
+    c0 = bar.hints[0].code
+    expect(bar.edit.text() == "sel=%s," % c0 and selected() == [sub0],
+           "clicking a label picks it, as typing it does (%s)" % bar.edit.text())
+    shot("clicked")
+    QtTest.QTest.mouseClick(bar.overlay, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier,
+                            r.center().toPoint())
+    wait(300)
+    expect(selected() == [] and c0 not in bar.edit.text(),
+           "clicked again: taken out (%s)" % bar.edit.text())
+    QtTest.QTest.keyClicks(bar.edit, c0)
+    wait(200)
+    expect(selected() == [sub0], "picked")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    wait(200)
+    expect(selected() == [] and not bar.overlay.isVisible(), "Esc drops it")
+
+    # ":sel=.." alone leaves the pick selected.
+    bar = open_line("f=")
+    top = face_at(body, V(20, 15, 10), V(0, 0, 1))
+    ct = code_of(bar, top)
+    expect(ct is not None and all(h.kind == "Face" for h in bar.hints),
+           "f= labels faces only, the top among them")
+    QtTest.QTest.keyClicks(bar.edit, ct)
+    wait(200)
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+    wait(300)
+    expect(selected() == [top] and not bar.isVisible(), "sel alone: picked and kept (%s)"
+           % selected())
+
+    # The view turns: the picked face keeps its label.
+    Gui.Selection.clearSelection()
+    bar = open_line("shell sel=")
+    ct = code_of(bar, top)
+    QtTest.QTest.keyClicks(bar.edit, ct)
+    wait(200)
+    view.viewTop()
+    wait(1000)
+    expect(code_of(bar, top) == ct, "the view turned; the top keeps \"%s\" (%s)"
+           % (ct, code_of(bar, top)))
+    body = body_views(part)[0]
+    seen = [body.Shape.getElement(h.sub) for h in bar.hints]
+    sides = [f for f in seen if f.Surface.TypeId == "Part::GeomPlane" and
+             abs(f.normalAt(0, 0).z) < 1e-6]
+    expect(len(seen) == 3 and not sides, "from the top: the top and the two round faces, "
+           "no side (%s)" % [h.sub for h in bar.hints])
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    wait(200)
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
 
 @scenario
 def command_line_after_a_sketch():

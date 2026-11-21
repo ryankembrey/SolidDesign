@@ -391,10 +391,12 @@ guesses again; a constraint the user chose stays until then.
 
 ### Names in the 3D view (2026-11-21, owner's request)
 - Planes, axes, points and coordinate systems show their names, as SolidWorks
-  shows plane names: at a plane's corner, an axis' end, beside a point or a
-  coordinate system's origin; the origin planes (Front, Top, Right) too. The text
-  is the same size on screen at any zoom, hides with the object, and follows a
-  rename. Solid Design > Reference Names turns them off.
+  shows plane names. A plane's lies flat in the plane, inside its top-left
+  corner (the origin planes' too, in FreeCAD's small fixed-size squares). An
+  axis' runs along the axis near its end, turned about it to face the viewer and
+  never upside down. A point's or coordinate system's sits just above it, facing
+  the viewer. The text is the same size on screen at any zoom, hides with the
+  object, and follows a rename. Solid Design > Reference Names turns them off.
 - Like the geometry, a name behind a body is hidden. The origin axes keep
   FreeCAD's own small X/Y/Z labels.
 
@@ -1008,6 +1010,26 @@ text field).
   the same settings, on the selection or what's under the pointer. From a panel it
   repeats what was changed there (and on the line before it), not the defaults.
 - Also in the Solid Design menu: Command Line, Repeat Last Feature.
+
+## Picking by letters on the command line (2026-11-21, owner's idea)
+
+No SolidWorks equivalent; it is Vimium's link hints, for CAD.
+- `sel=` on the command line puts a home-row label (jj, jf, kd...) on every face,
+  edge or vertex in view that the tool can use: Fillet and Chamfer label edges,
+  Shell and Draft faces, Sketch and Hole planar faces, Plane all three; with no
+  tool, faces and edges. `e=`, `f=`, `v=` label only edges, faces or vertices.
+- Only what can be seen is labelled: an element behind the model, or facing away,
+  gets none. Labels are two letters, three past 81, all the same length so none
+  starts another; the easiest go nearest the middle of the view.
+- Labels are white. Typing a label picks the element (it is selected, its label
+  turns green) and adds the comma. Clicking a label does the same; clicking a
+  green one takes it out again. Clicks anywhere else go to the view as usual.
+  Tab-completing `sel=` shows the labels at once. Typing its first letter hides the labels that don't start with
+  it. Backspace into a label unpicks it.
+- Enter runs the tool on what was picked: `:fillet 2 sel=jk,dl`. `:sel=jk,dl`
+  alone leaves them selected for the next tool. Esc drops the picks.
+- Turning or zooming the view labels what can be seen then; picked elements keep
+  their labels. The context toolbar stays away while the command line is open.
 
 ## Right-click menus in the 3D view (2026-11-21, owner's request)
 

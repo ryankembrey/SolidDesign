@@ -316,8 +316,10 @@ class Line(object):
 
 def parse(text, listing=None):
     import shlex
+    from .hints import split_selection
     line = Line(text)
     t = line.text[1:] if line.text.startswith(":") else line.text
+    t = split_selection(t)[0]         # sel=jk,dl: picks, made as they were typed
     try:
         tokens = shlex.split(t)
     except ValueError:
@@ -615,8 +617,11 @@ def repeat():
 def completions(text):
     """[(text to put in place of the last word, what to show)] for the line so far."""
     from . import command_search
+    from .hints import SEL_KEYS
     parts = text.lstrip(":").split(" ")
     word = parts[-1]
+    if "=" in word and word.split("=", 1)[0].lower() in SEL_KEYS:
+        return []                       # typing labels: they show in the view
     listing = tools()
     if len(parts) == 1:
         ranked = command_search.rank(word, [(n, label, tip) for n, _kw, label, tip in listing]) \
@@ -643,6 +648,8 @@ def completions(text):
                                             else c), shown))
         return out[:12]
     main = [m for m in MAIN.get(cmd, []) if m in opts]
+    if not word or "sel".startswith(norm(word)):
+        out.append(("sel=", u"sel=  —  pick in the view by the letters on each element"))
     for prop, (kind, choices) in sorted(opts.items(), key=lambda kv: (kv[0] not in main, kv[0])):
         if not word or command_search.fuzzy(word, prop) is not None:
             out.append((prop + "=", u"{}=  —  {}{}".format(
@@ -736,7 +743,7 @@ def _make_bar(view):
             self.edit = QtWidgets.QLineEdit()
             self.edit.setFrame(False)
             self.edit.setPlaceholderText(
-                u"fillet 2   ·   extrude 10 cut   ·   chamfer d=Width/2   ·   "
+                u"fillet 2 sel=jk,dl   ·   extrude 10 cut   ·   chamfer d=Width/2   ·   "
                 u"Tab completes, ↑ history, Esc closes")
             self.edit.installEventFilter(self)
             self.edit.textEdited.connect(lambda _t: self.suggest())
@@ -751,12 +758,26 @@ def _make_bar(view):
             self.cands = []
             self.cpos = -1
             self.typed = ""
+            # Link hints: labels on what can be picked (see hints.py).
+            from . import hints as hints_mod
+            self.overlay = hints_mod.make_overlay(parent)
+            self.overlay.clicked.connect(self.hint_clicked)
+            self.hints = []
+            self.hint_kinds = None
+            self.picks = {}             # code -> (doc, object, sub) it picked
+            self._cam = None
+            self.cam_timer = QtCore.QTimer(self)
+            self.cam_timer.setInterval(250)
+            self.cam_timer.timeout.connect(self._camera_moved)
             parent.installEventFilter(self)
 
         def start(self, under):
             self.under = under
             self.hist = history()
             self.hpos = len(self.hist)
+            self.picks = {}
+            self.hints = []
+            self.hint_kinds = None
             self.edit.clear()
             self.place()
             self.show()
@@ -783,13 +804,131 @@ def _make_bar(view):
             self.list.raise_()
 
         def suggest(self):
-            self.typed = self.edit.text()
+            text = self.edit.text()
+            text = self.follow_hints(text, inserted=len(text) > len(self.typed))
+            self.typed = text
             self.cands = completions(self.typed)
             self.cpos = -1
             self.list.clear()
             for _put, shown in self.cands:
                 self.list.addItem(shown)
             self._place_list()
+
+        # ---- link hints
+        def follow_hints(self, text, inserted):
+            """Show the labels while a selection is being typed; a typed label
+            picks its element and adds the comma; a label taken out of the line
+            is unpicked. Returns the line (with the comma added)."""
+            from . import hints as hm
+            _rest, sels = hm.split_selection(text)
+            present = {c for _k, cs in sels for c in cs}
+            for code in [c for c in self.picks if c not in present]:
+                doc, obj, sub = self.picks.pop(code)
+                try:
+                    Gui.Selection.removeSelection(doc, obj, sub)
+                except Exception:
+                    pass
+            words = text.split(" ")
+            last = words[-1]
+            key = last.split("=", 1)[0].lower() if "=" in last else None
+            cmd = find_tool(words[0]) if len(words) > 1 and "=" not in words[0] else None
+            kinds = hm.sel_kinds(key, cmd) if key else None
+            if kinds is None:
+                self.show_hints(False)
+                return text
+            if kinds != self.hint_kinds:
+                self.find_hints(kinds)
+            prefix = last.split("=", 1)[1].split(",")[-1]
+            hit = next((h for h in self.hints if h.code == prefix), None)
+            if inserted and hit is not None and prefix not in self.picks:
+                self.picks[prefix] = hit.key()
+                try:
+                    Gui.Selection.addSelection(*hit.key())
+                except Exception:
+                    pass
+                text += ","
+                self.edit.setText(text)
+                prefix = ""
+            elif prefix and not any(h.code.startswith(prefix) for h in self.hints):
+                _say(u"No label \"{}\" in view.".format(prefix))
+            self.overlay.set_state(self.hints, prefix, self.picks.keys())
+            self.show_hints(True)
+            return text
+
+        def hint_clicked(self, code):
+            """A label clicked: as if typed; a picked one clicked: taken out."""
+            words = self.edit.text().split(" ")
+            last = words[-1]
+            if "=" not in last:
+                return
+            key, value = last.split("=", 1)
+            parts = [c for c in value.split(",")]
+            if code in self.picks:
+                parts = [c for c in parts if c != code]
+                words[-1] = key + "=" + ",".join(parts)
+                text = self.follow_hints(" ".join(words), inserted=False)
+            else:
+                parts[-1] = code                # in place of a half-typed label
+                words[-1] = key + "=" + ",".join(parts)
+                text = self.follow_hints(" ".join(words), inserted=True)
+            self.edit.setText(text)
+            self.typed = text
+            self.edit.setFocus()
+
+        def find_hints(self, kinds):
+            from . import hints as hm
+            self.hint_kinds = kinds
+            try:
+                view = Gui.ActiveDocument.ActiveView
+                p = self.parentWidget()
+                ratio = float(view.getSize()[0]) / max(1, p.width())
+                found = hm.visible(view, hm.view_objects(App.ActiveDocument), kinds, ratio,
+                                   p.height())
+                keep = {k: c for c, k in self.picks.items()}
+                self.hints = hm.assign(found, keep, (p.width() / 2.0, p.height() / 2.0))
+                self._cam = self._camera()
+            except Exception as e:
+                App.Console.PrintLog("Solid Design: hints: {}\n".format(e))
+                self.hints = []
+
+        def show_hints(self, on):
+            if on:
+                self.overlay.setGeometry(self.parentWidget().rect())
+                self.overlay.show()
+                self.overlay.raise_()
+                self.raise_()
+                if self.list.isVisible():
+                    self.list.raise_()
+                self.cam_timer.start()
+            else:
+                self.overlay.hide()
+                self.cam_timer.stop()
+
+        def _camera(self):
+            try:
+                cam = Gui.ActiveDocument.ActiveView.getCameraNode()
+                return (tuple(cam.position.getValue().getValue()),
+                        tuple(cam.orientation.getValue().getValue()),
+                        getattr(cam, "height", None) and cam.height.getValue(),
+                        tuple(Gui.ActiveDocument.ActiveView.getSize()))
+            except Exception:
+                return None
+
+        def _camera_moved(self):
+            """The view turned or zoomed: label what can be seen now (picked
+            elements keep their labels)."""
+            if not self.overlay.isVisible() or self.hint_kinds is None:
+                return
+            cam = self._camera()
+            if cam == self._cam:
+                return
+            if getattr(self, "_moving", None) != cam:
+                self._moving = cam              # wait until it stops
+                return
+            self.find_hints(self.hint_kinds)
+            last = self.edit.text().split(" ")[-1]
+            prefix = last.split("=", 1)[1].split(",")[-1] if "=" in last else ""
+            self.overlay.set_state(self.hints, prefix, self.picks.keys())
 
         def complete(self, d):
             if not self.cands:
@@ -801,6 +940,8 @@ def _make_bar(view):
             text = " ".join(parts) + (" " if put.endswith(" ") else "")
             self.edit.setText(text)
             self.list.setCurrentRow(self.cpos)
+            # Tab to sel= shows the labels straight away, as typing it does.
+            self.follow_hints(text, inserted=False)
 
         def eventFilter(self, obj, ev):
             if obj is self.parentWidget() and ev.type() == QtCore.QEvent.Resize:
@@ -831,21 +972,41 @@ def _make_bar(view):
             return super(CommandBar, self).eventFilter(obj, ev)
 
         def enter(self):
+            from .hints import split_selection
             text = self.edit.text().strip()
             if not text:
                 self.close_bar()
                 return
-            line = parse(text)
+            rest, _sels = split_selection(text)
+            if not rest:
+                # Only picks: leave them selected for the next tool.
+                n = len(self.picks)
+                self.close_bar(keep=True)
+                _say("{} picked.".format(n) if n != 1 else "1 picked.")
+                return
+            line = parse(rest)
             if line.error:
                 _say(line.error)
                 self.edit.selectAll()
                 return
-            add_history(text)
-            self.close_bar()
+            add_history(rest)
+            self.close_bar(keep=True)
             under = self.under
-            QtCore.QTimer.singleShot(0, lambda: _say(run(text, under)[1]))
+            QtCore.QTimer.singleShot(0, lambda: _say(run(rest, under)[1]))
 
-        def close_bar(self):
+        def close_bar(self, keep=False):
+            """Esc drops what was picked by letters; Enter keeps it (the tool
+            takes it, or it stays selected)."""
+            if not keep:
+                for doc, obj, sub in self.picks.values():
+                    try:
+                        Gui.Selection.removeSelection(doc, obj, sub)
+                    except Exception:
+                        pass
+            self.picks = {}
+            self.hints = []
+            self.hint_kinds = None
+            self.show_hints(False)
             self.list.hide()
             self.hide()
             try:

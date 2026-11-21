@@ -204,6 +204,13 @@ class _Observer(object):
         self.hide()
         if not enabled() or not sub or not sub.startswith(("Face", "Edge", "Vertex")):
             return
+        try:
+            from . import command_line
+            bar = command_line.current()
+            if bar is not None and bar.isVisible():
+                return          # picked by letters on the command line
+        except Exception:
+            pass
         self._pending = (doc, obj, sub)
         self._timer.start()
 
