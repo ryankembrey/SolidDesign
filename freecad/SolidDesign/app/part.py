@@ -17,8 +17,9 @@ import FreeCAD as App
 import Part
 
 from ..core import bodies as core_bodies
+from ..core import topo
 from ..core.bodies import BodySet
-from . import util
+from . import perf, util
 
 # Default planes keep SolidWorks' names on FreeCAD's axes (spec section 4):
 # Front = XZ (seen from FreeCAD's Front view), Top = XY, Right = YZ.
@@ -93,7 +94,9 @@ class PartProxy(object):
     def execute(self, obj):
         tip = obj.Tip
         if tip is not None and util.is_feature(tip):
-            shape = tip.Shape.copy(False)
+            # The tip's own shape (shared, not copied): body views can then tell a
+            # body that didn't change from one that did.
+            shape = Part.Shape(tip.Shape)
             ids, kinds, feats = list(tip.BodyIds), list(tip.BodyKinds), list(tip.BodyFeatures)
         else:
             shape = Part.makeCompound([])
@@ -110,8 +113,7 @@ class PartProxy(object):
         if "Tip" not in obj.PropertiesList or "Group" not in obj.PropertiesList:
             return
         if prop == "Tip" and not util.in_recompute(obj.Document):
-            for f in util.features(obj):
-                f.touch()
+            touch_rollback_changes(obj)
         elif prop == "Group" and not obj.Document.Restoring:
             # Only history objects belong in the group. FreeCAD's tree can drop the
             # rollback bar, a folder or a body into it; take them out again at once.
@@ -345,16 +347,46 @@ def move_feature(part, feat, new_index):
     relink(part)
     if at_end:
         part.Tip = util.features(part)[-1]
+    # relink changed the BaseFeature of what moved and what now follows it, and
+    # FreeCAD recomputes those and everything after them; the rest is as it was.
+    touch_rollback_changes(part)
+
+
+def rolled_back_now(part):
+    """{feature name: whether it is below the rollback bar} as the bar is now
+    (as FeatureProxy.is_rolled_back decides it)."""
+    from .feature import EDITING
+    feats = util.features(part)
+    tip = part.Tip
+    if tip is None:
+        return {f.Name: f.Name not in EDITING for f in feats}
+    if tip not in feats:
+        return {f.Name: False for f in feats}
+    i_tip = feats.index(tip)
+    return {f.Name: i > i_tip and f.Name not in EDITING for i, f in enumerate(feats)}
+
+
+def touch_rollback_changes(part):
+    """After the rollback bar moved: recompute only the features it moved past.
+
+    A feature that comes back from below the bar is rebuilt (what's before it may
+    have changed meanwhile); one that goes below it keeps its result and only
+    notes that it is rolled back. Every other feature is just as it was, so it
+    isn't touched: before, every feature was rebuilt each time the bar moved,
+    which is every time a feature is added."""
+    now = rolled_back_now(part)
     for f in util.features(part):
-        f.touch()
+        if bool(f.RolledBack) != now.get(f.Name, False):
+            f.touch()
+            perf.count("touched for the rollback bar", u"{} [{}]".format(f.Label, f.Name))
 
 
 def roll_to(part, feat):
     """Move the rollback bar to just after ``feat`` (None: before every feature)."""
     if part.Tip is not feat:
         part.Tip = feat
-    for f in util.features(part):
-        f.touch()
+    else:
+        touch_rollback_changes(part)        # (the Tip handler did it otherwise)
 
 
 def roll_to_end(part):
@@ -495,6 +527,30 @@ class RollbackBarProxy(object):
 
 # =================================================================== body views
 
+_children = {}     # part name -> (its Shape, the shape's bodies): one sync's worth
+
+
+def part_children(part):
+    """The part's bodies as shapes, in BodyIds order. Got once per part shape:
+    every body view needs them, and childShapes() of a 400-body compound took
+    9 ms, for each of the 400 views."""
+    shape = part.Shape
+    hit = _children.get(part.Name)
+    if hit is not None and hit[0].isSame(shape):
+        return hit[1]
+    children = shape.childShapes() if shape.ShapeType == "Compound" else [shape]
+    _children[part.Name] = (shape, children)
+    return children
+
+
+def _same_shape(a, b):
+    """The same topology (and so the same geometry), placed the same."""
+    try:
+        return not a.isNull() and topo.same_shape(a, b)
+    except Exception:
+        return False
+
+
 class BodyViewProxy(object):
     """One body of the part, shown in a body folder."""
     SD_ROLE = "body"
@@ -517,23 +573,31 @@ class BodyViewProxy(object):
         part = source_part(obj)
         if part is None:
             return
-        ids = list(part.BodyIds)
-        if obj.BodyId not in ids:
+        ctx = _sync_ctx.get(part.Name)
+        if ctx is None:
+            ids = list(part.BodyIds)
+            ctx = {"rank": {b: k for k, b in reversed(list(enumerate(ids)))},
+                   "kinds": list(part.BodyKinds), "children": part_children(part)}
+        i = ctx["rank"].get(obj.BodyId)
+        if i is None:
             obj.Shape = Part.Shape()
             return
-        i = ids.index(obj.BodyId)
-        shape = part.Shape
-        children = shape.childShapes() if shape.ShapeType == "Compound" else [shape]
+        children = ctx["children"]
         if i < len(children):
             child = children[i]
             # A moved body (Move/Copy, patterns) carries its move as a placement.
             # Part::Feature replaces a new shape's placement with its own
             # Placement property, so that property takes the move.
             pl = child.Placement
-            obj.Shape = child
-            if not obj.Placement.isSame(pl, 1e-12):
-                obj.Placement = pl
-            kind = part.BodyKinds[i] if i < len(part.BodyKinds) else ""
+            same = obj.Placement.isSame(pl, 1e-12)
+            # A body no feature changed is the same shape as last time: setting it
+            # again would only make FreeCAD mesh it again.
+            if not (same and _same_shape(obj.Shape, child)):
+                obj.Shape = child
+                if not same:
+                    obj.Placement = pl
+            kinds = ctx["kinds"]
+            kind = kinds[i] if i < len(kinds) else ""
             if obj.Kind != kind:
                 obj.Kind = kind
 
@@ -559,6 +623,11 @@ class BodyViewProxy(object):
 
 
 _syncing = [False]
+# part name -> what every body view needs during one sync, worked out once
+# (each view read BodyIds and BodyKinds itself: O(bodies) per view).
+_sync_ctx = {}
+# folder name -> (ids, kinds, names) when its children were last re-claimed.
+_claimed = {}
 
 
 def source_part(view):
@@ -633,19 +702,56 @@ def clean_label(label):
     return label.replace(_ZWSP, "")
 
 
-def body_name(part, body_id, feature_name):
-    names = dict(part.BodyNames)
+def body_name(part, body_id, feature_name, _user=None, _pieces=None):
+    """(``_user``: dict(part.BodyNames); ``_pieces``: {feature name: its PieceNames
+    or None}, filled as features are met; for naming many bodies at once.)"""
+    names = dict(part.BodyNames) if _user is None else _user
     if body_id in names:
         return names[body_id]
     f = part.Document.getObject(feature_name) if feature_name else None
-    if f is not None and "PieceNames" in f.PropertiesList and body_id in f.PieceNames:
-        return f.PieceNames[body_id]        # named in Split's piece list
-    return f.Label if f is not None else body_id
+    if f is None:
+        return body_id
+    if _pieces is None:
+        pieces = dict(f.PieceNames) if "PieceNames" in f.PropertiesList else None
+    else:
+        if feature_name not in _pieces:
+            _pieces[feature_name] = dict(f.PieceNames) if "PieceNames" in f.PropertiesList \
+                else None
+        pieces = _pieces[feature_name]
+    if pieces is not None and body_id in pieces:
+        return pieces[body_id]              # named in Split's piece list
+    return f.Label
 
 
-def ensure_view_providers(part):
-    """Give view providers to objects made without the GUI (e.g. by a script)."""
+def _found(part):
+    """The part's folders, rollback bar and body views, in one pass over the
+    document (sync needed them several times, each a pass)."""
+    out = {"folders": {}, "bar": None, "views": []}
+    name = part.Name
+    for o in part.Document.Objects:
+        r = util.role(o)
+        if r == "folder":
+            if getattr(o, "PartName", "") == name and o.Kind not in out["folders"]:
+                out["folders"][o.Kind] = o
+        elif r == "rollback":
+            if out["bar"] is None and getattr(o, "PartName", "") == name:
+                out["bar"] = o
+        elif r == "body" and util.is_body_view(o) and getattr(o, "PartName", None) == name:
+            out["views"].append(o)
+    out["views"] += [o for o in part.InList if util.is_body_view(o) and
+                     "SourcePart" in o.PropertiesList and o.SourcePart is part]
+    return out
+
+
+def ensure_view_providers(part, found=None, kinds=None):
+    """Give view providers to objects made without the GUI (e.g. by a script).
+    (``found``: _found(part), ``kinds``: list(part.BodyKinds), when known.)"""
     from ..gui import viewproviders as vp
+    if found is None:
+        found = _found(part)
+    if kinds is None:
+        kinds = list(part.BodyKinds)
+
     def need(o):
         return o is not None and o.ViewObject is not None and o.ViewObject.Proxy is None
     if need(part):
@@ -654,25 +760,25 @@ def ensure_view_providers(part):
         if need(f):
             vp.attach_feature(f)
     for kind in (core_bodies.SOLID, core_bodies.SURFACE):
-        f = folder(part, kind)
+        f = found["folders"].get(kind)
         if need(f):
             vp.attach_folder(f)
         if f is not None and f.ViewObject is not None:
-            show = kind in list(part.BodyKinds)
+            show = kind in kinds
             if f.ViewObject.ShowInTree != show:
                 f.ViewObject.ShowInTree = show
     for o in part.Origin:
         if o.TypeId == "Part::DatumLine" and o.ViewObject is not None and o.ViewObject.ShowInTree:
             o.ViewObject.ShowInTree = False
-    f = folder(part, ORIGIN_FOLDER)
+    f = found["folders"].get(ORIGIN_FOLDER)
     if f is None:
         ensure_origin_folder(part)
     elif need(f):
         vp.attach_folder(f)
-    bar = rollback_bar(part)
+    bar = found["bar"]
     if need(bar):
         vp.attach_rollback(bar)
-    for v in body_views(part):
+    for v in found["views"]:
         if need(v):
             vp.attach_body(v)
     from ..gui import sketch_edit
@@ -687,9 +793,10 @@ def body_names(part, ids, feats):
     """Names for bodies, as the tree shows them. SolidWorks names a body after the
     last feature that changed it; several bodies from one feature are
     "Cut-Extrude1[1]", "Cut-Extrude1[2]"..."""
-    names = [body_name(part, bid, feats[i] if i < len(feats) else "")
-             for i, bid in enumerate(ids)]
     user = dict(part.BodyNames)
+    pieces = {}
+    names = [body_name(part, bid, feats[i] if i < len(feats) else "", user, pieces)
+             for i, bid in enumerate(ids)]
     counts = {}
     for i, n in enumerate(names):
         if ids[i] not in user:
@@ -702,21 +809,27 @@ def body_names(part, ids, feats):
     return names
 
 
+@perf.traced("part.sync", lambda part: part.Label)
 def sync(part):
     """Make the body views and folders match the part's final bodies."""
     doc = part.Document
     ids = list(part.BodyIds)
     kinds = list(part.BodyKinds)
     feats = list(part.BodyFeatures)
+    found = _found(part)
     views = {}
-    for v in body_views(part):
+    removed = False
+    for v in found["views"]:
         if v.BodyId in views or v.BodyId not in ids:
             doc.removeObject(v.Name)
+            removed = True
         else:
             views[v.BodyId] = v
     _syncing[0] = True
     changed = False
     names = body_names(part, ids, feats)
+    _sync_ctx[part.Name] = {"rank": {b: k for k, b in reversed(list(enumerate(ids)))},
+                            "kinds": kinds, "children": part_children(part)}
     try:
         for i, bid in enumerate(ids):
             v = views.get(bid)
@@ -738,24 +851,47 @@ def sync(part):
             v.purgeTouched()
         if App.GuiUp:
             try:
-                ensure_view_providers(part)
+                if changed or removed:
+                    found = _found(part)
+                ensure_view_providers(part, found, kinds)
             except Exception as e:
                 util.console_warning("view providers: {}".format(e))
+        # The folders re-claim their bodies (the tree) only when what they list
+        # changed: with hundreds of bodies that is not free.
+        sig = (tuple(ids), tuple(kinds), tuple(names))
         for kind in (core_bodies.SOLID, core_bodies.SURFACE):
-            f = folder(part, kind)
+            f = found["folders"].get(kind)
             if f is None:
                 continue
             title = folder_title(kind, kinds.count(kind))
             if f.Label != title:
                 f.Label = title
-            f.Revision = f.Revision + 1
+            key = (doc.Name, f.Name)
+            if changed or removed or _claimed.get(key) != sig:
+                _claimed[key] = sig
+                f.Revision = f.Revision + 1
             f.purgeTouched()
     finally:
         _syncing[0] = False
+        _sync_ctx.pop(part.Name, None)
     return changed
 
 
 class _Observer(object):
+    def slotDeletedDocument(self, doc):
+        """A document closed: let go of the shapes kept for speed (measures,
+        element indexes, bodies), which would keep its geometry in memory."""
+        try:
+            from . import refs
+            topo.clear_measures()
+            refs.clear_indexes()
+            _children.clear()
+            name = doc.Name
+            for k in [k for k in _claimed if k[0] == name]:
+                del _claimed[k]
+        except Exception:
+            pass
+
     def slotRecomputedDocument(self, doc):
         for p in find_parts(doc):
             try:
@@ -807,6 +943,13 @@ def feature_of_element(part, elem, tol=1e-6):
             continue
         s = getattr(f, "AddSubShape", None)
         if s is None or s.isNull():
+            continue
+        # Each element's padded box lies inside the whole shape's box padded as
+        # much as the largest element's: a feature whose box misses the point has
+        # nothing there (and its elements aren't measured).
+        whole = topo.bbox(s)
+        whole.enlarge(max(10 * tol, 0.01 * whole.DiagonalLength))
+        if not whole.isInside(p):
             continue
         for g in getattr(s, attr):
             bb = App.BoundBox(g.BoundBox)

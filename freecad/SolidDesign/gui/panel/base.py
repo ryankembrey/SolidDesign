@@ -29,6 +29,7 @@ from PySide import QtCore, QtWidgets
 
 from ...app import part as part_mod
 from ...app import util
+from ...core import topo
 from .. import preview as pv
 from ..selection import Sel
 from . import parts
@@ -445,6 +446,11 @@ class FeaturePanel(object):
 
     # ------------------------------------------------------------ preview
     def update_preview(self):
+        from ...app import perf
+        with perf.span("panel.preview", self.obj.Label if not self._closing else ""):
+            self._update_preview()
+
+    def _update_preview(self):
         if self._closing:
             return
         if self._recomputing:           # called again from inside a recompute
@@ -452,8 +458,14 @@ class FeaturePanel(object):
             return
         self._recomputing = True
         try:
-            self.obj.touch()
-            self.doc.recompute()
+            # Only what changed since the last recompute: a feature's result depends
+            # only on its properties and what it links to (and on the rollback bar
+            # and EDITING, whose changes touch what they affect), so FreeCAD knows
+            # what to rebuild. Touching the feature here rebuilt it on every
+            # preview, and opening a panel and pressing OK each rebuilt it once
+            # more for nothing.
+            if self._stale():
+                self.doc.recompute()
         except Exception as e:
             self.show_error("Recompute failed: {}".format(e))
             return
@@ -469,6 +481,14 @@ class FeaturePanel(object):
         self.after_preview()
         self.place_drag_handles()
         self._set_ok(not err, err)
+
+    def _stale(self):
+        """Whether anything in the document is waiting to be recomputed."""
+        for o in self.doc.Objects:
+            st = o.State
+            if "Touched" in st or "Invalid" in st:
+                return True
+        return False
 
     def _show_layers(self, err):
         """Draw the preview layers. On error the last good result stays on screen
@@ -602,26 +622,48 @@ class FeaturePanel(object):
             if name not in self._veiled:
                 self._veil(name)
         after = [b for b in changed.values() if b is not None]
-        self.preview.set("after", pv.body_node(after) if after else None)
+        # The same bodies as last time: keep their mesh (meshing hundreds of
+        # changed bodies again on every preview was most of its time).
+        memo = getattr(self, "_after_memo", None)
+        if memo is not None and len(memo[0]) == len(after) and all(
+                topo.same_shape(a, b) for a, b in zip(memo[0], after)):
+            node = memo[1]
+        else:
+            node = pv.body_node(after) if after else None
+            self._after_memo = (after, node)
+        self.preview.set("after", node)
 
     def _changed_bodies(self):
         """{body id: its shape after the feature, or None if it's gone} for the
         bodies the feature changes."""
         try:
             from ...core.bodies import BodySet
+            shape = self.obj.Shape
+            base = self.obj.BaseFeature
+            base_shape = base.Shape if base is not None else None
+            # Once per result: a preview asks twice (what it removes, the cut view).
+            memo = getattr(self, "_changed_memo", None)
+            if memo is not None and topo.same_shape(memo[0], shape) and (
+                    (memo[1] is None and base_shape is None) or
+                    (memo[1] is not None and base_shape is not None and
+                     topo.same_shape(memo[1], base_shape))):
+                return dict(memo[2])
             before = self.obj.Proxy.base_bodies(self.obj)
-            after = BodySet.from_columns(self.obj.Shape, list(self.obj.BodyIds),
+            after = BodySet.from_columns(shape, list(self.obj.BodyIds),
                                          list(self.obj.BodyKinds), list(self.obj.BodyFeatures))
         except Exception:
             return {}
         out = {}
         for i in before.ids():
             b = after.get(i)
-            if b is None or not b.shape.isSame(before.get(i).shape):
+            # same_shape, not isSame: a moved body (a pattern's) read back from
+            # another feature has a new location object, though it is unchanged.
+            if b is None or not topo.same_shape(b.shape, before.get(i).shape):
                 out[i] = b.shape if b is not None else None
         for i in after.ids():
             if i not in before:
                 out[i] = after.get(i).shape
+        self._changed_memo = (shape, base_shape, dict(out))
         return out
 
     def _veil(self, name):
@@ -764,8 +806,12 @@ class FeaturePanel(object):
         if on:
             for v in part_mod.body_views(self.part):
                 try:
-                    self._ghosted[v.Name] = v.ViewObject.Transparency
-                    v.ViewObject.Transparency = max(v.ViewObject.Transparency, 55)
+                    # Only bodies that change: each write re-sends the body's
+                    # materials, which adds up over hundreds of bodies.
+                    t = v.ViewObject.Transparency
+                    if t < 55:
+                        self._ghosted[v.Name] = t
+                        v.ViewObject.Transparency = 55
                 except Exception:
                     pass
         else:
@@ -841,6 +887,11 @@ class FeaturePanel(object):
         pass
 
     def accept(self):
+        from ...app import perf
+        with perf.span("panel.ok", self.obj.Label if not self._closing else ""):
+            return self._accept_panel()
+
+    def _accept_panel(self):
         if self._closing:
             return True
         self._timer.stop()

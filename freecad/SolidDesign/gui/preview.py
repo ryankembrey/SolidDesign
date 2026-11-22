@@ -10,6 +10,8 @@ import FreeCAD as App
 import FreeCADGui as Gui
 from pivy import coin
 
+from ..app import perf as _perf
+
 ADD_COLOR = (0.18, 0.72, 0.30)
 CUT_COLOR = (0.88, 0.16, 0.16)
 RESULT_TRANSPARENCY = 0.55
@@ -90,13 +92,51 @@ def touches(shape, p, tol=1e-6):
         return False
 
 
+class FaceFinder(object):
+    """The faces of a shape through a point (``touches``), in the shape's face
+    order, looking only at the bodies whose box (padded as much as any of their
+    faces' would be) holds the point: a model of hundreds of bodies has
+    thousands of faces."""
+
+    def __init__(self, shape, tol=1e-6):
+        self.tol = tol
+        kids = shape.childShapes() if shape.ShapeType == "Compound" else []
+        if len(kids) < 2:
+            kids = [shape]
+        self.groups = []
+        for ch in kids:
+            bb = App.BoundBox(ch.BoundBox)
+            bb.enlarge(max(10 * tol, 0.01 * bb.DiagonalLength))
+            self.groups.append([ch, bb, None])
+
+    def faces(self, p):
+        out = []
+        for g in self.groups:
+            if not g[1].isInside(p):
+                continue
+            if g[2] is None:
+                g[2] = g[0].Faces
+            out.extend(f for f in g[2] if touches(f, p, self.tol))
+        return out
+
+    def any(self, p):
+        for g in self.groups:
+            if not g[1].isInside(p):
+                continue
+            if g[2] is None:
+                g[2] = g[0].Faces
+            if any(touches(f, p, self.tol) for f in g[2]):
+                return True
+        return False
+
+
 def new_faces(after, before, tol=1e-6):
     """The faces of ``after`` that aren't on ``before`` (a fillet's rounds, a
     chamfer's bevels, drafted faces): their middles lie off every old face."""
     import Part
     if after is None or after.isNull() or before is None or before.isNull():
         return after
-    old = before.Faces
+    old = FaceFinder(before, tol * 10)
     out = []
     for f in after.Faces:
         try:
@@ -106,11 +146,12 @@ def new_faces(after, before, tol=1e-6):
                 p = f.CenterOfMass
         except Exception:
             continue
-        if not any(touches(g, p, tol * 10) for g in old):
+        if not old.any(p):
             out.append(f)
     return Part.makeCompound(out) if out else None
 
 
+@_perf.traced("preview.mesh")
 def shape_node(shape, color, transparency=0.0, edges=True, deflection_=None, line_width=2.0,
                dashed=False, edge_color=None, glow=0.25):
     """A coin separator drawing a Part shape's faces (and edges)."""
@@ -229,6 +270,8 @@ class Preview(object):
 
     def set(self, name, node):
         self.attach()
+        if node is not None and self.layers.get(name) is node:
+            return                      # already shown
         old = self.layers.pop(name, None)
         if old is not None:
             self.root.removeChild(old)

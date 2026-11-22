@@ -57,15 +57,53 @@ def _same_geometry(a, b, tol=1e-6):
 
 
 def map_to_feature(elem, feature):
-    """The name ("Face12") of ``elem`` in a feature's shape, or None."""
+    """The name ("Face12") of ``elem`` in a feature's shape, or None.
+
+    The same topology first (found by OpenCASCADE's own index, not by walking
+    every element in Python), then the first element of the same geometry, in
+    the shape's order. Only bodies whose box holds the pick's centre can have
+    such an element, so only theirs are measured."""
     if feature is None or elem is None:
         return None
     shape = feature.Shape
     kind = elem.ShapeType
-    elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes
-    for i, e in enumerate(elems, 1):
-        if e.isSame(elem):
+    try:
+        k, i = shape.findSubShape(elem)
+        if k == kind and i:
             return "{}{}".format(kind, i)
+    except Exception:
+        elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" \
+            else shape.Vertexes
+        for i, e in enumerate(elems, 1):
+            if e.isSame(elem):
+                return "{}{}".format(kind, i)
+    try:
+        c = elem.Point if kind == "Vertex" else elem.CenterOfMass
+        from ..app import refs
+        from ..core import topo
+        children = refs._index(feature, shape).children
+    except Exception:
+        return _map_by_geometry(elem, shape, kind)
+    for ch in children:
+        bb = topo.bbox(ch)
+        bb.enlarge(1e-4)
+        if not bb.isInside(c):
+            continue
+        elems = ch.Faces if kind == "Face" else ch.Edges if kind == "Edge" else ch.Vertexes
+        for e in elems:
+            if _same_geometry(e, elem):
+                try:
+                    k, i = shape.findSubShape(e)
+                    if k == kind and i:
+                        return "{}{}".format(kind, i)
+                except Exception:
+                    pass
+                return _map_by_geometry(elem, shape, kind)
+    return None
+
+
+def _map_by_geometry(elem, shape, kind):
+    elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes
     for i, e in enumerate(elems, 1):
         if _same_geometry(e, elem):
             return "{}{}".format(kind, i)

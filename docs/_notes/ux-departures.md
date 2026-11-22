@@ -1208,3 +1208,73 @@ for CAD. Left out on purpose (owner): Python on the line, counts (`3.`), macros
   elements too (dashed), with the bodies' materials made see-through in the scene only.
 - Found doing it: running a tool for the live preview moved the keyboard to the 3D
   view, so typing after a pause went nowhere. The line keeps the focus now.
+
+## Speed (2026-11-22, owner's report: slow once a history has ~8 features)
+
+- **Only what changed is rebuilt.** Moving the rollback bar touched every feature, and
+  the bar moves each time a feature is added, so opening any tool rebuilt the whole
+  history (twice: once making the feature, once for its first preview). Now only the
+  features the bar moves past are touched, and a panel's preview no longer forces its
+  feature to rebuild: FreeCAD rebuilds what changed (so OK, and a preview after only
+  the bar moved, rebuild nothing more). A 7-feature part: adding a feature went from 8
+  rebuilds to 1, building it from 28 to 7.
+- **Performance Trace** (Evaluate menu, or `SD_PROFILE=1`): spans for tools, panels,
+  previews, recomputes and each feature, recompute counts, an optional cProfile, and
+  slow actions reported as they happen. No SolidWorks equivalent beyond its Performance
+  Evaluation (which only times features); this one is for finding slow code.
+- Unit fields made a FreeCAD UiLoader each (about 0.3 s each on the first panel); one is
+  made once now.
+- Found doing it: Scale about the centroid failed with an internal error on a body held
+  as a compound (fillets make them).
+- Not done yet, for the owner to decide: features and the part draw nothing but are
+  shown (so they aren't greyed in the tree), and FreeCAD meshes the shape of anything
+  shown, so each rebuilt feature's whole result is meshed for nothing (about a third of
+  a rebuild's time on the test part). Hiding them would grey them in the tree; giving
+  them a view provider that doesn't mesh changes what's saved in files.
+
+## Many bodies (2026-11-22, owner's request: a part of 400 bodies)
+
+Measured on a drilled, filleted block patterned 20 × 20 (400 bodies), then more features
+on it. The results are the same as before (the same bodies, IDs, volumes and centres);
+only the time changed.
+
+| Step | Before | After |
+| :-- | --: | --: |
+| Recompute with nothing changed | 4.6 s | 0.04 s |
+| Pattern to 400 bodies | 6.7 s | 0.7 s |
+| Extrude a new body | 9.6 s | 0.5 s |
+| Cut through a row of 20 | 13.5 s | 1.8 s |
+| Edit the last feature (a fillet) | 6.7 s | 0.5 s |
+| Fillet 20 edges on 20 bodies | 23.9 s | 1.6 s |
+| Edit that fillet | 18.9 s | 1.0 s |
+| Hole Through All at 20 points | 47.7 s | 1.8 s |
+| Move/Copy a body, 5 copies | 7.4 s | 0.8 s |
+| Edit the first feature (10 features rebuilt) | 55.4 s | 6.5 s |
+
+- **Copies share their topology.** A pattern's or Move/Copy's copies are the seed body
+  moved, not new geometry: 400 copies are one body's worth of faces, and FreeCAD meshes
+  the body once.
+- **Measures are kept.** A body's volume, centre and box are worked out once (a copy's
+  from its seed); IDs, touching tests and pieces used to measure every body again in
+  every feature.
+- **Bodies nowhere near are skipped** before any boolean or element search: a cut or a
+  hole only meets the bodies its box reaches; a fillet's edges are looked for only in the
+  bodies whose box holds them; Up To Next only cuts with the bodies in the way.
+- A sketch's contours are checked for touching only where their boxes meet (a sketch of
+  hundreds of holes measured every pair).
+- **References are looked up, not searched for.** Which body holds a referenced element,
+  and where a reference went after an earlier change, are found from an index of the
+  model built once per change, not by walking all its elements for every reference.
+- **The tree and the body views are only updated when they change.** Each body view
+  read all the part's lists; the folders re-listed their bodies after every recompute.
+- Panels keep the mesh of the bodies a preview changes between previews, ghost only the
+  bodies not already transparent, and name the bodies in a list all at once.
+- Found doing it: the command line's plane labels were sometimes placed before FreeCAD
+  had sized the planes (an intermittent test failure, there before this work too); they
+  move onto the planes whenever the planes are resized now.
+- Found doing it: a panel's preview treated every body of a pattern as changed (a moved
+  body read back from another feature looked different), so it redrew them all over the
+  model. Only the bodies the feature changes are drawn now.
+- Not done (changes how the model looks): bodies are drawn finer than FreeCAD's default
+  (0.05 % and 8° against 0.5 % and 28.5°). With hundreds of curved bodies, that is most
+  of the drawing time; a coarser default would be the owner's call.

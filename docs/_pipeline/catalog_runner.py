@@ -272,7 +272,7 @@ def main():
     wb = WORKBENCHES[0]
     _initialize(wb)
 
-    from freecad.SolidDesign.app import health
+    from freecad.SolidDesign.app import health, perf
     from freecad.SolidDesign.gui import command_line, command_search, line_ex, line_help
 
     commands = [_command(n, c) for n, c in COMMANDS.items()]
@@ -310,6 +310,7 @@ def main():
             "commands": {n: list(v) for n, v in sorted(line_ex.COMMANDS.items())},
         },
         "health": {"tiny_edge": health.TINY_EDGE, "sliver": health.SLIVER},
+        "perf": {"slow": perf.SLOW},
     }
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1, sort_keys=False)

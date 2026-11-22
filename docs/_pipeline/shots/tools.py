@@ -33,7 +33,7 @@ FRONT_FACE = ((0, -20, 4), (0, -1, 0))
 RIGHT_FACE = ((30, 0, 4), (1, 0, 0))
 
 #: Tools with nothing to picture: their page says what they do.
-NO_SHOT = {"SD_Rebuild", "SD_RepeatLast"}
+NO_SHOT = {"SD_Rebuild", "SD_RepeatLast", "SD_PerfTrace"}
 
 
 def _plate(ctx, **k):

@@ -141,6 +141,7 @@ nav = [
       { "Evaluate" = [
         { "Force Rebuild" = "reference/tools/force-rebuild.md" },
         { "What's Wrong" = "reference/tools/whats-wrong.md" },
+        { "Performance Trace" = "reference/tools/performance-trace.md" },
       ] },
       { "Working faster" = [
         { "Command Search" = "reference/tools/command-search.md" },

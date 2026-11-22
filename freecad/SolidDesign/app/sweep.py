@@ -98,9 +98,17 @@ class SweepProxy(sketchfeature.SketchFeatureProxy):
                 m = b.valueAt(0.5 * (b.FirstParameter + b.LastParameter))
                 return a.distToShape(Part.Vertex(m))[0] < 1e-7
 
+            # Each face's box once: a face whose box is nowhere near the middle of
+            # the path edge can't have that edge (``same`` needs the face's edge
+            # within 1e-7 of it), so its edges aren't compared.
+            faces = [(g, g.BoundBox) for g in whole.Faces]
+            for bb in (b for _g, b in faces):
+                bb.enlarge(1e-6)
             for e in edges:
                 try:
-                    for f in [g for g in whole.Faces if any(same(x, e) for x in g.Edges)]:
+                    m = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
+                    near = [g for g, bb in faces if bb.isInside(m)]
+                    for f in [g for g in near if any(same(x, e) for x in g.Edges)]:
                         k = next((i for i, (g, _n) in enumerate(count) if f.isSame(g)), None)
                         if k is None:
                             count.append((f, 1))

@@ -150,6 +150,12 @@ def _neighbours(shape, el, kind):
 
 
 def visible(view, objs, kinds, ratio=1.0, height=None, hidden_too=False):
+    from ..app import perf
+    with perf.span("hints.find", ",".join(kinds)):
+        return _visible(view, objs, kinds, ratio, height, hidden_too)
+
+
+def _visible(view, objs, kinds, ratio=1.0, height=None, hidden_too=False):
     """[Hint] for each element of ``objs`` of ``kinds`` that can be seen in
     ``view`` (no code yet). ``ratio``: view pixels per widget pixel. With
     ``hidden_too`` those behind the model or facing away get one as well, marked

@@ -23,5 +23,10 @@ it carry on from the one before.
 
 ## Force Rebuild
 
-Normally only what changed is rebuilt. [Force Rebuild](../reference/tools/force-rebuild.md) builds
-everything again from scratch.
+Normally only what changed is rebuilt: a feature and the ones after it when you change it, a new
+feature on its own when you add one, and when the rollback bar moves, only the features it moves
+past (those coming back are rebuilt; those going below it keep their last result).
+[Force Rebuild](../reference/tools/force-rebuild.md) builds everything again from scratch.
+
+If something is slow, [Performance Trace](../reference/tools/performance-trace.md) shows where the
+time goes.

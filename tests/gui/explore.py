@@ -3596,7 +3596,8 @@ def command_line_planes_clicks_hover():
         bb = x.obj.ViewObject.getBoundingBox()
         gx, gy = v.getPointOnViewport(bb.Center)
         if abs(x.x - gx / ratio) > 40 or abs(x.y - (gl.height() - gy / ratio)) > 40:
-            far.append(x.obj.Label)
+            far.append("%s at %.0f,%.0f, drawn at %.0f,%.0f" % (
+                x.obj.Label, x.x, x.y, gx / ratio, gl.height() - gy / ratio))
     expect(not far, "each plane's label is on the plane as drawn (%s)" % far)
     shot("plane-labels")
     h = next((h for h in planes if h.obj is front), None)
@@ -5913,6 +5914,65 @@ def answer_dialogs():
             b.click()
         else:
             w.reject()
+
+
+@scenario
+def many_bodies_panels():
+    """A 6 x 6 pattern of bodies: a cut's preview veils and redraws only the bodies
+    it changes (copies of the seed read back from another feature are unchanged);
+    panels ghost the bodies and put them back; a fillet picked on a copy previews
+    its round; a face of a copy is credited to the pattern."""
+    from freecad.SolidDesign.app import pattern as app_pattern
+    from freecad.SolidDesign.gui import selection as selmod
+    doc, part = new_doc("MB")
+    sk = plate_sketch(doc, part, 8, 8)
+    extrude_ui(doc, part, sk, 4)
+    pat = app_pattern.create_linear(doc, part, Bodies=list(part.BodyIds), Spacing=12,
+                                    Instances=6, Direction2=True, Spacing2=12, Instances2=6)
+    pat.Direction1Ref = (plane(part, "X Axis"), [])
+    pat.Direction2Ref = (plane(part, "Y Axis"), [])
+    doc.recompute()
+    views = body_views(part)
+    expect(len(views) == 36 and not pat.ErrorMessage, "36 bodies (%d) %s" %
+           (len(views), pat.ErrorMessage))
+    sk2 = sketch(doc, plane(part, "Top Plane"))
+    rect(sk2, -2, 3, 70, 5)
+    app_part.add_to_part(part, sk2)
+    doc.recompute()
+    select(doc, sk2)
+    p = run_cmd("SD_Extrude")
+    p.mode.buttons["Cut"].click()
+    wait(300)
+    p.d1.depth.spin.setProperty("rawValue", 2.0)        # a groove: no body is cut in two
+    wait(1500)
+    veiled = sorted(p._veiled or {})
+    expect(len(veiled) == 6, "the cut veils the 6 bodies it cuts, not all 36 (%d)" % len(veiled))
+    ghosted = [v for v in body_views(part)
+               if v.Name not in veiled and v.ViewObject.Transparency == 55]
+    expect(len(ghosted) == 30, "the others are ghosted (%d)" % len(ghosted))
+    shot("many-bodies-cut")
+    close_panel(False)
+    expect(all(v.ViewObject.Transparency == 0 for v in body_views(part)),
+           "closing the panel puts every body back")
+    body = body_views(part)[14]
+    x0, y0 = body.Shape.BoundBox.XMin, body.Shape.BoundBox.YMin
+    edge = edge_at(body, V(x0, y0, 4), V(x0 + 8, y0, 4))
+    Gui.Selection.clearSelection()
+    p = run_cmd("SD_Fillet", 900)
+    p.route(Sel(body, edge, None))
+    p.radius.spin.setProperty("rawValue", 1.0)
+    wait(1500)
+    expect(p.items.items, "the edge of a copy is picked")
+    faces = p.changed_faces()
+    expect(faces is not None and abs(faces.Area - math.pi / 2 * 1.0 * 8) < 0.5,
+           "the preview is the round only (%s)" % (faces and faces.Area))
+    shot("many-bodies-fillet")
+    close_panel(True)
+    expect(not util.features(part)[-1].ErrorMessage, "the fillet on a copy works")
+    face = body_views(part)[20].Shape.Faces[0]
+    f = selmod.feature_of_element(part, face)
+    expect(f is pat, "a face of a copy came from the pattern (%s)" % (f and f.Label))
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
 
 
 def main():

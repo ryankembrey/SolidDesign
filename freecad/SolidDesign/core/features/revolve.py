@@ -283,5 +283,5 @@ def compute(p, base):
         res = common.apply_cut(base, tool, p.feature, p.tag, p.scope, p.keep, p.alloc, p.flip)
         if not res.touched:
             raise topo.GeometryError("The cut doesn't touch any body in its scope.")
-        preview = common.removed_material(tool, base, p.scope, p.tag)
+        preview = common.removed_material(tool, base, p.scope, p.tag, res)
     return res, tool, preview

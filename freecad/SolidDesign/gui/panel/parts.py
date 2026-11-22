@@ -350,10 +350,21 @@ class Switch(QtWidgets.QWidget):
     set_mode = set_value
 
 
+_loader = [None]
+
+
+def ui_loader():
+    """FreeCAD's widget factory, made once: making one registers every widget
+    FreeCAD has, and took about 0.3 s each time a panel made a unit field."""
+    if _loader[0] is None:
+        _loader[0] = Gui.UiLoader()
+    return _loader[0]
+
+
 def quantity(unit="mm", value=0.0, minimum=0.0, maximum=1e9, obj=None, prop=None, step=1.0):
     """FreeCAD's unit spin box. Bound to *obj*.*prop*, it shows the expression
     button and takes expressions and spreadsheet references."""
-    s = Gui.UiLoader().createWidget("Gui::QuantitySpinBox")
+    s = ui_loader().createWidget("Gui::QuantitySpinBox")
     s.setProperty("unit", unit)
     s.setProperty("minimum", minimum)
     s.setProperty("maximum", maximum)
@@ -421,7 +432,7 @@ class IntField(QtWidgets.QWidget):
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         try:
-            self.spin = Gui.UiLoader().createWidget("Gui::IntSpinBox")
+            self.spin = ui_loader().createWidget("Gui::IntSpinBox")
             self.spin.setParent(self)
         except Exception:
             self.spin = QtWidgets.QSpinBox(self)

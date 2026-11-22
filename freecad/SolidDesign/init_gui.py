@@ -93,7 +93,7 @@ class SolidDesignWorkbench(Gui.Workbench):
         self.appendMenu([m, "Reference Geometry"], self.REFERENCE)
         self.appendMenu([m, "Surfaces"], self.SURFACES_MENU)
         self.appendMenu([m, "Curves"], self.CURVES)
-        self.appendMenu([m, "Evaluate"], self.EVALUATE)
+        self.appendMenu([m, "Evaluate"], self.EVALUATE + ["Separator", "SD_PerfTrace"])
         self.appendMenu(m, ["Separator", "SD_CommandSearch", "SD_CommandLine", "SD_RepeatLast",
                             "SD_ContextToolbar", "SD_ReferenceLabels"])
         # SolidWorks' Insert menu structure, where FreeCAD lets it.
@@ -104,7 +104,7 @@ class SolidDesignWorkbench(Gui.Workbench):
         self.appendMenu(["&Insert", "Surface"], self.SURFACES_MENU)
         self.appendMenu(["&Insert", "Reference Geometry"], self.REFERENCE)
         self.appendMenu(["&Insert", "Curve"], self.CURVES)
-        self.appendMenu(["&Tools", "Evaluate"], self.EVALUATE)
+        self.appendMenu(["&Tools", "Evaluate"], self.EVALUATE + ["Separator", "SD_PerfTrace"])
 
     def Activated(self):
         from freecad.SolidDesign.gui import tooltips

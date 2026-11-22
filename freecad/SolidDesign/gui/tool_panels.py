@@ -32,10 +32,29 @@ def body_name_before(obj, bid):
     panel shows the model before the feature)."""
     base = obj.BaseFeature
     part = util.part_of(obj)
-    if base is not None and part is not None and bid in list(base.BodyIds):
+    if base is not None and part is not None:
         ids = list(base.BodyIds)
-        return part_mod.body_names(part, ids, list(base.BodyFeatures))[ids.index(bid)]
+        if bid not in ids:
+            return bid
+        feats = list(base.BodyFeatures)
+        # Named all at once, once per list of bodies: a list of hundreds of bodies
+        # asked for every body's name once per row.
+        key = (part.Document.Name, part.Name, tuple(ids), tuple(feats),
+               tuple(sorted(dict(part.BodyNames).items())),
+               tuple((f, getattr(part.Document.getObject(f), "Label", ""),
+                      str(getattr(part.Document.getObject(f), "PieceNames", "")))
+                     for f in sorted(set(feats)) if f))
+        if _names_memo[0] != key:
+            names = part_mod.body_names(part, ids, feats)
+            first = {}
+            for i, b in enumerate(ids):
+                first.setdefault(b, names[i])
+            _names_memo[:] = [key, first]
+        return _names_memo[1][bid]
     return bid
+
+
+_names_memo = [None, {}]
 
 
 class ToolPanel(FeaturePanel):

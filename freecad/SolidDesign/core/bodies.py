@@ -94,6 +94,23 @@ class BodySet(object):
             del self._b[body_id]
             self.deleted.append(body_id)
 
+    def insert_many_after(self, after_id, items):
+        """Add bodies [(id, shape, feature)] just after another one, in order (one
+        rebuild of the order, not one per body)."""
+        items = list(items)
+        old = list(self._b.items())
+        self._b.clear()
+        done = False
+        for k, v in old:
+            self._b[k] = v
+            if k == after_id:
+                for body_id, shape, feature in items:
+                    self._b[body_id] = Body(body_id, shape, None, feature)
+                done = True
+        if not done:
+            for body_id, shape, feature in items:
+                self._b[body_id] = Body(body_id, shape, None, feature)
+
     def insert_after(self, after_id, body_id, shape, feature):
         """Add a body just after another one (split pieces stay together)."""
         items = list(self._b.items())
@@ -149,6 +166,16 @@ class IdAllocator(object):
         self.memory = dict(memory or {})
         self.used = set(taken)
         self.new_memory = {}
+        self._by_prefix = None
+
+    def _remembered(self, prefix):
+        """Remembered IDs with a prefix, in memory order (indexed once: a split of
+        hundreds of bodies takes IDs once per body)."""
+        if self._by_prefix is None:
+            self._by_prefix = {}
+            for k in self.memory:
+                self._by_prefix.setdefault(k.rsplit(":", 1)[0], []).append(k)
+        return self._by_prefix.get(prefix, ())
 
     @staticmethod
     def loads(text):
@@ -178,26 +205,18 @@ class IdAllocator(object):
         prefix; unmatched shapes get the next free number.
         """
         prefix = prefix or self.feature
-        cands = {k: v for k, v in self.memory.items()
-                 if k.rsplit(":", 1)[0] == prefix and k not in self.used}
+        cands = {k: self.memory[k] for k in self._remembered(prefix) if k not in self.used}
         ids = [None] * len(shapes)
-        # Greedy global matching on distance, best pairs first.
-        pairs = []
-        for i, s in enumerate(shapes):
-            c = topo.centroid(s)
-            size = topo.size_of(s)
-            for k, m in cands.items():
-                d = (App.Vector(m[0], m[1], m[2]) - c).Length
-                ratio = (min(size, m[3]) / max(size, m[3])) if max(size, m[3]) > 0 else 1.0
-                if ratio < 0.2:
-                    continue
-                pairs.append((d / max(ratio, 1e-6), i, k))
-        pairs.sort()
         taken_k = set()
-        for _score, i, k in pairs:
-            if ids[i] is None and k not in taken_k:
-                ids[i] = k
-                taken_k.add(k)
+        if cands and shapes:
+            left = len(shapes)
+            for i, k in _best_pairs(shapes, cands):
+                if ids[i] is None and k not in taken_k:
+                    ids[i] = k
+                    taken_k.add(k)
+                    left -= 1
+                    if not left or len(taken_k) == len(cands):
+                        break               # nothing more can be matched
         n = 1
         for i, s in enumerate(shapes):
             if ids[i] is None:
@@ -209,6 +228,48 @@ class IdAllocator(object):
                 ids[i] = cand
             self._record(ids[i], s)
         return ids
+
+
+def _best_pairs(shapes, cands):
+    """(shape index, remembered ID) pairs, best first: nearest centre for the size,
+    skipping sizes too different. Greedy matching takes them in this order.
+
+    Worked out for all pairs at once (400 new bodies against 400 remembered ones
+    is 160,000 pairs); the same scores, in the same order (ties by index, then
+    ID), as scoring each pair in turn."""
+    keys = list(cands)
+    cs = [topo.centroid(s) for s in shapes]
+    sizes = [topo.size_of(s) for s in shapes]
+    if len(shapes) * len(keys) > 4000000:          # too many to hold: one at a time
+        pairs = []
+        for i, c in enumerate(cs):
+            size = sizes[i]
+            for k in keys:
+                m = cands[k]
+                d = (App.Vector(m[0], m[1], m[2]) - c).Length
+                ratio = (min(size, m[3]) / max(size, m[3])) if max(size, m[3]) > 0 else 1.0
+                if ratio < 0.2:
+                    continue
+                pairs.append((d / max(ratio, 1e-6), i, k))
+        pairs.sort()
+        return [(i, k) for _s, i, k in pairs]
+    import numpy as np
+    mem = np.array([cands[k] for k in keys], dtype=float)           # [x, y, z, size]
+    pts = np.array([[c.x, c.y, c.z] for c in cs], dtype=float)
+    sz = np.array(sizes, dtype=float)
+    diff = mem[None, :, :3] - pts[:, None, :]
+    d = np.sqrt(diff[..., 0] * diff[..., 0] + diff[..., 1] * diff[..., 1] +
+                diff[..., 2] * diff[..., 2])
+    hi = np.maximum(sz[:, None], mem[None, :, 3])
+    lo = np.minimum(sz[:, None], mem[None, :, 3])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(hi > 0, lo / np.where(hi > 0, hi, 1.0), 1.0)
+    ii, kk = np.nonzero(ratio >= 0.2)
+    score = d[ii, kk] / np.maximum(ratio[ii, kk], 1e-6)
+    rank = np.empty(len(keys), dtype=int)
+    rank[np.argsort(np.array(keys, dtype=object), kind="stable")] = np.arange(len(keys))
+    order = np.lexsort((rank[kk], ii, score))
+    return [(int(ii[j]), keys[kk[j]]) for j in order]
 
 
 # ---------------------------------------------------------------- ID rules

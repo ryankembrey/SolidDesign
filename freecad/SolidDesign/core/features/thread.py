@@ -62,12 +62,8 @@ def site(base, edge, reverse=False):
     if not (hasattr(c, "Radius") and hasattr(c, "Center")):
         raise topo.GeometryError("Pick a circular edge of a cylinder (a shaft's end, or a "
                                  "hole's rim).")
-    hit = None
-    for b in base:
-        found = edgemod.find_in(b.shape, edge)
-        if found is not None:
-            hit = (b, found)
-            break
+    b, found = edgemod.body_holding(base, edge)
+    hit = (b, found) if b is not None else None
     if hit is None:
         raise topo.GeometryError("The thread's edge isn't on any body before this feature. "
                                  "Re-pick it.")

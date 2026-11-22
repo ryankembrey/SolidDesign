@@ -14,6 +14,7 @@ Nothing in here imports FreeCADGui or Qt.
 """
 
 import math
+from collections import OrderedDict
 
 import FreeCAD as App
 import Part
@@ -207,13 +208,21 @@ def offset2d(shape, distance, tag, join=0, fill=False, open_result=False):
 
 
 def transformed(shape, placement, tag):
-    """Move a shape. In FreeCAD 1.1.3 a mapped shape keeps its map when moved."""
+    """Move a shape. In FreeCAD 1.1.3 a mapped shape keeps its map when moved.
+
+    The moved shape shares the original's topology and geometry (as a clone
+    does), with its own placement: 400 copies of a body are one body's worth of
+    faces, and FreeCAD meshes them once. (``copy(False)`` made new topology for
+    every copy.)"""
     had_map = shape.ElementMapSize > 0
     shape = tagged(shape, tag)
 
     def go():
-        s = shape.copy(False)
+        # transformed(identity, copy=False): a new handle on the same topology that
+        # keeps its type (an Edge stays an Edge; Part.Shape() gives a plain Shape).
+        s = shape.transformed(App.Matrix(), False)
         s.Placement = placement.multiply(s.Placement)
+        _moved_copy(s, shape, placement)
         return s
     # A move can't lose names the shape never had (a primitive): don't report it.
     return _run("transform" if had_map else "move-unnamed", tag, go)
@@ -353,20 +362,195 @@ def solids(shape):
     return list(shape.Solids) if shape and not shape.isNull() else []
 
 
+# ---------------------------------------------------------------- measures, kept
+#
+# A body that no feature changes is the same shape (same topology, same place)
+# from one feature to the next, and features measure it again and again: its
+# volume and centre for its ID, its box to see what a tool touches. Each is
+# worked out once per shape now. Shapes don't change once made, so a measure
+# kept for a shape is the measure of that shape. A moved copy (topology shared,
+# placed elsewhere: patterns) takes its volume from the original, its centre
+# moved with it, and its box moved with it when the move has no rotation.
+
+_MEASURES = OrderedDict()       # _key -> [(own handle on the shape, {what: value})]
+_MEASURES_KEPT = 20000
+measure_stats = {"hit": 0, "miss": 0}
+
+
+def same_shape(a, b):
+    """The same topology placed the same way: the same shape, even when FreeCAD
+    gave the placement as a new location (isSame compares locations by identity,
+    and a shape read back from a feature has a new one)."""
+    try:
+        return a.isPartner(b) and a.Placement.isSame(b.Placement, 1e-15)
+    except Exception:
+        return False
+
+
+def _key(shape):
+    """A key that the same shape always gets, wherever FreeCAD read it back from:
+    its type, its counts of faces and edges, and where it is placed. (A shape's
+    own hashCode takes in its location's identity, which is new each time a
+    feature's shape is read; the same shapes still share a key with others,
+    and same_shape tells them apart.)"""
+    pl = shape.Placement
+    b, q = pl.Base, pl.Rotation.Q
+    return (shape.ShapeType, shape.countElement("Face"), shape.countElement("Edge"),
+            round(b.x, 6), round(b.y, 6), round(b.z, 6),
+            round(q[0], 9), round(q[1], 9), round(q[2], 9), round(q[3], 9))
+
+
+# A quicker way in for a shape seen before through the very same location (most
+# shapes: a body nothing moved): its hashCode, checked with isSame (which implies
+# same_shape). Counting faces and edges for _key costs more than the lookup.
+_BY_HASH = {}
+
+
+def _remember(shape, held, d):
+    try:
+        h = shape.hashCode()
+    except Exception:
+        return
+    if len(_BY_HASH) > 2 * _MEASURES_KEPT:
+        _BY_HASH.clear()
+    _BY_HASH.setdefault(h, []).append((held, d))
+
+
+def _entry(shape, make=True):
+    try:
+        h = shape.hashCode()
+    except Exception:
+        h = None
+    for s, d in _BY_HASH.get(h, ()):
+        if s.isSame(shape):
+            return d
+    try:
+        key = _key(shape)
+    except Exception:
+        return None
+    bucket = _MEASURES.get(key)
+    if bucket is not None:
+        _MEASURES.move_to_end(key)
+        for s, d in bucket:
+            if same_shape(s, shape):
+                _remember(shape, Part.Shape(shape), d)
+                return d
+    if not make:
+        return None
+    d = {}
+    # Its own handle: a caller moving its shape object later can't move this one.
+    held = Part.Shape(shape)
+    _MEASURES.setdefault(key, []).append((held, d))
+    _remember(shape, held, d)
+    while len(_MEASURES) > _MEASURES_KEPT:
+        _MEASURES.popitem(last=False)
+    return d
+
+
+def _measure(shape, what, fn):
+    d = _entry(shape)
+    if d is None:
+        return fn()
+    if what in d:
+        measure_stats["hit"] += 1
+        return d[what]
+    src = d.get("_from")
+    v = None
+    if src is not None:
+        original, pl = src
+        if what == "size":
+            v = size_of(original)
+        elif what == "centroid":
+            v = pl.multVec(centroid(original))
+        elif what == "bbox" and pl.Rotation.isIdentity():
+            v = bbox(original)
+            v.move(pl.Base)
+    if v is None:
+        measure_stats["miss"] += 1
+        v = fn()
+    d[what] = v
+    return v
+
+
+def _moved_copy(copy, original, move):
+    """Note that ``copy`` is ``original`` (same topology) moved by ``move``."""
+    d = _entry(copy)
+    if d is not None and not d:
+        # Its own handle, of its own type (Part.Shape() gives a plain Shape, which
+        # has no CenterOfMass: its centre was taken as its box's centre).
+        d["_from"] = (_typed(original), App.Placement(move))
+
+
+def clear_measures():
+    _MEASURES.clear()
+    _BY_HASH.clear()
+
+
+def bbox(shape):
+    """The shape's bounding box (a copy: change it freely)."""
+    return App.BoundBox(_measure(shape, "bbox", lambda: shape.BoundBox))
+
+
+def _apart(ga, gb, tol):
+    if ga.intersect(gb):
+        return False
+    # BoundBox.intersect is strict; allow touching boxes through the gap test.
+    return (ga.XMin - gb.XMax > tol or gb.XMin - ga.XMax > tol or
+            ga.YMin - gb.YMax > tol or gb.YMin - ga.YMax > tol or
+            ga.ZMin - gb.ZMax > tol or gb.ZMin - ga.ZMax > tol)
+
+
+def box_gap(ga, gb, tol=LIN_TOL):
+    """True when two boxes are more than ``tol`` apart."""
+    return _apart(ga, gb, tol)
+
+
+def boxes_apart(a, b, tol=LIN_TOL):
+    """True when two shapes' boxes are more than ``tol`` apart: then the shapes
+    can't touch (a quick test before a boolean that could only come out empty)."""
+    return _apart(bbox(a), bbox(b), tol)
+
+
 def touches(a, b, tol=LIN_TOL):
     """True when two shapes overlap or touch."""
-    if not a.BoundBox.intersect(b.BoundBox):
-        # BoundBox.intersect is strict; allow touching boxes through the gap test.
-        ga = a.BoundBox
-        gb = b.BoundBox
-        if (ga.XMin - gb.XMax > tol or gb.XMin - ga.XMax > tol or
-                ga.YMin - gb.YMax > tol or gb.YMin - ga.YMax > tol or
-                ga.ZMin - gb.ZMax > tol or gb.ZMin - ga.ZMax > tol):
-            return False
+    if _apart(bbox(a), bbox(b), tol):
+        return False
     try:
         return a.distToShape(b)[0] <= tol
     except Exception:
         return False
+
+
+def tool_parts(tool):
+    """The pieces of a compound tool (a pattern of holes: one compound whose box
+    spans the whole pattern), for touches_any; None for a single shape."""
+    try:
+        if tool.ShapeType == "Compound":
+            parts = tool.childShapes()
+            if len(parts) > 1:
+                return parts
+    except Exception:
+        pass
+    return None
+
+
+def touches_any(a, tool, parts, tol=LIN_TOL):
+    """touches(a, tool) for a tool split into ``parts`` (tool_parts): the distance
+    to a compound is the least distance to its pieces, and only the pieces whose
+    boxes come near ``a`` are measured."""
+    if parts is None:
+        return touches(a, tool, tol)
+    ga = bbox(a)
+    if _apart(ga, bbox(tool), tol):
+        return False
+    for p in parts:
+        if not _apart(ga, bbox(p), tol):
+            try:
+                if a.distToShape(p)[0] <= tol:
+                    return True
+            except Exception:
+                pass
+    return False
 
 
 def overlap_volume(a, b):
@@ -380,12 +564,33 @@ def overlap_volume(a, b):
 
 def size_of(shape):
     """Volume for solids, area for faces/shells."""
+    return _measure(shape, "size", lambda: _size_of(shape))
+
+
+def _size_of(shape):
     if shape.Solids:
         return abs(shape.Volume)
     return abs(shape.Area)
 
 
 def centroid(shape):
+    """(A copy: change it freely.)"""
+    return App.Vector(_measure(shape, "centroid", lambda: _centroid(shape)))
+
+
+def _typed(shape):
+    """A handle on the same shape (same topology and place) of its own type: a
+    Solid has CenterOfMass, a plain Shape doesn't."""
+    try:
+        return shape.transformed(App.Matrix(), False)
+    except Exception:
+        return Part.Shape(shape)
+
+
+def _centroid(shape):
+    if not hasattr(shape, "CenterOfMass") and shape.ShapeType in ("Solid", "CompSolid",
+                                                                    "Shell", "Face", "Edge"):
+        shape = _typed(shape)
     try:
         if shape.Solids:
             return shape.CenterOfMass

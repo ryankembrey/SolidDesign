@@ -41,6 +41,29 @@ def _refresh_icon(vobj):
         pass
 
 
+_parts_to_refresh = set()       # (document, part) names whose icon is due
+
+
+def _refresh_part_icon_soon(part):
+    """Refresh a part's icon once, after the current burst of changes: rolling
+    the bar past hundreds of features changed each one's state, and each
+    refreshed the part's icon, which looks at every feature."""
+    key = (part.Document.Name, part.Name)
+    if key in _parts_to_refresh:
+        return
+    _parts_to_refresh.add(key)
+
+    def go():
+        _parts_to_refresh.discard(key)
+        try:
+            p = App.getDocument(key[0]).getObject(key[1])
+        except Exception:
+            p = None
+        if p is not None and p.ViewObject is not None:
+            _refresh_icon(p.ViewObject)
+    QtCore.QTimer.singleShot(0, go)
+
+
 class _Stateless(object):
     def dumps(self):
         return None
@@ -117,22 +140,25 @@ class PartVP(_DrawsNothing):
     def getIcon(self):
         obj = getattr(self, "Object", None)
         if obj is not None:
-            feats = util.features(obj)
-            if any(f.ErrorMessage for f in feats):
-                return icon("Part_error")
-            if any(f.WarningMessage for f in feats):
+            warned = False
+            for f in util.features(obj):
+                if f.ErrorMessage:
+                    return icon("Part_error")
+                warned = warned or bool(f.WarningMessage)
+            if warned:
                 return icon("Part_warning")
         return icon("Part")
 
     def claimChildren(self):
         obj = self.Object
         out = []
+        found = part_mod._found(obj)
         for kind in ("solid", "surface"):
-            f = part_mod.folder(obj, kind)
+            f = found["folders"].get(kind)
             if f is not None:
                 out.append(f)       # an empty folder is hidden (ShowInTree), as in SolidWorks
         origin = list(obj.Origin)
-        of = part_mod.folder(obj, part_mod.ORIGIN_FOLDER)
+        of = found["folders"].get(part_mod.ORIGIN_FOLDER)
         if of is not None:
             out.append(of)          # the planes and origin, in their own folder
         else:
@@ -143,7 +169,7 @@ class PartVP(_DrawsNothing):
         for f in util.features(obj):
             for c in FeatureVP.own_children(f):
                 claimed.add(c.Name)
-        bar = part_mod.rollback_bar(obj)
+        bar = found["bar"]
         group = list(obj.Group)
         bar_at = part_mod._bar_index(obj, group)    # the bar sits before this item
         for i, o in enumerate(group):
@@ -323,12 +349,17 @@ class FeatureVP(_DrawsNothing):
                 obj.Label2 = label2
             part = util.part_of(obj)
             if part is not None:
-                _refresh_icon(part.ViewObject)
+                _refresh_part_icon_soon(part)
 
     def onChanged(self, vobj, prop):
         pass
 
     def setEdit(self, vobj, mode=0):
+        from ..app import perf
+        with perf.span("panel.open", vobj.Object.Label):
+            return self._set_edit(vobj, mode)
+
+    def _set_edit(self, vobj, mode=0):
         if mode != 0:
             return None
         if _held(vobj):
@@ -587,10 +618,12 @@ class FolderVP(_DrawsNothing):
             return [o for o in origin if o.TypeId == "Part::DatumPlane"] + \
                 [o for o in origin if o.TypeId == "Part::DatumPoint"] + \
                 [o for o in origin if o.TypeId == "Part::DatumLine"]
-        ids = list(part.BodyIds)
+        rank = {}
+        for i, b in enumerate(part.BodyIds):
+            rank.setdefault(b, i)
         views = [v for v in part_mod.body_views(part) if v.Kind == obj.Kind or
                  (not v.Kind and obj.Kind == "solid")]
-        views.sort(key=lambda v: ids.index(v.BodyId) if v.BodyId in ids else 1e9)
+        views.sort(key=lambda v: rank.get(v.BodyId, 1e9))
         return views
 
     def onChanged(self, vobj, prop):

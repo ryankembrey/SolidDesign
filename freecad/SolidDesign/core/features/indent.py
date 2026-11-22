@@ -106,11 +106,8 @@ def compute(p, base):
         from ..bodies import split_pieces
         named = split_pieces(p.target, solids, p.alloc)
         out.replace(p.target, named[0][1], p.feature)
-        prev = p.target
-        for pid, s in named[1:]:
-            out.insert_after(prev, pid, s, p.feature)
-            res.created.append(pid)
-            prev = pid
+        out.insert_many_after(p.target, [(pid, s, p.feature) for pid, s in named[1:]])
+        res.created.extend(pid for pid, _s in named[1:])
     res.touched.append(p.target)
     return res, preview
 

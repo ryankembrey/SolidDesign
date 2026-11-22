@@ -175,12 +175,8 @@ def _edges_by_body(p, base):
         raise topo.GeometryError("Pick the parting lines: the edges the faces turn about.")
     by_body = {}
     for e in p.edges:
-        hit = None
-        for b in base:
-            found = edgemod.find_in(b.shape, e)
-            if found is not None:
-                hit = (b.id, found)
-                break
+        b, found = edgemod.body_holding(base, e)
+        hit = (b.id, found) if b is not None else None
         if hit is None:
             raise topo.GeometryError("A parting line isn't on any body before this feature. "
                                      "Re-pick it.")
@@ -259,12 +255,8 @@ def _parting(p, base):
         raise topo.GeometryError("Pick the parting lines: the edges the faces turn about.")
     by_body = {}
     for e in p.edges:
-        hit = None
-        for b in base:
-            found = edgemod.find_in(b.shape, e)
-            if found is not None:
-                hit = (b.id, found)
-                break
+        b, found = edgemod.body_holding(base, e)
+        hit = (b.id, found) if b is not None else None
         if hit is None:
             raise topo.GeometryError("A parting line isn't on any body before this feature. "
                                      "Re-pick it.")

@@ -1,0 +1,2543 @@
+From b72f3acd5df57148eaf8067dbc928dc5779fafd9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 23 Nov 2026 00:21:51 +1100
+Subject: [PATCH] Work with hundreds of bodies
+
+Measured on a block patterned to 400 bodies with more features on it. The
+results are identical (body IDs, volumes, centres, element maps); only the
+time changed: a recompute with nothing changed went from 4.6 s to 0.04 s,
+a fillet on 20 of the bodies from 24 s to 1.6 s, a Through All hole at 20
+points from 48 s to 1.8 s, rebuilding 10 features from 55 s to 6.5 s.
+
+- Copies (patterns, Move/Copy) share the seed body's topology.
+- Volumes, centres and boxes are kept per shape (a copy's from its seed).
+- Box tests before booleans and element searches: cuts, holes, Up To
+  Next, fillet/chamfer/draft/thread picks, sweep paths, sketch contours.
+- References: an index per feature shape finds the body of an element and
+  where a mapped name went, instead of walking every element.
+- Part sync: one document scan, O(bodies) work, folders re-claimed only
+  when their bodies change.
+- Panels: only the bodies a preview changes are veiled and redrawn (a
+  pattern's copies looked changed), their mesh is kept between previews,
+  ghosting writes only what changes, body lists are named once.
+- Kept shapes are let go when a document closes.
+- Plane labels on the command line follow the planes when FreeCAD resizes
+  them (an intermittent test failure).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JLfqHcRTb2RXQ8Vv8Bdrcu
+---
+ docs/_notes/ux-departures.md                  |  47 +++
+ freecad/SolidDesign/app/part.py               | 169 +++++++--
+ freecad/SolidDesign/app/refs.py               | 282 ++++++++++++---
+ freecad/SolidDesign/app/sweep.py              |  10 +-
+ freecad/SolidDesign/core/bodies.py            |  97 +++++-
+ freecad/SolidDesign/core/bodyops.py           |  24 +-
+ freecad/SolidDesign/core/features/common.py   |  55 ++-
+ freecad/SolidDesign/core/features/draft.py    |  16 +-
+ freecad/SolidDesign/core/features/edges.py    |  44 ++-
+ freecad/SolidDesign/core/features/extrude.py  |   9 +-
+ freecad/SolidDesign/core/features/hole.py     |  11 +-
+ freecad/SolidDesign/core/features/indent.py   |   7 +-
+ freecad/SolidDesign/core/features/pattern.py  |   7 +-
+ freecad/SolidDesign/core/features/revolve.py  |   2 +-
+ freecad/SolidDesign/core/features/surfaces.py |  12 +-
+ freecad/SolidDesign/core/features/sweep.py    |   2 +-
+ freecad/SolidDesign/core/features/thread.py   |   8 +-
+ freecad/SolidDesign/core/regions.py           |  26 +-
+ freecad/SolidDesign/core/topo.py              | 225 +++++++++++-
+ freecad/SolidDesign/gui/handles.py            |   4 +-
+ freecad/SolidDesign/gui/line_bar.py           |  19 ++
+ freecad/SolidDesign/gui/panel/base.py         |  37 +-
+ freecad/SolidDesign/gui/preview.py            |  44 ++-
+ freecad/SolidDesign/gui/selection.py          |  46 ++-
+ freecad/SolidDesign/gui/tool_panels.py        |  23 +-
+ freecad/SolidDesign/gui/viewproviders.py      |  48 ++-
+ tests/gui/explore.py                          |  62 +++-
+ tests/test_scale.py                           | 323 ++++++++++++++++++
+ 28 files changed, 1440 insertions(+), 219 deletions(-)
+ create mode 100644 tests/test_scale.py
+
+diff --git a/docs/_notes/ux-departures.md b/docs/_notes/ux-departures.md
+index ed08ea9..92906cd 100644
+--- a/docs/_notes/ux-departures.md
++++ b/docs/_notes/ux-departures.md
+@@ -1231,3 +1231,50 @@ for CAD. Left out on purpose (owner): Python on the line, counts (`3.`), macros
+   shown, so each rebuilt feature's whole result is meshed for nothing (about a third of
+   a rebuild's time on the test part). Hiding them would grey them in the tree; giving
+   them a view provider that doesn't mesh changes what's saved in files.
++
++## Many bodies (2026-11-22, owner's request: a part of 400 bodies)
++
++Measured on a drilled, filleted block patterned 20 × 20 (400 bodies), then more features
++on it. The results are the same as before (the same bodies, IDs, volumes and centres);
++only the time changed.
++
++| Step | Before | After |
++| :-- | --: | --: |
++| Recompute with nothing changed | 4.6 s | 0.04 s |
++| Pattern to 400 bodies | 6.7 s | 0.7 s |
++| Extrude a new body | 9.6 s | 0.5 s |
++| Cut through a row of 20 | 13.5 s | 1.8 s |
++| Edit the last feature (a fillet) | 6.7 s | 0.5 s |
++| Fillet 20 edges on 20 bodies | 23.9 s | 1.6 s |
++| Edit that fillet | 18.9 s | 1.0 s |
++| Hole Through All at 20 points | 47.7 s | 1.8 s |
++| Move/Copy a body, 5 copies | 7.4 s | 0.8 s |
++| Edit the first feature (10 features rebuilt) | 55.4 s | 6.5 s |
++
++- **Copies share their topology.** A pattern's or Move/Copy's copies are the seed body
++  moved, not new geometry: 400 copies are one body's worth of faces, and FreeCAD meshes
++  the body once.
++- **Measures are kept.** A body's volume, centre and box are worked out once (a copy's
++  from its seed); IDs, touching tests and pieces used to measure every body again in
++  every feature.
++- **Bodies nowhere near are skipped** before any boolean or element search: a cut or a
++  hole only meets the bodies its box reaches; a fillet's edges are looked for only in the
++  bodies whose box holds them; Up To Next only cuts with the bodies in the way.
++- A sketch's contours are checked for touching only where their boxes meet (a sketch of
++  hundreds of holes measured every pair).
++- **References are looked up, not searched for.** Which body holds a referenced element,
++  and where a reference went after an earlier change, are found from an index of the
++  model built once per change, not by walking all its elements for every reference.
++- **The tree and the body views are only updated when they change.** Each body view
++  read all the part's lists; the folders re-listed their bodies after every recompute.
++- Panels keep the mesh of the bodies a preview changes between previews, ghost only the
++  bodies not already transparent, and name the bodies in a list all at once.
++- Found doing it: the command line's plane labels were sometimes placed before FreeCAD
++  had sized the planes (an intermittent test failure, there before this work too); they
++  move onto the planes whenever the planes are resized now.
++- Found doing it: a panel's preview treated every body of a pattern as changed (a moved
++  body read back from another feature looked different), so it redrew them all over the
++  model. Only the bodies the feature changes are drawn now.
++- Not done (changes how the model looks): bodies are drawn finer than FreeCAD's default
++  (0.05 % and 8° against 0.5 % and 28.5°). With hundreds of curved bodies, that is most
++  of the drawing time; a coarser default would be the owner's call.
+diff --git a/freecad/SolidDesign/app/part.py b/freecad/SolidDesign/app/part.py
+index 8cecc2c..2239276 100644
+--- a/freecad/SolidDesign/app/part.py
++++ b/freecad/SolidDesign/app/part.py
+@@ -17,6 +17,7 @@ import FreeCAD as App
+ import Part
+ 
+ from ..core import bodies as core_bodies
++from ..core import topo
+ from ..core.bodies import BodySet
+ from . import perf, util
+ 
+@@ -93,7 +94,9 @@ class PartProxy(object):
+     def execute(self, obj):
+         tip = obj.Tip
+         if tip is not None and util.is_feature(tip):
+-            shape = tip.Shape.copy(False)
++            # The tip's own shape (shared, not copied): body views can then tell a
++            # body that didn't change from one that did.
++            shape = Part.Shape(tip.Shape)
+             ids, kinds, feats = list(tip.BodyIds), list(tip.BodyKinds), list(tip.BodyFeatures)
+         else:
+             shape = Part.makeCompound([])
+@@ -524,6 +527,30 @@ class RollbackBarProxy(object):
+ 
+ # =================================================================== body views
+ 
++_children = {}     # part name -> (its Shape, the shape's bodies): one sync's worth
++
++
++def part_children(part):
++    """The part's bodies as shapes, in BodyIds order. Got once per part shape:
++    every body view needs them, and childShapes() of a 400-body compound took
++    9 ms, for each of the 400 views."""
++    shape = part.Shape
++    hit = _children.get(part.Name)
++    if hit is not None and hit[0].isSame(shape):
++        return hit[1]
++    children = shape.childShapes() if shape.ShapeType == "Compound" else [shape]
++    _children[part.Name] = (shape, children)
++    return children
++
++
++def _same_shape(a, b):
++    """The same topology (and so the same geometry), placed the same."""
++    try:
++        return not a.isNull() and topo.same_shape(a, b)
++    except Exception:
++        return False
++
++
+ class BodyViewProxy(object):
+     """One body of the part, shown in a body folder."""
+     SD_ROLE = "body"
+@@ -546,23 +573,31 @@ class BodyViewProxy(object):
+         part = source_part(obj)
+         if part is None:
+             return
+-        ids = list(part.BodyIds)
+-        if obj.BodyId not in ids:
++        ctx = _sync_ctx.get(part.Name)
++        if ctx is None:
++            ids = list(part.BodyIds)
++            ctx = {"rank": {b: k for k, b in reversed(list(enumerate(ids)))},
++                   "kinds": list(part.BodyKinds), "children": part_children(part)}
++        i = ctx["rank"].get(obj.BodyId)
++        if i is None:
+             obj.Shape = Part.Shape()
+             return
+-        i = ids.index(obj.BodyId)
+-        shape = part.Shape
+-        children = shape.childShapes() if shape.ShapeType == "Compound" else [shape]
++        children = ctx["children"]
+         if i < len(children):
+             child = children[i]
+             # A moved body (Move/Copy, patterns) carries its move as a placement.
+             # Part::Feature replaces a new shape's placement with its own
+             # Placement property, so that property takes the move.
+             pl = child.Placement
+-            obj.Shape = child
+-            if not obj.Placement.isSame(pl, 1e-12):
+-                obj.Placement = pl
+-            kind = part.BodyKinds[i] if i < len(part.BodyKinds) else ""
++            same = obj.Placement.isSame(pl, 1e-12)
++            # A body no feature changed is the same shape as last time: setting it
++            # again would only make FreeCAD mesh it again.
++            if not (same and _same_shape(obj.Shape, child)):
++                obj.Shape = child
++                if not same:
++                    obj.Placement = pl
++            kinds = ctx["kinds"]
++            kind = kinds[i] if i < len(kinds) else ""
+             if obj.Kind != kind:
+                 obj.Kind = kind
+ 
+@@ -588,6 +623,11 @@ class BodyViewProxy(object):
+ 
+ 
+ _syncing = [False]
++# part name -> what every body view needs during one sync, worked out once
++# (each view read BodyIds and BodyKinds itself: O(bodies) per view).
++_sync_ctx = {}
++# folder name -> (ids, kinds, names) when its children were last re-claimed.
++_claimed = {}
+ 
+ 
+ def source_part(view):
+@@ -662,19 +702,56 @@ def clean_label(label):
+     return label.replace(_ZWSP, "")
+ 
+ 
+-def body_name(part, body_id, feature_name):
+-    names = dict(part.BodyNames)
++def body_name(part, body_id, feature_name, _user=None, _pieces=None):
++    """(``_user``: dict(part.BodyNames); ``_pieces``: {feature name: its PieceNames
++    or None}, filled as features are met; for naming many bodies at once.)"""
++    names = dict(part.BodyNames) if _user is None else _user
+     if body_id in names:
+         return names[body_id]
+     f = part.Document.getObject(feature_name) if feature_name else None
+-    if f is not None and "PieceNames" in f.PropertiesList and body_id in f.PieceNames:
+-        return f.PieceNames[body_id]        # named in Split's piece list
+-    return f.Label if f is not None else body_id
++    if f is None:
++        return body_id
++    if _pieces is None:
++        pieces = dict(f.PieceNames) if "PieceNames" in f.PropertiesList else None
++    else:
++        if feature_name not in _pieces:
++            _pieces[feature_name] = dict(f.PieceNames) if "PieceNames" in f.PropertiesList \
++                else None
++        pieces = _pieces[feature_name]
++    if pieces is not None and body_id in pieces:
++        return pieces[body_id]              # named in Split's piece list
++    return f.Label
++
++
++def _found(part):
++    """The part's folders, rollback bar and body views, in one pass over the
++    document (sync needed them several times, each a pass)."""
++    out = {"folders": {}, "bar": None, "views": []}
++    name = part.Name
++    for o in part.Document.Objects:
++        r = util.role(o)
++        if r == "folder":
++            if getattr(o, "PartName", "") == name and o.Kind not in out["folders"]:
++                out["folders"][o.Kind] = o
++        elif r == "rollback":
++            if out["bar"] is None and getattr(o, "PartName", "") == name:
++                out["bar"] = o
++        elif r == "body" and util.is_body_view(o) and getattr(o, "PartName", None) == name:
++            out["views"].append(o)
++    out["views"] += [o for o in part.InList if util.is_body_view(o) and
++                     "SourcePart" in o.PropertiesList and o.SourcePart is part]
++    return out
+ 
+ 
+-def ensure_view_providers(part):
+-    """Give view providers to objects made without the GUI (e.g. by a script)."""
++def ensure_view_providers(part, found=None, kinds=None):
++    """Give view providers to objects made without the GUI (e.g. by a script).
++    (``found``: _found(part), ``kinds``: list(part.BodyKinds), when known.)"""
+     from ..gui import viewproviders as vp
++    if found is None:
++        found = _found(part)
++    if kinds is None:
++        kinds = list(part.BodyKinds)
++
+     def need(o):
+         return o is not None and o.ViewObject is not None and o.ViewObject.Proxy is None
+     if need(part):
+@@ -683,25 +760,25 @@ def ensure_view_providers(part):
+         if need(f):
+             vp.attach_feature(f)
+     for kind in (core_bodies.SOLID, core_bodies.SURFACE):
+-        f = folder(part, kind)
++        f = found["folders"].get(kind)
+         if need(f):
+             vp.attach_folder(f)
+         if f is not None and f.ViewObject is not None:
+-            show = kind in list(part.BodyKinds)
++            show = kind in kinds
+             if f.ViewObject.ShowInTree != show:
+                 f.ViewObject.ShowInTree = show
+     for o in part.Origin:
+         if o.TypeId == "Part::DatumLine" and o.ViewObject is not None and o.ViewObject.ShowInTree:
+             o.ViewObject.ShowInTree = False
+-    f = folder(part, ORIGIN_FOLDER)
++    f = found["folders"].get(ORIGIN_FOLDER)
+     if f is None:
+         ensure_origin_folder(part)
+     elif need(f):
+         vp.attach_folder(f)
+-    bar = rollback_bar(part)
++    bar = found["bar"]
+     if need(bar):
+         vp.attach_rollback(bar)
+-    for v in body_views(part):
++    for v in found["views"]:
+         if need(v):
+             vp.attach_body(v)
+     from ..gui import sketch_edit
+@@ -716,9 +793,10 @@ def body_names(part, ids, feats):
+     """Names for bodies, as the tree shows them. SolidWorks names a body after the
+     last feature that changed it; several bodies from one feature are
+     "Cut-Extrude1[1]", "Cut-Extrude1[2]"..."""
+-    names = [body_name(part, bid, feats[i] if i < len(feats) else "")
+-             for i, bid in enumerate(ids)]
+     user = dict(part.BodyNames)
++    pieces = {}
++    names = [body_name(part, bid, feats[i] if i < len(feats) else "", user, pieces)
++             for i, bid in enumerate(ids)]
+     counts = {}
+     for i, n in enumerate(names):
+         if ids[i] not in user:
+@@ -738,15 +816,20 @@ def sync(part):
+     ids = list(part.BodyIds)
+     kinds = list(part.BodyKinds)
+     feats = list(part.BodyFeatures)
++    found = _found(part)
+     views = {}
+-    for v in body_views(part):
++    removed = False
++    for v in found["views"]:
+         if v.BodyId in views or v.BodyId not in ids:
+             doc.removeObject(v.Name)
++            removed = True
+         else:
+             views[v.BodyId] = v
+     _syncing[0] = True
+     changed = False
+     names = body_names(part, ids, feats)
++    _sync_ctx[part.Name] = {"rank": {b: k for k, b in reversed(list(enumerate(ids)))},
++                            "kinds": kinds, "children": part_children(part)}
+     try:
+         for i, bid in enumerate(ids):
+             v = views.get(bid)
+@@ -768,24 +851,47 @@ def sync(part):
+             v.purgeTouched()
+         if App.GuiUp:
+             try:
+-                ensure_view_providers(part)
++                if changed or removed:
++                    found = _found(part)
++                ensure_view_providers(part, found, kinds)
+             except Exception as e:
+                 util.console_warning("view providers: {}".format(e))
++        # The folders re-claim their bodies (the tree) only when what they list
++        # changed: with hundreds of bodies that is not free.
++        sig = (tuple(ids), tuple(kinds), tuple(names))
+         for kind in (core_bodies.SOLID, core_bodies.SURFACE):
+-            f = folder(part, kind)
++            f = found["folders"].get(kind)
+             if f is None:
+                 continue
+             title = folder_title(kind, kinds.count(kind))
+             if f.Label != title:
+                 f.Label = title
+-            f.Revision = f.Revision + 1
++            key = (doc.Name, f.Name)
++            if changed or removed or _claimed.get(key) != sig:
++                _claimed[key] = sig
++                f.Revision = f.Revision + 1
+             f.purgeTouched()
+     finally:
+         _syncing[0] = False
++        _sync_ctx.pop(part.Name, None)
+     return changed
+ 
+ 
+ class _Observer(object):
++    def slotDeletedDocument(self, doc):
++        """A document closed: let go of the shapes kept for speed (measures,
++        element indexes, bodies), which would keep its geometry in memory."""
++        try:
++            from . import refs
++            topo.clear_measures()
++            refs.clear_indexes()
++            _children.clear()
++            name = doc.Name
++            for k in [k for k in _claimed if k[0] == name]:
++                del _claimed[k]
++        except Exception:
++            pass
++
+     def slotRecomputedDocument(self, doc):
+         for p in find_parts(doc):
+             try:
+@@ -838,6 +944,13 @@ def feature_of_element(part, elem, tol=1e-6):
+         s = getattr(f, "AddSubShape", None)
+         if s is None or s.isNull():
+             continue
++        # Each element's padded box lies inside the whole shape's box padded as
++        # much as the largest element's: a feature whose box misses the point has
++        # nothing there (and its elements aren't measured).
++        whole = topo.bbox(s)
++        whole.enlarge(max(10 * tol, 0.01 * whole.DiagonalLength))
++        if not whole.isInside(p):
++            continue
+         for g in getattr(s, attr):
+             bb = App.BoundBox(g.BoundBox)
+             # Padded: a drawn shape's box comes from its display mesh.
+diff --git a/freecad/SolidDesign/app/refs.py b/freecad/SolidDesign/app/refs.py
+index a1b6bd1..9d40bba 100644
+--- a/freecad/SolidDesign/app/refs.py
++++ b/freecad/SolidDesign/app/refs.py
+@@ -19,7 +19,9 @@ fingerprint is tried within the same body:
+ Never pick silently between several matches.
+ """
+ 
++import bisect
+ import json
++from collections import OrderedDict
+ 
+ import FreeCAD as App
+ import Part
+@@ -109,37 +111,195 @@ def outline(elem):
+     return [[round(p.x, 4), round(p.y, 4), round(p.z, 4)] for p in pts]
+ 
+ 
+-def fingerprint(elem, body_id=""):
++def _fingerprint(elem, body_id=""):
+     c = topo.centroid(elem) if elem.ShapeType != "Vertex" else elem.Point
+     return {"kind": elem.ShapeType, "type": _type_name(elem), "dir": _orientation(elem),
+             "c": [c.x, c.y, c.z], "size": _size(elem), "body": body_id or "",
+             "pts": outline(elem)}
+ 
+ 
++def _copy_fp(fp):
++    return {k: ([list(p) for p in v] if k == "pts" else list(v) if isinstance(v, list) else v)
++            for k, v in fp.items()}
++
++
++def fingerprint(elem, body_id="", ix=None):
++    """``ix``: the _Index of the shape ``elem`` is in, which keeps fingerprints
++    already worked out (an element that didn't change isn't measured again)."""
++    if ix is None:
++        return _fingerprint(elem, body_id)
++    try:
++        h = elem.hashCode()
++    except Exception:
++        return _fingerprint(elem, body_id)
++    for e, b, fp in ix.fps.get(h, ()):
++        if b == body_id and e.isSame(elem):
++            return _copy_fp(fp)
++    fp = _fingerprint(elem, body_id)
++    ix.fps.setdefault(h, []).append((elem, body_id, _copy_fp(fp)))
++    return fp
++
++
++# ------------------------------------------------------------------ shape indexes
++# With hundreds of bodies, finding which body holds an element, or which element
++# a mapped name now has, meant walking every element of the model for every
++# reference on every recompute. An index is built once per feature shape (and
++# rebuilt when the shape changes) and answers the same questions by lookup.
++
++_INDEXES = OrderedDict()
++_INDEXES_KEPT = 16
++
++
++class _Index:
++    def __init__(self, shape):
++        self.shape = shape
++        self.children = shape.childShapes() if shape.ShapeType == "Compound" else [shape]
++        self._kinds = {}
++        self._cum = {}
++        self.fps = {}
++        self._names = {}
++        self._history = {}
++        self._bbox = None
++
++    def elements(self, kind):
++        """{hashCode: [(element, child index)]} over the children's elements (in
++        child order, so the first isSame match is the first child that has it)."""
++        m = self._kinds.get(kind)
++        if m is None:
++            m = {}
++            for i, ch in enumerate(self.children):
++                elems = ch.Faces if kind == "Face" else ch.Edges if kind == "Edge" \
++                    else ch.Vertexes
++                for e in elems:
++                    m.setdefault(e.hashCode(), []).append((e, i))
++            self._kinds[kind] = m
++        return m
++
++    def _ranges(self, kind):
++        """Running totals of each child's elements of a kind, when no element is
++        in two children (the shape's own numbering is then child after child);
++        else None (split pieces can share faces)."""
++        if kind not in self._cum:
++            cum, n = [], 0
++            for ch in self.children:
++                n += ch.countElement(kind)
++                cum.append(n)
++            self._cum[kind] = cum if n == self.shape.countElement(kind) else None
++        return self._cum[kind]
++
++    def child_of(self, elem):
++        """The index of the first child holding ``elem`` (isSame), or None."""
++        try:
++            kind = elem.ShapeType
++            cum = self._ranges(kind) if len(self.children) > 1 else None
++            if cum is not None:
++                # OpenCASCADE's own index of the element in the whole shape.
++                k, i = self.shape.findSubShape(elem)
++                if not i or k != kind:
++                    return None
++                return bisect.bisect_left(cum, i)
++            hits = self.elements(kind).get(elem.hashCode(), ())
++        except Exception:
++            return None
++        for e, i in hits:
++            if e.isSame(elem):
++                return i
++        return None
++
++    def names(self, kind):
++        """Sorted [(mapped name, index name)] of one kind of element."""
++        v = self._names.get(kind)
++        if v is None:
++            shape = self.shape
++            n = shape.countElement(kind)
++            try:
++                rmap = shape.ElementReverseMap
++            except Exception:
++                rmap = {}
++            v = []
++            for i in range(1, n + 1):
++                name = "{}{}".format(kind, i)
++                m = rmap.get(name, "")
++                if not isinstance(m, str):
++                    m = _mapped(shape, name)     # several names: the one getElement gives
++                if m:
++                    v.append((m, name))
++            v.sort()
++            self._names[kind] = v
++        return v
++
++    def history(self, kind):
++        """[(index name, history)] of one kind of element, in index order."""
++        v = self._history.get(kind)
++        if v is None:
++            shape = self.shape
++            v = []
++            for i in range(1, shape.countElement(kind) + 1):
++                name = "{}{}".format(kind, i)
++                m = _mapped(shape, name)
++                try:
++                    h = shape.getElementHistory(m) if m else None
++                except Exception:
++                    h = None
++                v.append((name, h))
++            self._history[kind] = v
++        return v
++
++    def diagonal(self):
++        if self._bbox is None:
++            self._bbox = topo.bbox(self.shape).DiagonalLength
++        return self._bbox
++
++
++def _index(obj, shape=None):
++    """The index of a feature's shape (``shape``: obj.Shape when already read)."""
++    if shape is None:
++        shape = obj.Shape
++    try:
++        key = (obj.Document.Name, obj.Name)
++    except Exception:
++        return _Index(shape)
++    ix = _INDEXES.get(key)
++    if ix is not None and topo.same_shape(ix.shape, shape):
++        _INDEXES.move_to_end(key)
++        return ix
++    ix = _Index(shape)
++    _INDEXES[key] = ix
++    while len(_INDEXES) > _INDEXES_KEPT:
++        _INDEXES.popitem(last=False)
++    return ix
++
++
++def clear_indexes():
++    _INDEXES.clear()
++
++
+ def _children(obj):
+-    shape = obj.Shape
+-    return shape.childShapes() if shape.ShapeType == "Compound" else [shape]
++    return _index(obj).children
+ 
+ 
+-def body_of_element(obj, elem):
++def body_of_element(obj, elem, ix=None):
+     """The body ID (from a feature's BodyIds) that holds an element, or ''."""
+     ids = list(getattr(obj, "BodyIds", []) or [])
+     if not ids or elem is None:
+         return ""
+-    kind = elem.ShapeType
+-    children = _children(obj)
+-    for i, ch in enumerate(children):
+-        elems = ch.Faces if kind == "Face" else ch.Edges if kind == "Edge" else ch.Vertexes
+-        for e in elems:
+-            if e.isSame(elem):
+-                return ids[i] if i < len(ids) else ""
++    if ix is None:
++        ix = _index(obj)
++    i = ix.child_of(elem)
++    if i is not None:
++        return ids[i] if i < len(ids) else ""
+     from ..core.features.edges import find_in
+-    for i, ch in enumerate(children):           # shapes that don't share topology
++    for i, ch in enumerate(ix.children):        # shapes that don't share topology
+         if find_in(ch, elem) is not None:
+             return ids[i] if i < len(ids) else ""
+     return ""
+ 
+ 
++def _fingerprint_in(obj, elem):
++    ix = _index(obj)
++    return fingerprint(elem, body_of_element(obj, elem, ix), ix)
++
++
+ # ------------------------------------------------------------------ fingerprints
+ 
+ def _fps(obj):
+@@ -187,7 +347,7 @@ def set_ref(obj, prop, target, subs=""):
+     for sub in subs:
+         try:
+             elem = Part.getShape(target, sub, needSubElement=True)
+-            fps.append(fingerprint(elem, body_of_element(target, elem)))
++            fps.append(_fingerprint_in(target, elem))
+         except Exception:
+             fps.append(None)
+     _store(obj, prop, fps)
+@@ -236,7 +396,7 @@ def _note_repair(obj, prop, what, old_fp, target, sub, elem, msg, origin=None):
+     # Repaired twice before it was checked: where it was first is what matters.
+     old = first["old"] if first is not None and first.get("old") else old_fp
+     items.append({"prop": prop, "what": what, "old": old,
+-                  "new": fingerprint(elem, body_of_element(target, elem)),
++                  "new": _fingerprint_in(target, elem),
+                   "sub": sub, "target": target.Name if target is not None else "",
+                   "origin": (first or {}).get("origin") or
+                   (origin.Name if origin is not None else ""), "msg": msg})
+@@ -309,24 +469,20 @@ def follow(target, sub, base):
+     old = _mapped(target.Shape, sub)
+     if not old or kind is None:
+         return None
+-    shape = base.Shape
+-    n = len(shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes)
++    ix = _index(base)
++    names = ix.names(kind)
+     hits = []
+-    for i in range(1, n + 1):
+-        name = "{}{}".format(kind, i)
+-        m = _mapped(shape, name)
+-        if m == old or (m.startswith(old) and m[len(old):len(old) + 1] == ";"):
++    # Exact matches and old + ";..." sort together, right after ``old``.
++    i = bisect.bisect_left(names, (old,))
++    while i < len(names) and names[i][0].startswith(old):
++        m, name = names[i]
++        if m == old or m[len(old):len(old) + 1] == ";":
+             hits.append(name)
++        i += 1
+     if len(hits) == 1:
+         return hits[0]
+     if not hits:
+-        for i in range(1, n + 1):
+-            name = "{}{}".format(kind, i)
+-            m = _mapped(shape, name)
+-            try:
+-                h = shape.getElementHistory(m) if m else None
+-            except Exception:
+-                h = None
++        for name, h in ix.history(kind):
+             if h and (h[1] == old or old in (h[2] or [])):
+                 hits.append(name)
+         if len(hits) == 1:
+@@ -343,37 +499,45 @@ def _same_dir(a, b, tol=1e-6):
+     return abs(abs(va.normalize().dot(vb.normalize())) - 1.0) < tol
+ 
+ 
+-def _candidates(target, fp):
+-    shape = target.Shape
++def _candidates(target, fp, ix=None):
++    if ix is None:
++        ix = _index(target)
++    shape = ix.shape
+     ids = list(getattr(target, "BodyIds", []) or [])
+     if fp.get("body") and ids and fp["body"] in ids:
+-        ch = _children(target)
+         idx = ids.index(fp["body"])
+-        if idx < len(ch):
+-            shape = ch[idx]
++        if idx < len(ix.children):
++            shape = ix.children[idx]
+     kind = fp["kind"]
+     elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes
+     return [e for e in elems if _type_name(e) == fp["type"] and _same_dir(_orientation(e), fp["dir"])]
+ 
+ 
+-def _match(target, fp):
+-    cands = _candidates(target, fp)
++def _near(e, fp, scale):
++    c = App.Vector(*fp["c"])
++    ec = topo.centroid(e) if e.ShapeType != "Vertex" else e.Point
++    size = _size(e)
++    return (ec - c).Length <= 0.01 * scale and (
++        fp["size"] == 0 or abs(size - fp["size"]) <= 0.1 * max(fp["size"], 1e-9))
++
++
++def _match(target, fp, ix=None):
++    if ix is None:
++        ix = _index(target)
++    cands = _candidates(target, fp, ix)
+     if len(cands) <= 1:
+         return cands
+-    c = App.Vector(*fp["c"])
+-    scale = max(target.Shape.BoundBox.DiagonalLength, 1e-6)
+-    near = []
+-    for e in cands:
+-        ec = topo.centroid(e) if e.ShapeType != "Vertex" else e.Point
+-        size = _size(e)
+-        if (ec - c).Length <= 0.01 * scale and (
+-                fp["size"] == 0 or abs(size - fp["size"]) <= 0.1 * max(fp["size"], 1e-9)):
+-            near.append(e)
+-    return near
++    scale = max(ix.diagonal(), 1e-6)
++    return [e for e in cands if _near(e, fp, scale)]
+ 
+ 
+ def _index_of(target, elem):
+     kind = elem.ShapeType
++    try:
++        k, i = target.Shape.findSubShape(elem)
++        return "{}{}".format(kind, i) if k == kind and i else None
++    except Exception:
++        pass
+     elems = target.Shape.Faces if kind == "Face" else target.Shape.Edges if kind == "Edge" \
+         else target.Shape.Vertexes
+     for i, e in enumerate(elems, 1):
+@@ -463,7 +627,7 @@ def get_refs(obj, prop, what="reference", base=None):
+             subs.append(s)
+             warns.append(w)
+         setattr(obj, prop, (base, subs))
+-        _store(obj, prop, [fingerprint(e, body_of_element(base, e)) for e in elems])
++        _store(obj, prop, [_fingerprint_in(base, e) for e in elems])
+         return elems, [w for w in warns if w]
+     target, subs = val
+     if not subs:
+@@ -486,7 +650,8 @@ def get_refs(obj, prop, what="reference", base=None):
+             _note_repair(obj, prop, what, fp, t, s, e, w, origin=target)
+     if new_target is not target or list(new_subs) != list(subs):
+         setattr(obj, prop, (new_target, new_subs))
+-    new_fps = [fingerprint(e, body_of_element(new_target, e)) for e in elems]
++    ix = _index(new_target) if elems else None
++    new_fps = [fingerprint(e, body_of_element(new_target, e, ix), ix) for e in elems]
+     if new_fps != fps:
+         _store(obj, prop, new_fps)
+     return elems, warns
+@@ -509,9 +674,32 @@ def find_element(target, sub, fp):
+         elem = target.Shape.getElement(sub)
+     except Exception:
+         elem = None
+-    cands = _match(target, fp) if fp else []
++    if elem is not None and not fp:
++        return sub
++    ix = _index(target) if fp else None
++    if elem is not None and _still(target, elem, fp, ix):
++        return sub
++    cands = _match(target, fp, ix) if fp else []
+     if elem is not None and (not fp or any(c.isSame(elem) for c in cands)):
+         return sub
+     if len(cands) == 1:
+         return _index_of(target, cands[0])
+     return None
++
++
++def _still(target, elem, fp, ix):
++    """True when ``elem`` is sure to be among _match(target, fp): of the
++    fingerprint's body, type and direction, and near where it was (being near
++    is enough either way: alone it is the only candidate, else it passes)."""
++    try:
++        if elem.ShapeType != fp["kind"] or _type_name(elem) != fp["type"] or \
++                not _same_dir(_orientation(elem), fp["dir"]):
++            return False
++        ids = list(getattr(target, "BodyIds", []) or [])
++        if fp.get("body") and ids and fp["body"] in ids:
++            idx = ids.index(fp["body"])
++            if idx < len(ix.children) and ix.child_of(elem) != idx:
++                return False
++        return _near(elem, fp, max(ix.diagonal(), 1e-6))
++    except Exception:
++        return False
+diff --git a/freecad/SolidDesign/app/sweep.py b/freecad/SolidDesign/app/sweep.py
+index 274a545..d2dcb52 100644
+--- a/freecad/SolidDesign/app/sweep.py
++++ b/freecad/SolidDesign/app/sweep.py
+@@ -98,9 +98,17 @@ class SweepProxy(sketchfeature.SketchFeatureProxy):
+                 m = b.valueAt(0.5 * (b.FirstParameter + b.LastParameter))
+                 return a.distToShape(Part.Vertex(m))[0] < 1e-7
+ 
++            # Each face's box once: a face whose box is nowhere near the middle of
++            # the path edge can't have that edge (``same`` needs the face's edge
++            # within 1e-7 of it), so its edges aren't compared.
++            faces = [(g, g.BoundBox) for g in whole.Faces]
++            for bb in (b for _g, b in faces):
++                bb.enlarge(1e-6)
+             for e in edges:
+                 try:
+-                    for f in [g for g in whole.Faces if any(same(x, e) for x in g.Edges)]:
++                    m = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
++                    near = [g for g, bb in faces if bb.isInside(m)]
++                    for f in [g for g in near if any(same(x, e) for x in g.Edges)]:
+                         k = next((i for i, (g, _n) in enumerate(count) if f.isSame(g)), None)
+                         if k is None:
+                             count.append((f, 1))
+diff --git a/freecad/SolidDesign/core/bodies.py b/freecad/SolidDesign/core/bodies.py
+index dbf410e..60e88bd 100644
+--- a/freecad/SolidDesign/core/bodies.py
++++ b/freecad/SolidDesign/core/bodies.py
+@@ -94,6 +94,23 @@ class BodySet(object):
+             del self._b[body_id]
+             self.deleted.append(body_id)
+ 
++    def insert_many_after(self, after_id, items):
++        """Add bodies [(id, shape, feature)] just after another one, in order (one
++        rebuild of the order, not one per body)."""
++        items = list(items)
++        old = list(self._b.items())
++        self._b.clear()
++        done = False
++        for k, v in old:
++            self._b[k] = v
++            if k == after_id:
++                for body_id, shape, feature in items:
++                    self._b[body_id] = Body(body_id, shape, None, feature)
++                done = True
++        if not done:
++            for body_id, shape, feature in items:
++                self._b[body_id] = Body(body_id, shape, None, feature)
++
+     def insert_after(self, after_id, body_id, shape, feature):
+         """Add a body just after another one (split pieces stay together)."""
+         items = list(self._b.items())
+@@ -149,6 +166,16 @@ class IdAllocator(object):
+         self.memory = dict(memory or {})
+         self.used = set(taken)
+         self.new_memory = {}
++        self._by_prefix = None
++
++    def _remembered(self, prefix):
++        """Remembered IDs with a prefix, in memory order (indexed once: a split of
++        hundreds of bodies takes IDs once per body)."""
++        if self._by_prefix is None:
++            self._by_prefix = {}
++            for k in self.memory:
++                self._by_prefix.setdefault(k.rsplit(":", 1)[0], []).append(k)
++        return self._by_prefix.get(prefix, ())
+ 
+     @staticmethod
+     def loads(text):
+@@ -178,26 +205,18 @@ class IdAllocator(object):
+         prefix; unmatched shapes get the next free number.
+         """
+         prefix = prefix or self.feature
+-        cands = {k: v for k, v in self.memory.items()
+-                 if k.rsplit(":", 1)[0] == prefix and k not in self.used}
++        cands = {k: self.memory[k] for k in self._remembered(prefix) if k not in self.used}
+         ids = [None] * len(shapes)
+-        # Greedy global matching on distance, best pairs first.
+-        pairs = []
+-        for i, s in enumerate(shapes):
+-            c = topo.centroid(s)
+-            size = topo.size_of(s)
+-            for k, m in cands.items():
+-                d = (App.Vector(m[0], m[1], m[2]) - c).Length
+-                ratio = (min(size, m[3]) / max(size, m[3])) if max(size, m[3]) > 0 else 1.0
+-                if ratio < 0.2:
+-                    continue
+-                pairs.append((d / max(ratio, 1e-6), i, k))
+-        pairs.sort()
+         taken_k = set()
+-        for _score, i, k in pairs:
+-            if ids[i] is None and k not in taken_k:
+-                ids[i] = k
+-                taken_k.add(k)
++        if cands and shapes:
++            left = len(shapes)
++            for i, k in _best_pairs(shapes, cands):
++                if ids[i] is None and k not in taken_k:
++                    ids[i] = k
++                    taken_k.add(k)
++                    left -= 1
++                    if not left or len(taken_k) == len(cands):
++                        break               # nothing more can be matched
+         n = 1
+         for i, s in enumerate(shapes):
+             if ids[i] is None:
+@@ -211,6 +230,48 @@ class IdAllocator(object):
+         return ids
+ 
+ 
++def _best_pairs(shapes, cands):
++    """(shape index, remembered ID) pairs, best first: nearest centre for the size,
++    skipping sizes too different. Greedy matching takes them in this order.
++
++    Worked out for all pairs at once (400 new bodies against 400 remembered ones
++    is 160,000 pairs); the same scores, in the same order (ties by index, then
++    ID), as scoring each pair in turn."""
++    keys = list(cands)
++    cs = [topo.centroid(s) for s in shapes]
++    sizes = [topo.size_of(s) for s in shapes]
++    if len(shapes) * len(keys) > 4000000:          # too many to hold: one at a time
++        pairs = []
++        for i, c in enumerate(cs):
++            size = sizes[i]
++            for k in keys:
++                m = cands[k]
++                d = (App.Vector(m[0], m[1], m[2]) - c).Length
++                ratio = (min(size, m[3]) / max(size, m[3])) if max(size, m[3]) > 0 else 1.0
++                if ratio < 0.2:
++                    continue
++                pairs.append((d / max(ratio, 1e-6), i, k))
++        pairs.sort()
++        return [(i, k) for _s, i, k in pairs]
++    import numpy as np
++    mem = np.array([cands[k] for k in keys], dtype=float)           # [x, y, z, size]
++    pts = np.array([[c.x, c.y, c.z] for c in cs], dtype=float)
++    sz = np.array(sizes, dtype=float)
++    diff = mem[None, :, :3] - pts[:, None, :]
++    d = np.sqrt(diff[..., 0] * diff[..., 0] + diff[..., 1] * diff[..., 1] +
++                diff[..., 2] * diff[..., 2])
++    hi = np.maximum(sz[:, None], mem[None, :, 3])
++    lo = np.minimum(sz[:, None], mem[None, :, 3])
++    with np.errstate(divide="ignore", invalid="ignore"):
++        ratio = np.where(hi > 0, lo / np.where(hi > 0, hi, 1.0), 1.0)
++    ii, kk = np.nonzero(ratio >= 0.2)
++    score = d[ii, kk] / np.maximum(ratio[ii, kk], 1e-6)
++    rank = np.empty(len(keys), dtype=int)
++    rank[np.argsort(np.array(keys, dtype=object), kind="stable")] = np.arange(len(keys))
++    order = np.lexsort((rank[kk], ii, score))
++    return [(int(ii[j]), keys[kk[j]]) for j in order]
++
++
+ # ---------------------------------------------------------------- ID rules
+ 
+ def split_pieces(body_id, pieces, alloc):
+diff --git a/freecad/SolidDesign/core/bodyops.py b/freecad/SolidDesign/core/bodyops.py
+index 51d036a..77c9a1f 100644
+--- a/freecad/SolidDesign/core/bodyops.py
++++ b/freecad/SolidDesign/core/bodyops.py
+@@ -65,11 +65,8 @@ def combine(base, op, main_id, tool_ids, feature, tag, alloc):
+         out.remove(i)
+     named = split_pieces(ids[0], parts, alloc)
+     out.replace(ids[0], named[0][1], feature)
+-    prev = ids[0]
+-    for pid, s in named[1:]:
+-        out.insert_after(prev, pid, s, feature)
+-        res.created.append(pid)
+-        prev = pid
++    out.insert_many_after(ids[0], [(pid, s, feature) for pid, s in named[1:]])
++    res.created.extend(pid for pid, _s in named[1:])
+     res.touched.append(ids[0])
+     return res, r
+ 
+@@ -247,17 +244,11 @@ def split(base, tools, target_ids, consume, keep_ids, feature, tag, alloc, refin
+         if consume:
+             named = split_pieces(bid, parts, alloc)
+             out.replace(bid, named[0][1], feature)
+-            prev = bid
+-            for pid, s in named[1:]:
+-                out.insert_after(prev, pid, s, feature)
+-                prev = pid
++            out.insert_many_after(bid, [(pid, s, feature) for pid, s in named[1:]])
+         else:
+             ids = alloc.take(parts, prefix="{}:{}".format(feature, bid))
+             named = list(zip(ids, parts))
+-            prev = bid
+-            for pid, s in named:
+-                out.insert_after(prev, pid, s, feature)
+-                prev = pid
++            out.insert_many_after(bid, [(pid, s, feature) for pid, s in named])
+         res.pieces.extend((pid, s, bid) for pid, s in named)
+         res.touched.append(bid)
+     if not any_cut:
+@@ -303,11 +294,8 @@ def move_copy(base, ids, step, copy, copies, feature, tag, alloc):
+             pl = step.multiply(pl)
+             shapes.append(topo.transformed(body.shape, pl, tag))
+         new_ids = alloc.take(shapes, prefix="{}:{}".format(feature, bid))
+-        prev = bid
+-        for nid, s in zip(new_ids, shapes):
+-            out.insert_after(prev, nid, s, feature)
+-            res.created.append(nid)
+-            prev = nid
++        out.insert_many_after(bid, [(nid, s, feature) for nid, s in zip(new_ids, shapes)])
++        res.created.extend(new_ids)
+         moved.extend(shapes)
+     return res, (topo.compound(moved, tag) if moved else None)
+ 
+diff --git a/freecad/SolidDesign/core/features/common.py b/freecad/SolidDesign/core/features/common.py
+index 381f430..ba2e835 100644
+--- a/freecad/SolidDesign/core/features/common.py
++++ b/freecad/SolidDesign/core/features/common.py
+@@ -58,6 +58,7 @@ class Result(object):
+         self.touched = []       # IDs changed by the operation
+         self.created = []       # IDs created
+         self.warnings = []
++        self.contact = None     # apply_cut: IDs of the bodies the tool touches
+ 
+ 
+ def apply_add(base, tool, feature, tag, merge, scope, alloc):
+@@ -83,8 +84,23 @@ def apply_add(base, tool, feature, tag, merge, scope, alloc):
+     candidates = scope.pick(base, SOLID) if merge else []
+     # touched[t] = scoped bodies each tool solid touches
+     touched = []
++    # topo.touches for every pair, with each box looked up once (a pattern merged
++    # into hundreds of bodies is hundreds of thousands of pairs).
++    cshapes = [base.get(bid).shape for bid in candidates]
++    cboxes = [topo.bbox(s) for s in cshapes]
+     for ts in tsolids:
+-        touched.append([bid for bid in candidates if topo.touches(base.get(bid).shape, ts)])
++        tb = topo.bbox(ts)
++        row = []
++        for bid, s, cb in zip(candidates, cshapes, cboxes):
++            if topo.box_gap(cb, tb):
++                continue
++            try:
++                if s.distToShape(ts)[0] <= topo.LIN_TOL:
++                    row.append(bid)
++            except Exception:
++                pass
++        touched.append(row)
++    rank = {b: i for i, b in reversed(list(enumerate(candidates)))}
+ 
+     # Group tool solids that share a body (union-find over tool solids).
+     parent = list(range(len(tsolids)))
+@@ -108,7 +124,7 @@ def apply_add(base, tool, feature, tag, merge, scope, alloc):
+ 
+     loose = []
+     for g in groups.values():
+-        bids = sorted({b for ti in g for b in touched[ti]}, key=candidates.index)
++        bids = sorted({b for ti in g for b in touched[ti]}, key=rank.__getitem__)
+         if not bids:
+             loose.extend(tsolids[ti] for ti in g)
+             continue
+@@ -151,10 +167,21 @@ def apply_cut(base, tool, feature, tag, scope, keep, alloc, flip=False):
+     res = Result(out)
+     if tool is None or tool.isNull() or not (tool.Solids or tool.Faces):
+         raise topo.GeometryError("The cut made no tool shape.")
++    if not flip:
++        res.contact = set()
++    parts_of_tool = topo.tool_parts(tool)
+     for bid in scope.pick(base):
+         body = base.get(bid)
+-        if not flip and not topo.touches(body.shape, tool):
+-            alloc.keep(bid, body.shape)
++        if not flip:
++            if not topo.touches_any(body.shape, tool, parts_of_tool):
++                alloc.keep(bid, body.shape)
++                continue
++            res.contact.add(bid)
++        elif topo.boxes_apart(body.shape, tool):
++            # Kept inside a tool it is nowhere near: nothing is left of it (what
++            # the boolean would give, without running it).
++            out.remove(bid)
++            res.touched.append(bid)
+             continue
+         if flip:
+             r = topo.common(body.shape, [tool], tag)
+@@ -177,11 +204,8 @@ def apply_cut(base, tool, feature, tag, scope, keep, alloc, flip=False):
+         named = split_pieces(bid, parts, alloc)
+         out.replace(bid, named[0][1], feature)
+         res.touched.append(bid)
+-        prev = bid
+-        for pid, s in named[1:]:
+-            out.insert_after(prev, pid, s, feature)
+-            res.created.append(pid)
+-            prev = pid
++        out.insert_many_after(bid, [(pid, s, feature) for pid, s in named[1:]])
++        res.created.extend(pid for pid, _s in named[1:])
+         res.pieces.extend((pid, s, bid) for pid, s in named)
+ 
+     if res.pieces and not keep.all:
+@@ -197,10 +221,15 @@ def apply_cut(base, tool, feature, tag, scope, keep, alloc, flip=False):
+     return res
+ 
+ 
+-def removed_material(tool, base, scope, tag):
+-    """What a cut takes away, for the preview (spec 8.2)."""
+-    shapes = [base.get(b).shape for b in scope.pick(base, SOLID)]
+-    shapes = [s for s in shapes if topo.touches(s, tool)]
++def removed_material(tool, base, scope, tag, cut=None):
++    """What a cut takes away, for the preview (spec 8.2). ``cut``: the Result of
++    the cut just made with this tool, which already knows what it touches."""
++    contact = getattr(cut, "contact", None)
++    if contact is not None:
++        shapes = [base.get(b).shape for b in scope.pick(base, SOLID) if b in contact]
++    else:
++        shapes = [base.get(b).shape for b in scope.pick(base, SOLID)]
++        shapes = [s for s in shapes if topo.touches(s, tool)]
+     if not shapes:
+         return tool
+     try:
+diff --git a/freecad/SolidDesign/core/features/draft.py b/freecad/SolidDesign/core/features/draft.py
+index 0a15350..330d4ac 100644
+--- a/freecad/SolidDesign/core/features/draft.py
++++ b/freecad/SolidDesign/core/features/draft.py
+@@ -175,12 +175,8 @@ def _edges_by_body(p, base):
+         raise topo.GeometryError("Pick the parting lines: the edges the faces turn about.")
+     by_body = {}
+     for e in p.edges:
+-        hit = None
+-        for b in base:
+-            found = edgemod.find_in(b.shape, e)
+-            if found is not None:
+-                hit = (b.id, found)
+-                break
++        b, found = edgemod.body_holding(base, e)
++        hit = (b.id, found) if b is not None else None
+         if hit is None:
+             raise topo.GeometryError("A parting line isn't on any body before this feature. "
+                                      "Re-pick it.")
+@@ -259,12 +255,8 @@ def _parting(p, base):
+         raise topo.GeometryError("Pick the parting lines: the edges the faces turn about.")
+     by_body = {}
+     for e in p.edges:
+-        hit = None
+-        for b in base:
+-            found = edgemod.find_in(b.shape, e)
+-            if found is not None:
+-                hit = (b.id, found)
+-                break
++        b, found = edgemod.body_holding(base, e)
++        hit = (b.id, found) if b is not None else None
+         if hit is None:
+             raise topo.GeometryError("A parting line isn't on any body before this feature. "
+                                      "Re-pick it.")
+diff --git a/freecad/SolidDesign/core/features/edges.py b/freecad/SolidDesign/core/features/edges.py
+index 56b46fe..f0d5981 100644
+--- a/freecad/SolidDesign/core/features/edges.py
++++ b/freecad/SolidDesign/core/features/edges.py
+@@ -45,16 +45,34 @@ def find_in(shape, elem):
+     return None
+ 
+ 
++# Far enough to cover how boxes are made (an element on a body overlaps its box;
++# one matched by geometry has its centre within 1e-6 of the body's element).
++NEAR = 1e-4
++
++
++def body_holding(base, elem):
++    """(body, ``elem`` as an element of the body's own shape): the first body in
++    order that holds it (find_in), or (None, None). Bodies whose box is nowhere
++    near the element are passed over without looking at their elements."""
++    try:
++        eb = elem.BoundBox
++    except Exception:
++        eb = None
++    for b in base:
++        if eb is not None and topo.box_gap(topo.bbox(b.shape), eb, NEAR):
++            continue
++        found = find_in(b.shape, elem)
++        if found is not None:
++            return b, found
++    return None, None
++
++
+ def faces_by_body(base, faces):
+     """Group picked faces by body, as faces of that body's own shape."""
+     out = {}
+     for f in faces:
+-        hit = None
+-        for b in base:
+-            found = find_in(b.shape, f)
+-            if found is not None:
+-                hit = (b.id, found)
+-                break
++        b, found = body_holding(base, f)
++        hit = (b.id, found) if b is not None else None
+         if hit is None:
+             raise topo.GeometryError("A picked face isn't on any body before this feature. "
+                                      "Re-pick it.")
+@@ -70,12 +88,8 @@ def by_body(base, elems):
+     """
+     out = {}
+     for el in elems:
+-        hit = None
+-        for b in base:
+-            found = find_in(b.shape, el)
+-            if found is not None:
+-                hit = (b, found)
+-                break
++        b, found = body_holding(base, el)
++        hit = (b, found) if b is not None else None
+         if hit is None:
+             raise topo.GeometryError("A picked {} isn't on any body before this feature. "
+                                      "Re-pick it.".format(el.ShapeType.lower()))
+@@ -85,8 +99,10 @@ def by_body(base, elems):
+         for it in items:
+             if not any(it.isSame(x) for x in lst):
+                 lst.append(it)
+-    order = [b.id for b in base]
+-    return dict(sorted(out.items(), key=lambda kv: order.index(kv[0])))
++    order = {}
++    for i, b in enumerate(base):
++        order.setdefault(b.id, i)
++    return dict(sorted(out.items(), key=lambda kv: order[kv[0]]))
+ 
+ 
+ def _tangent_at(edge, vertex):
+diff --git a/freecad/SolidDesign/core/features/extrude.py b/freecad/SolidDesign/core/features/extrude.py
+index ca4aecb..75e4476 100644
+--- a/freecad/SolidDesign/core/features/extrude.py
++++ b/freecad/SolidDesign/core/features/extrude.py
+@@ -279,14 +279,17 @@ def _direction_solid(p, base, faces, d, ext, tag, big, first):
+                 raise topo.GeometryError("Up To Body: the extrusion doesn't reach the body.")
+             return keep[0] if len(keep) == 1 else topo.fuse(keep[0], keep[1:], tag)
+         targets = [b.shape for b in base.bodies(SOLID)]
++        # Only the bodies whose boxes reach the extrusion's can be in its way (the
++        # others add nothing to the cut, names included).
++        near = [t for t in targets if not topo.boxes_apart(t, long_)]
+         if p.mode == "Add" or not targets:
+-            pieces = topo.cut(long_, targets, tag).Solids if targets else []
++            pieces = topo.cut(long_, near or targets, tag).Solids if targets else []
+             if len(pieces) <= 1:
+                 raise topo.GeometryError("Up To Next: nothing is in the way of the extrusion. "
+                                          "Use Blind or another end condition.")
+         else:
+             pieces = []
+-            for t in targets:
++            for t in near:
+                 pieces.extend(topo.common(long_, [t], tag).Solids)
+             if not pieces:
+                 raise topo.GeometryError("Up To Next: the cut doesn't reach any material.")
+@@ -575,5 +578,5 @@ def compute(p, base):
+         res = common.apply_cut(base, tool, p.feature, p.tag, p.scope, p.keep, p.alloc, p.flip)
+         if not res.touched:
+             raise topo.GeometryError("The cut doesn't touch any body in its scope.")
+-        preview = common.removed_material(tool, base, p.scope, p.tag)
++        preview = common.removed_material(tool, base, p.scope, p.tag, res)
+     return res, tool, preview
+diff --git a/freecad/SolidDesign/core/features/hole.py b/freecad/SolidDesign/core/features/hole.py
+index 06ab744..926ef8b 100644
+--- a/freecad/SolidDesign/core/features/hole.py
++++ b/freecad/SolidDesign/core/features/hole.py
+@@ -511,9 +511,16 @@ def _sink_up(wide, narrow, slot, z_exit, h):
+ 
+ def _inside(point, d, solids, big):
+     """[(t_in, t_out)] where the line from ``point`` along ``d`` is inside the solids."""
+-    seg = Part.LineSegment(point - d * 1e-6, point + d * big).toShape()
++    a, b = point - d * 1e-6, point + d * big
++    seg = Part.LineSegment(a, b).toShape()
++    # The segment's own box: a solid whose box is apart from it can't meet it (one
++    # boolean per solid and position was the cost of Through All with many bodies).
++    sb = App.BoundBox(min(a.x, b.x), min(a.y, b.y), min(a.z, b.z),
++                      max(a.x, b.x), max(a.y, b.y), max(a.z, b.z))
+     out = []
+     for s in solids:
++        if topo.box_gap(topo.bbox(s), sb):
++            continue
+         try:
+             c = seg.common(s)
+         except Exception:
+@@ -646,4 +653,4 @@ def compute(p, base, scope=None):
+     if not res.touched:
+         raise topo.GeometryError("The holes don't touch any body. Check the points and the "
+                                  "direction (Reverse Direction).")
+-    return res, tool, common.removed_material(tool, base, scope or common.Scope(), p.tag)
++    return res, tool, common.removed_material(tool, base, scope or common.Scope(), p.tag, res)
+diff --git a/freecad/SolidDesign/core/features/indent.py b/freecad/SolidDesign/core/features/indent.py
+index 3030f9f..544eff6 100644
+--- a/freecad/SolidDesign/core/features/indent.py
++++ b/freecad/SolidDesign/core/features/indent.py
+@@ -106,11 +106,8 @@ def compute(p, base):
+         from ..bodies import split_pieces
+         named = split_pieces(p.target, solids, p.alloc)
+         out.replace(p.target, named[0][1], p.feature)
+-        prev = p.target
+-        for pid, s in named[1:]:
+-            out.insert_after(prev, pid, s, p.feature)
+-            res.created.append(pid)
+-            prev = pid
++        out.insert_many_after(p.target, [(pid, s, p.feature) for pid, s in named[1:]])
++        res.created.extend(pid for pid, _s in named[1:])
+     res.touched.append(p.target)
+     return res, preview
+ 
+diff --git a/freecad/SolidDesign/core/features/pattern.py b/freecad/SolidDesign/core/features/pattern.py
+index 192a1da..c964d9b 100644
+--- a/freecad/SolidDesign/core/features/pattern.py
++++ b/freecad/SolidDesign/core/features/pattern.py
+@@ -374,10 +374,7 @@ def repeat(base, seeds, body_ids, moves, feature, tag, alloc, merge_bodies=False
+             continue
+         out = out.copy()
+         ids = alloc.take(copies, prefix="{}:{}".format(feature, bid))
+-        prev = bid
+-        for nid, s in zip(ids, copies):
+-            out.insert_after(prev, nid, s, feature)
+-            res.created.append(nid)
+-            prev = nid
++        out.insert_many_after(bid, [(nid, s, feature) for nid, s in zip(ids, copies)])
++        res.created.extend(ids)
+     res.bodies = out
+     return res, (topo.compound(shown, tag) if shown else None)
+diff --git a/freecad/SolidDesign/core/features/revolve.py b/freecad/SolidDesign/core/features/revolve.py
+index 947f59f..ad7354b 100644
+--- a/freecad/SolidDesign/core/features/revolve.py
++++ b/freecad/SolidDesign/core/features/revolve.py
+@@ -283,5 +283,5 @@ def compute(p, base):
+         res = common.apply_cut(base, tool, p.feature, p.tag, p.scope, p.keep, p.alloc, p.flip)
+         if not res.touched:
+             raise topo.GeometryError("The cut doesn't touch any body in its scope.")
+-        preview = common.removed_material(tool, base, p.scope, p.tag)
++        preview = common.removed_material(tool, base, p.scope, p.tag, res)
+     return res, tool, preview
+diff --git a/freecad/SolidDesign/core/features/surfaces.py b/freecad/SolidDesign/core/features/surfaces.py
+index 02cafd0..c6c58b3 100644
+--- a/freecad/SolidDesign/core/features/surfaces.py
++++ b/freecad/SolidDesign/core/features/surfaces.py
+@@ -133,12 +133,18 @@ def _solid_of(shape, what):
+ 
+ def _body_of_edges(base, edges):
+     """(body, the body's own edges) when every edge is on one body, else (None, [])."""
++    from .edges import NEAR
++    boxes = [e.BoundBox for e in edges]
+     for b in base:
++        bb = topo.bbox(b.shape)
++        if any(topo.box_gap(bb, eb, NEAR) for eb in boxes):
++            continue                    # an edge is nowhere near this body
+         own = []
++        body_edges = b.shape.Edges
+         for e in edges:
+-            hit = next((x for x in b.shape.Edges if x.isSame(e)), None)
++            hit = next((x for x in body_edges if x.isSame(e)), None)
+             if hit is None:
+-                for x in b.shape.Edges:
++                for x in body_edges:
+                     if abs(x.Length - e.Length) < 1e-7 and \
+                             (x.CenterOfMass - e.CenterOfMass).Length < 1e-6:
+                         hit = x
+@@ -699,4 +705,4 @@ def thicken(p, base):
+     res = common.apply_cut(rest, tool, p.feature, p.tag, p.scope, common.Keep(), p.alloc)
+     if not res.touched:
+         raise topo.GeometryError("The thickened surface doesn't cut any body.")
+-    return res, common.removed_material(tool, rest, p.scope, p.tag)
++    return res, common.removed_material(tool, rest, p.scope, p.tag, res)
+diff --git a/freecad/SolidDesign/core/features/sweep.py b/freecad/SolidDesign/core/features/sweep.py
+index 82ad049..2876084 100644
+--- a/freecad/SolidDesign/core/features/sweep.py
++++ b/freecad/SolidDesign/core/features/sweep.py
+@@ -789,5 +789,5 @@ def compute(p, tool):
+     res = common.apply_cut(base, tool, p.feature, p.tag, p.scope, p.keep, p.alloc, p.flip)
+     if not res.touched:
+         raise topo.GeometryError("The cut doesn't touch any body in its scope.")
+-    return res, common.removed_material(tool, base, p.scope, p.tag)
++    return res, common.removed_material(tool, base, p.scope, p.tag, res)
+ 
+diff --git a/freecad/SolidDesign/core/features/thread.py b/freecad/SolidDesign/core/features/thread.py
+index 6fa86ca..9d23f64 100644
+--- a/freecad/SolidDesign/core/features/thread.py
++++ b/freecad/SolidDesign/core/features/thread.py
+@@ -62,12 +62,8 @@ def site(base, edge, reverse=False):
+     if not (hasattr(c, "Radius") and hasattr(c, "Center")):
+         raise topo.GeometryError("Pick a circular edge of a cylinder (a shaft's end, or a "
+                                  "hole's rim).")
+-    hit = None
+-    for b in base:
+-        found = edgemod.find_in(b.shape, edge)
+-        if found is not None:
+-            hit = (b, found)
+-            break
++    b, found = edgemod.body_holding(base, edge)
++    hit = (b, found) if b is not None else None
+     if hit is None:
+         raise topo.GeometryError("The thread's edge isn't on any body before this feature. "
+                                  "Re-pick it.")
+diff --git a/freecad/SolidDesign/core/regions.py b/freecad/SolidDesign/core/regions.py
+index a9364c9..bd5c403 100644
+--- a/freecad/SolidDesign/core/regions.py
++++ b/freecad/SolidDesign/core/regions.py
+@@ -118,6 +118,14 @@ def regions(sketch, tag=None):
+     corner = pl.multVec(App.Vector(bb.XMin - margin * 0.5, bb.YMin - margin * 0.5, 0))
+     arranged = topo.general_fuse(big, edges, tag)
+ 
++    # Each sketch edge's padded box, once (not once per region edge).
++    boxes = []
++    for se in edges:
++        box = App.BoundBox(se.BoundBox)
++        # Padded: a drawn shape's box comes from its display mesh, which cuts
++        # inside arcs.
++        box.enlarge(max(1e-5, 0.01 * box.DiagonalLength))
++        boxes.append(box)
+     found = []
+     for f in arranged.Faces:
+         try:
+@@ -129,11 +137,7 @@ def regions(sketch, tag=None):
+         for e in f.Edges:
+             mid = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
+             for i, se in enumerate(edges, 1):
+-                box = App.BoundBox(se.BoundBox)
+-                # Padded: a drawn shape's box comes from its display mesh, which
+-                # cuts inside arcs.
+-                box.enlarge(max(1e-5, 0.01 * box.DiagonalLength))
+-                if not box.isInside(mid):
++                if not boxes[i - 1].isInside(mid):
+                     continue
+                 try:
+                     if se.distToShape(Part.Vertex(mid))[0] < 1e-6:
+@@ -201,11 +205,21 @@ def default_profile(sketch, tag):
+     if not shape.Edges:
+         raise topo.GeometryError("{} is empty.".format(sketch.Label))
+     wires = shape.Wires
+-    loose = [e for e in shape.Edges if not any(e.isSame(we) for w in wires for we in w.Edges)]
++    in_wires = {}                       # hashCode -> wire edges (isSame shares it)
++    for w in wires:
++        for we in w.Edges:
++            in_wires.setdefault(we.hashCode(), []).append(we)
++    loose = [e for e in shape.Edges
++             if not any(e.isSame(we) for we in in_wires.get(e.hashCode(), ()))]
+     closed = [w for w in wires if w.isClosed()]
+     open_ = [w for w in wires if not w.isClosed()] + [Part.Wire(e) for e in loose]
++    # Contours whose boxes are apart can't touch: only the others are measured
++    # (every pair of a sketch of hundreds of holes was measured).
++    boxes = [w.BoundBox for w in closed]
+     for i in range(len(closed)):
+         for j in range(i + 1, len(closed)):
++            if topo.box_gap(boxes[i], boxes[j], 1e-6):
++                continue
+             try:
+                 if closed[i].distToShape(closed[j])[0] < 1e-7:
+                     raise topo.GeometryError(
+diff --git a/freecad/SolidDesign/core/topo.py b/freecad/SolidDesign/core/topo.py
+index 08adfea..1869290 100644
+--- a/freecad/SolidDesign/core/topo.py
++++ b/freecad/SolidDesign/core/topo.py
+@@ -14,6 +14,7 @@ Nothing in here imports FreeCADGui or Qt.
+ """
+ 
+ import math
++from collections import OrderedDict
+ 
+ import FreeCAD as App
+ import Part
+@@ -207,13 +208,21 @@ def offset2d(shape, distance, tag, join=0, fill=False, open_result=False):
+ 
+ 
+ def transformed(shape, placement, tag):
+-    """Move a shape. In FreeCAD 1.1.3 a mapped shape keeps its map when moved."""
++    """Move a shape. In FreeCAD 1.1.3 a mapped shape keeps its map when moved.
++
++    The moved shape shares the original's topology and geometry (as a clone
++    does), with its own placement: 400 copies of a body are one body's worth of
++    faces, and FreeCAD meshes them once. (``copy(False)`` made new topology for
++    every copy.)"""
+     had_map = shape.ElementMapSize > 0
+     shape = tagged(shape, tag)
+ 
+     def go():
+-        s = shape.copy(False)
++        # transformed(identity, copy=False): a new handle on the same topology that
++        # keeps its type (an Edge stays an Edge; Part.Shape() gives a plain Shape).
++        s = shape.transformed(App.Matrix(), False)
+         s.Placement = placement.multiply(s.Placement)
++        _moved_copy(s, shape, placement)
+         return s
+     # A move can't lose names the shape never had (a primitive): don't report it.
+     return _run("transform" if had_map else "move-unnamed", tag, go)
+@@ -353,22 +362,197 @@ def solids(shape):
+     return list(shape.Solids) if shape and not shape.isNull() else []
+ 
+ 
++# ---------------------------------------------------------------- measures, kept
++#
++# A body that no feature changes is the same shape (same topology, same place)
++# from one feature to the next, and features measure it again and again: its
++# volume and centre for its ID, its box to see what a tool touches. Each is
++# worked out once per shape now. Shapes don't change once made, so a measure
++# kept for a shape is the measure of that shape. A moved copy (topology shared,
++# placed elsewhere: patterns) takes its volume from the original, its centre
++# moved with it, and its box moved with it when the move has no rotation.
++
++_MEASURES = OrderedDict()       # _key -> [(own handle on the shape, {what: value})]
++_MEASURES_KEPT = 20000
++measure_stats = {"hit": 0, "miss": 0}
++
++
++def same_shape(a, b):
++    """The same topology placed the same way: the same shape, even when FreeCAD
++    gave the placement as a new location (isSame compares locations by identity,
++    and a shape read back from a feature has a new one)."""
++    try:
++        return a.isPartner(b) and a.Placement.isSame(b.Placement, 1e-15)
++    except Exception:
++        return False
++
++
++def _key(shape):
++    """A key that the same shape always gets, wherever FreeCAD read it back from:
++    its type, its counts of faces and edges, and where it is placed. (A shape's
++    own hashCode takes in its location's identity, which is new each time a
++    feature's shape is read; the same shapes still share a key with others,
++    and same_shape tells them apart.)"""
++    pl = shape.Placement
++    b, q = pl.Base, pl.Rotation.Q
++    return (shape.ShapeType, shape.countElement("Face"), shape.countElement("Edge"),
++            round(b.x, 6), round(b.y, 6), round(b.z, 6),
++            round(q[0], 9), round(q[1], 9), round(q[2], 9), round(q[3], 9))
++
++
++# A quicker way in for a shape seen before through the very same location (most
++# shapes: a body nothing moved): its hashCode, checked with isSame (which implies
++# same_shape). Counting faces and edges for _key costs more than the lookup.
++_BY_HASH = {}
++
++
++def _remember(shape, held, d):
++    try:
++        h = shape.hashCode()
++    except Exception:
++        return
++    if len(_BY_HASH) > 2 * _MEASURES_KEPT:
++        _BY_HASH.clear()
++    _BY_HASH.setdefault(h, []).append((held, d))
++
++
++def _entry(shape, make=True):
++    try:
++        h = shape.hashCode()
++    except Exception:
++        h = None
++    for s, d in _BY_HASH.get(h, ()):
++        if s.isSame(shape):
++            return d
++    try:
++        key = _key(shape)
++    except Exception:
++        return None
++    bucket = _MEASURES.get(key)
++    if bucket is not None:
++        _MEASURES.move_to_end(key)
++        for s, d in bucket:
++            if same_shape(s, shape):
++                _remember(shape, Part.Shape(shape), d)
++                return d
++    if not make:
++        return None
++    d = {}
++    # Its own handle: a caller moving its shape object later can't move this one.
++    held = Part.Shape(shape)
++    _MEASURES.setdefault(key, []).append((held, d))
++    _remember(shape, held, d)
++    while len(_MEASURES) > _MEASURES_KEPT:
++        _MEASURES.popitem(last=False)
++    return d
++
++
++def _measure(shape, what, fn):
++    d = _entry(shape)
++    if d is None:
++        return fn()
++    if what in d:
++        measure_stats["hit"] += 1
++        return d[what]
++    src = d.get("_from")
++    v = None
++    if src is not None:
++        original, pl = src
++        if what == "size":
++            v = size_of(original)
++        elif what == "centroid":
++            v = pl.multVec(centroid(original))
++        elif what == "bbox" and pl.Rotation.isIdentity():
++            v = bbox(original)
++            v.move(pl.Base)
++    if v is None:
++        measure_stats["miss"] += 1
++        v = fn()
++    d[what] = v
++    return v
++
++
++def _moved_copy(copy, original, move):
++    """Note that ``copy`` is ``original`` (same topology) moved by ``move``."""
++    d = _entry(copy)
++    if d is not None and not d:
++        # Its own handle, of its own type (Part.Shape() gives a plain Shape, which
++        # has no CenterOfMass: its centre was taken as its box's centre).
++        d["_from"] = (_typed(original), App.Placement(move))
++
++
++def clear_measures():
++    _MEASURES.clear()
++    _BY_HASH.clear()
++
++
++def bbox(shape):
++    """The shape's bounding box (a copy: change it freely)."""
++    return App.BoundBox(_measure(shape, "bbox", lambda: shape.BoundBox))
++
++
++def _apart(ga, gb, tol):
++    if ga.intersect(gb):
++        return False
++    # BoundBox.intersect is strict; allow touching boxes through the gap test.
++    return (ga.XMin - gb.XMax > tol or gb.XMin - ga.XMax > tol or
++            ga.YMin - gb.YMax > tol or gb.YMin - ga.YMax > tol or
++            ga.ZMin - gb.ZMax > tol or gb.ZMin - ga.ZMax > tol)
++
++
++def box_gap(ga, gb, tol=LIN_TOL):
++    """True when two boxes are more than ``tol`` apart."""
++    return _apart(ga, gb, tol)
++
++
++def boxes_apart(a, b, tol=LIN_TOL):
++    """True when two shapes' boxes are more than ``tol`` apart: then the shapes
++    can't touch (a quick test before a boolean that could only come out empty)."""
++    return _apart(bbox(a), bbox(b), tol)
++
++
+ def touches(a, b, tol=LIN_TOL):
+     """True when two shapes overlap or touch."""
+-    if not a.BoundBox.intersect(b.BoundBox):
+-        # BoundBox.intersect is strict; allow touching boxes through the gap test.
+-        ga = a.BoundBox
+-        gb = b.BoundBox
+-        if (ga.XMin - gb.XMax > tol or gb.XMin - ga.XMax > tol or
+-                ga.YMin - gb.YMax > tol or gb.YMin - ga.YMax > tol or
+-                ga.ZMin - gb.ZMax > tol or gb.ZMin - ga.ZMax > tol):
+-            return False
++    if _apart(bbox(a), bbox(b), tol):
++        return False
+     try:
+         return a.distToShape(b)[0] <= tol
+     except Exception:
+         return False
+ 
+ 
++def tool_parts(tool):
++    """The pieces of a compound tool (a pattern of holes: one compound whose box
++    spans the whole pattern), for touches_any; None for a single shape."""
++    try:
++        if tool.ShapeType == "Compound":
++            parts = tool.childShapes()
++            if len(parts) > 1:
++                return parts
++    except Exception:
++        pass
++    return None
++
++
++def touches_any(a, tool, parts, tol=LIN_TOL):
++    """touches(a, tool) for a tool split into ``parts`` (tool_parts): the distance
++    to a compound is the least distance to its pieces, and only the pieces whose
++    boxes come near ``a`` are measured."""
++    if parts is None:
++        return touches(a, tool, tol)
++    ga = bbox(a)
++    if _apart(ga, bbox(tool), tol):
++        return False
++    for p in parts:
++        if not _apart(ga, bbox(p), tol):
++            try:
++                if a.distToShape(p)[0] <= tol:
++                    return True
++            except Exception:
++                pass
++    return False
++
++
+ def overlap_volume(a, b):
+     try:
+         if not touches(a, b):
+@@ -380,12 +564,33 @@ def overlap_volume(a, b):
+ 
+ def size_of(shape):
+     """Volume for solids, area for faces/shells."""
++    return _measure(shape, "size", lambda: _size_of(shape))
++
++
++def _size_of(shape):
+     if shape.Solids:
+         return abs(shape.Volume)
+     return abs(shape.Area)
+ 
+ 
+ def centroid(shape):
++    """(A copy: change it freely.)"""
++    return App.Vector(_measure(shape, "centroid", lambda: _centroid(shape)))
++
++
++def _typed(shape):
++    """A handle on the same shape (same topology and place) of its own type: a
++    Solid has CenterOfMass, a plain Shape doesn't."""
++    try:
++        return shape.transformed(App.Matrix(), False)
++    except Exception:
++        return Part.Shape(shape)
++
++
++def _centroid(shape):
++    if not hasattr(shape, "CenterOfMass") and shape.ShapeType in ("Solid", "CompSolid",
++                                                                    "Shell", "Face", "Edge"):
++        shape = _typed(shape)
+     try:
+         if shape.Solids:
+             return shape.CenterOfMass
+diff --git a/freecad/SolidDesign/gui/handles.py b/freecad/SolidDesign/gui/handles.py
+index d69b866..cf13c1c 100644
+--- a/freecad/SolidDesign/gui/handles.py
++++ b/freecad/SolidDesign/gui/handles.py
+@@ -1172,8 +1172,8 @@ def _edge_at(edge, frac=0.5):
+ 
+ def _faces_at(shape, m):
+     """The faces of ``shape`` through the point ``m``."""
+-    from .preview import touches
+-    return [f for f in shape.Faces if touches(f, m)]
++    from .preview import FaceFinder
++    return FaceFinder(shape).faces(m)
+ 
+ 
+ def _away_in(face, m, t):
+diff --git a/freecad/SolidDesign/gui/line_bar.py b/freecad/SolidDesign/gui/line_bar.py
+index 90f6cda..c89963a 100644
+--- a/freecad/SolidDesign/gui/line_bar.py
++++ b/freecad/SolidDesign/gui/line_bar.py
+@@ -428,11 +428,29 @@ class CommandBar(QtWidgets.QFrame):
+             App.Console.PrintLog("Solid Design: hints: {}\n".format(e))
+             self.hints = []
+ 
++    def _plane_sizes(self):
++        out = []
++        for h in self.hints:
++            if h.kind == "Plane":
++                try:
++                    out.append(round(h.obj.ViewObject.getBoundingBox().DiagonalLength, 3))
++                except Exception:
++                    out.append(None)
++        return tuple(out)
++
++    def _planes_resized(self):
++        """FreeCAD sizes the planes to the model whenever it likes (sometimes after
++        the labels were placed): put the labels back on them when they change."""
++        sizes = self._plane_sizes()
++        if sizes and sizes != getattr(self, "_plane_sig", None):
++            self._place_planes()
++
+     def _place_planes(self):
+         """Move the planes' labels onto the planes as drawn (FreeCAD sizes the
+         origin when it draws it)."""
+         if not self.isVisible() or not self.hints:
+             return
++        self._plane_sig = self._plane_sizes()
+         try:
+             view = Gui.ActiveDocument.ActiveView
+             p = self.parentWidget()
+@@ -694,6 +712,7 @@ class CommandBar(QtWidgets.QFrame):
+             return
+         cam = self._camera()
+         if cam == self._cam:
++            self._planes_resized()
+             return
+         if getattr(self, "_moving", None) != cam:
+             self._moving = cam              # wait until it stops
+diff --git a/freecad/SolidDesign/gui/panel/base.py b/freecad/SolidDesign/gui/panel/base.py
+index 877d6b8..1c8068d 100644
+--- a/freecad/SolidDesign/gui/panel/base.py
++++ b/freecad/SolidDesign/gui/panel/base.py
+@@ -29,6 +29,7 @@ from PySide import QtCore, QtWidgets
+ 
+ from ...app import part as part_mod
+ from ...app import util
++from ...core import topo
+ from .. import preview as pv
+ from ..selection import Sel
+ from . import parts
+@@ -621,26 +622,48 @@ class FeaturePanel(object):
+             if name not in self._veiled:
+                 self._veil(name)
+         after = [b for b in changed.values() if b is not None]
+-        self.preview.set("after", pv.body_node(after) if after else None)
++        # The same bodies as last time: keep their mesh (meshing hundreds of
++        # changed bodies again on every preview was most of its time).
++        memo = getattr(self, "_after_memo", None)
++        if memo is not None and len(memo[0]) == len(after) and all(
++                topo.same_shape(a, b) for a, b in zip(memo[0], after)):
++            node = memo[1]
++        else:
++            node = pv.body_node(after) if after else None
++            self._after_memo = (after, node)
++        self.preview.set("after", node)
+ 
+     def _changed_bodies(self):
+         """{body id: its shape after the feature, or None if it's gone} for the
+         bodies the feature changes."""
+         try:
+             from ...core.bodies import BodySet
++            shape = self.obj.Shape
++            base = self.obj.BaseFeature
++            base_shape = base.Shape if base is not None else None
++            # Once per result: a preview asks twice (what it removes, the cut view).
++            memo = getattr(self, "_changed_memo", None)
++            if memo is not None and topo.same_shape(memo[0], shape) and (
++                    (memo[1] is None and base_shape is None) or
++                    (memo[1] is not None and base_shape is not None and
++                     topo.same_shape(memo[1], base_shape))):
++                return dict(memo[2])
+             before = self.obj.Proxy.base_bodies(self.obj)
+-            after = BodySet.from_columns(self.obj.Shape, list(self.obj.BodyIds),
++            after = BodySet.from_columns(shape, list(self.obj.BodyIds),
+                                          list(self.obj.BodyKinds), list(self.obj.BodyFeatures))
+         except Exception:
+             return {}
+         out = {}
+         for i in before.ids():
+             b = after.get(i)
+-            if b is None or not b.shape.isSame(before.get(i).shape):
++            # same_shape, not isSame: a moved body (a pattern's) read back from
++            # another feature has a new location object, though it is unchanged.
++            if b is None or not topo.same_shape(b.shape, before.get(i).shape):
+                 out[i] = b.shape if b is not None else None
+         for i in after.ids():
+             if i not in before:
+                 out[i] = after.get(i).shape
++        self._changed_memo = (shape, base_shape, dict(out))
+         return out
+ 
+     def _veil(self, name):
+@@ -783,8 +806,12 @@ class FeaturePanel(object):
+         if on:
+             for v in part_mod.body_views(self.part):
+                 try:
+-                    self._ghosted[v.Name] = v.ViewObject.Transparency
+-                    v.ViewObject.Transparency = max(v.ViewObject.Transparency, 55)
++                    # Only bodies that change: each write re-sends the body's
++                    # materials, which adds up over hundreds of bodies.
++                    t = v.ViewObject.Transparency
++                    if t < 55:
++                        self._ghosted[v.Name] = t
++                        v.ViewObject.Transparency = 55
+                 except Exception:
+                     pass
+         else:
+diff --git a/freecad/SolidDesign/gui/preview.py b/freecad/SolidDesign/gui/preview.py
+index 8c37d1b..520c585 100644
+--- a/freecad/SolidDesign/gui/preview.py
++++ b/freecad/SolidDesign/gui/preview.py
+@@ -92,13 +92,51 @@ def touches(shape, p, tol=1e-6):
+         return False
+ 
+ 
++class FaceFinder(object):
++    """The faces of a shape through a point (``touches``), in the shape's face
++    order, looking only at the bodies whose box (padded as much as any of their
++    faces' would be) holds the point: a model of hundreds of bodies has
++    thousands of faces."""
++
++    def __init__(self, shape, tol=1e-6):
++        self.tol = tol
++        kids = shape.childShapes() if shape.ShapeType == "Compound" else []
++        if len(kids) < 2:
++            kids = [shape]
++        self.groups = []
++        for ch in kids:
++            bb = App.BoundBox(ch.BoundBox)
++            bb.enlarge(max(10 * tol, 0.01 * bb.DiagonalLength))
++            self.groups.append([ch, bb, None])
++
++    def faces(self, p):
++        out = []
++        for g in self.groups:
++            if not g[1].isInside(p):
++                continue
++            if g[2] is None:
++                g[2] = g[0].Faces
++            out.extend(f for f in g[2] if touches(f, p, self.tol))
++        return out
++
++    def any(self, p):
++        for g in self.groups:
++            if not g[1].isInside(p):
++                continue
++            if g[2] is None:
++                g[2] = g[0].Faces
++            if any(touches(f, p, self.tol) for f in g[2]):
++                return True
++        return False
++
++
+ def new_faces(after, before, tol=1e-6):
+     """The faces of ``after`` that aren't on ``before`` (a fillet's rounds, a
+     chamfer's bevels, drafted faces): their middles lie off every old face."""
+     import Part
+     if after is None or after.isNull() or before is None or before.isNull():
+         return after
+-    old = before.Faces
++    old = FaceFinder(before, tol * 10)
+     out = []
+     for f in after.Faces:
+         try:
+@@ -108,7 +146,7 @@ def new_faces(after, before, tol=1e-6):
+                 p = f.CenterOfMass
+         except Exception:
+             continue
+-        if not any(touches(g, p, tol * 10) for g in old):
++        if not old.any(p):
+             out.append(f)
+     return Part.makeCompound(out) if out else None
+ 
+@@ -232,6 +270,8 @@ class Preview(object):
+ 
+     def set(self, name, node):
+         self.attach()
++        if node is not None and self.layers.get(name) is node:
++            return                      # already shown
+         old = self.layers.pop(name, None)
+         if old is not None:
+             self.root.removeChild(old)
+diff --git a/freecad/SolidDesign/gui/selection.py b/freecad/SolidDesign/gui/selection.py
+index 1202832..1f44245 100644
+--- a/freecad/SolidDesign/gui/selection.py
++++ b/freecad/SolidDesign/gui/selection.py
+@@ -57,15 +57,53 @@ def _same_geometry(a, b, tol=1e-6):
+ 
+ 
+ def map_to_feature(elem, feature):
+-    """The name ("Face12") of ``elem`` in a feature's shape, or None."""
++    """The name ("Face12") of ``elem`` in a feature's shape, or None.
++
++    The same topology first (found by OpenCASCADE's own index, not by walking
++    every element in Python), then the first element of the same geometry, in
++    the shape's order. Only bodies whose box holds the pick's centre can have
++    such an element, so only theirs are measured."""
+     if feature is None or elem is None:
+         return None
+     shape = feature.Shape
+     kind = elem.ShapeType
+-    elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes
+-    for i, e in enumerate(elems, 1):
+-        if e.isSame(elem):
++    try:
++        k, i = shape.findSubShape(elem)
++        if k == kind and i:
+             return "{}{}".format(kind, i)
++    except Exception:
++        elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" \
++            else shape.Vertexes
++        for i, e in enumerate(elems, 1):
++            if e.isSame(elem):
++                return "{}{}".format(kind, i)
++    try:
++        c = elem.Point if kind == "Vertex" else elem.CenterOfMass
++        from ..app import refs
++        from ..core import topo
++        children = refs._index(feature, shape).children
++    except Exception:
++        return _map_by_geometry(elem, shape, kind)
++    for ch in children:
++        bb = topo.bbox(ch)
++        bb.enlarge(1e-4)
++        if not bb.isInside(c):
++            continue
++        elems = ch.Faces if kind == "Face" else ch.Edges if kind == "Edge" else ch.Vertexes
++        for e in elems:
++            if _same_geometry(e, elem):
++                try:
++                    k, i = shape.findSubShape(e)
++                    if k == kind and i:
++                        return "{}{}".format(kind, i)
++                except Exception:
++                    pass
++                return _map_by_geometry(elem, shape, kind)
++    return None
++
++
++def _map_by_geometry(elem, shape, kind):
++    elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes
+     for i, e in enumerate(elems, 1):
+         if _same_geometry(e, elem):
+             return "{}{}".format(kind, i)
+diff --git a/freecad/SolidDesign/gui/tool_panels.py b/freecad/SolidDesign/gui/tool_panels.py
+index b664f62..9dcca5c 100644
+--- a/freecad/SolidDesign/gui/tool_panels.py
++++ b/freecad/SolidDesign/gui/tool_panels.py
+@@ -32,12 +32,31 @@ def body_name_before(obj, bid):
+     panel shows the model before the feature)."""
+     base = obj.BaseFeature
+     part = util.part_of(obj)
+-    if base is not None and part is not None and bid in list(base.BodyIds):
++    if base is not None and part is not None:
+         ids = list(base.BodyIds)
+-        return part_mod.body_names(part, ids, list(base.BodyFeatures))[ids.index(bid)]
++        if bid not in ids:
++            return bid
++        feats = list(base.BodyFeatures)
++        # Named all at once, once per list of bodies: a list of hundreds of bodies
++        # asked for every body's name once per row.
++        key = (part.Document.Name, part.Name, tuple(ids), tuple(feats),
++               tuple(sorted(dict(part.BodyNames).items())),
++               tuple((f, getattr(part.Document.getObject(f), "Label", ""),
++                      str(getattr(part.Document.getObject(f), "PieceNames", "")))
++                     for f in sorted(set(feats)) if f))
++        if _names_memo[0] != key:
++            names = part_mod.body_names(part, ids, feats)
++            first = {}
++            for i, b in enumerate(ids):
++                first.setdefault(b, names[i])
++            _names_memo[:] = [key, first]
++        return _names_memo[1][bid]
+     return bid
+ 
+ 
++_names_memo = [None, {}]
++
++
+ class ToolPanel(FeaturePanel):
+     EDIT_SHOWS_BASE = True
+     ICON_NAME = ""
+diff --git a/freecad/SolidDesign/gui/viewproviders.py b/freecad/SolidDesign/gui/viewproviders.py
+index be850e6..416aebe 100644
+--- a/freecad/SolidDesign/gui/viewproviders.py
++++ b/freecad/SolidDesign/gui/viewproviders.py
+@@ -41,6 +41,29 @@ def _refresh_icon(vobj):
+         pass
+ 
+ 
++_parts_to_refresh = set()       # (document, part) names whose icon is due
++
++
++def _refresh_part_icon_soon(part):
++    """Refresh a part's icon once, after the current burst of changes: rolling
++    the bar past hundreds of features changed each one's state, and each
++    refreshed the part's icon, which looks at every feature."""
++    key = (part.Document.Name, part.Name)
++    if key in _parts_to_refresh:
++        return
++    _parts_to_refresh.add(key)
++
++    def go():
++        _parts_to_refresh.discard(key)
++        try:
++            p = App.getDocument(key[0]).getObject(key[1])
++        except Exception:
++            p = None
++        if p is not None and p.ViewObject is not None:
++            _refresh_icon(p.ViewObject)
++    QtCore.QTimer.singleShot(0, go)
++
++
+ class _Stateless(object):
+     def dumps(self):
+         return None
+@@ -117,22 +140,25 @@ class PartVP(_DrawsNothing):
+     def getIcon(self):
+         obj = getattr(self, "Object", None)
+         if obj is not None:
+-            feats = util.features(obj)
+-            if any(f.ErrorMessage for f in feats):
+-                return icon("Part_error")
+-            if any(f.WarningMessage for f in feats):
++            warned = False
++            for f in util.features(obj):
++                if f.ErrorMessage:
++                    return icon("Part_error")
++                warned = warned or bool(f.WarningMessage)
++            if warned:
+                 return icon("Part_warning")
+         return icon("Part")
+ 
+     def claimChildren(self):
+         obj = self.Object
+         out = []
++        found = part_mod._found(obj)
+         for kind in ("solid", "surface"):
+-            f = part_mod.folder(obj, kind)
++            f = found["folders"].get(kind)
+             if f is not None:
+                 out.append(f)       # an empty folder is hidden (ShowInTree), as in SolidWorks
+         origin = list(obj.Origin)
+-        of = part_mod.folder(obj, part_mod.ORIGIN_FOLDER)
++        of = found["folders"].get(part_mod.ORIGIN_FOLDER)
+         if of is not None:
+             out.append(of)          # the planes and origin, in their own folder
+         else:
+@@ -143,7 +169,7 @@ class PartVP(_DrawsNothing):
+         for f in util.features(obj):
+             for c in FeatureVP.own_children(f):
+                 claimed.add(c.Name)
+-        bar = part_mod.rollback_bar(obj)
++        bar = found["bar"]
+         group = list(obj.Group)
+         bar_at = part_mod._bar_index(obj, group)    # the bar sits before this item
+         for i, o in enumerate(group):
+@@ -323,7 +349,7 @@ class FeatureVP(_DrawsNothing):
+                 obj.Label2 = label2
+             part = util.part_of(obj)
+             if part is not None:
+-                _refresh_icon(part.ViewObject)
++                _refresh_part_icon_soon(part)
+ 
+     def onChanged(self, vobj, prop):
+         pass
+@@ -592,10 +618,12 @@ class FolderVP(_DrawsNothing):
+             return [o for o in origin if o.TypeId == "Part::DatumPlane"] + \
+                 [o for o in origin if o.TypeId == "Part::DatumPoint"] + \
+                 [o for o in origin if o.TypeId == "Part::DatumLine"]
+-        ids = list(part.BodyIds)
++        rank = {}
++        for i, b in enumerate(part.BodyIds):
++            rank.setdefault(b, i)
+         views = [v for v in part_mod.body_views(part) if v.Kind == obj.Kind or
+                  (not v.Kind and obj.Kind == "solid")]
+-        views.sort(key=lambda v: ids.index(v.BodyId) if v.BodyId in ids else 1e9)
++        views.sort(key=lambda v: rank.get(v.BodyId, 1e9))
+         return views
+ 
+     def onChanged(self, vobj, prop):
+diff --git a/tests/gui/explore.py b/tests/gui/explore.py
+index b5b852c..6824ba7 100644
+--- a/tests/gui/explore.py
++++ b/tests/gui/explore.py
+@@ -3596,7 +3596,8 @@ def command_line_planes_clicks_hover():
+         bb = x.obj.ViewObject.getBoundingBox()
+         gx, gy = v.getPointOnViewport(bb.Center)
+         if abs(x.x - gx / ratio) > 40 or abs(x.y - (gl.height() - gy / ratio)) > 40:
+-            far.append(x.obj.Label)
++            far.append("%s at %.0f,%.0f, drawn at %.0f,%.0f" % (
++                x.obj.Label, x.x, x.y, gx / ratio, gl.height() - gy / ratio))
+     expect(not far, "each plane's label is on the plane as drawn (%s)" % far)
+     shot("plane-labels")
+     h = next((h for h in planes if h.obj is front), None)
+@@ -5915,6 +5916,65 @@ def answer_dialogs():
+             w.reject()
+ 
+ 
++@scenario
++def many_bodies_panels():
++    """A 6 x 6 pattern of bodies: a cut's preview veils and redraws only the bodies
++    it changes (copies of the seed read back from another feature are unchanged);
++    panels ghost the bodies and put them back; a fillet picked on a copy previews
++    its round; a face of a copy is credited to the pattern."""
++    from freecad.SolidDesign.app import pattern as app_pattern
++    from freecad.SolidDesign.gui import selection as selmod
++    doc, part = new_doc("MB")
++    sk = plate_sketch(doc, part, 8, 8)
++    extrude_ui(doc, part, sk, 4)
++    pat = app_pattern.create_linear(doc, part, Bodies=list(part.BodyIds), Spacing=12,
++                                    Instances=6, Direction2=True, Spacing2=12, Instances2=6)
++    pat.Direction1Ref = (plane(part, "X Axis"), [])
++    pat.Direction2Ref = (plane(part, "Y Axis"), [])
++    doc.recompute()
++    views = body_views(part)
++    expect(len(views) == 36 and not pat.ErrorMessage, "36 bodies (%d) %s" %
++           (len(views), pat.ErrorMessage))
++    sk2 = sketch(doc, plane(part, "Top Plane"))
++    rect(sk2, -2, 3, 70, 5)
++    app_part.add_to_part(part, sk2)
++    doc.recompute()
++    select(doc, sk2)
++    p = run_cmd("SD_Extrude")
++    p.mode.buttons["Cut"].click()
++    wait(300)
++    p.d1.depth.spin.setProperty("rawValue", 2.0)        # a groove: no body is cut in two
++    wait(1500)
++    veiled = sorted(p._veiled or {})
++    expect(len(veiled) == 6, "the cut veils the 6 bodies it cuts, not all 36 (%d)" % len(veiled))
++    ghosted = [v for v in body_views(part)
++               if v.Name not in veiled and v.ViewObject.Transparency == 55]
++    expect(len(ghosted) == 30, "the others are ghosted (%d)" % len(ghosted))
++    shot("many-bodies-cut")
++    close_panel(False)
++    expect(all(v.ViewObject.Transparency == 0 for v in body_views(part)),
++           "closing the panel puts every body back")
++    body = body_views(part)[14]
++    x0, y0 = body.Shape.BoundBox.XMin, body.Shape.BoundBox.YMin
++    edge = edge_at(body, V(x0, y0, 4), V(x0 + 8, y0, 4))
++    Gui.Selection.clearSelection()
++    p = run_cmd("SD_Fillet", 900)
++    p.route(Sel(body, edge, None))
++    p.radius.spin.setProperty("rawValue", 1.0)
++    wait(1500)
++    expect(p.items.items, "the edge of a copy is picked")
++    faces = p.changed_faces()
++    expect(faces is not None and abs(faces.Area - math.pi / 2 * 1.0 * 8) < 0.5,
++           "the preview is the round only (%s)" % (faces and faces.Area))
++    shot("many-bodies-fillet")
++    close_panel(True)
++    expect(not util.features(part)[-1].ErrorMessage, "the fillet on a copy works")
++    face = body_views(part)[20].Shape.Faces[0]
++    f = selmod.feature_of_element(part, face)
++    expect(f is pat, "a face of a copy came from the pattern (%s)" % (f and f.Label))
++    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
++
++
+ def main():
+     timer = QtCore.QTimer()
+     timer.timeout.connect(answer_dialogs)
+diff --git a/tests/test_scale.py b/tests/test_scale.py
+new file mode 100644
+index 0000000..deab87e
+--- /dev/null
++++ b/tests/test_scale.py
+@@ -0,0 +1,323 @@
++# SPDX-License-Identifier: LGPL-2.1-or-later
++"""Many bodies: the shortcuts taken for models of hundreds of bodies (shared
++topology for copies, cached measures, indexes over a feature's elements, box
++tests before booleans) give what the plain way gave."""
++
++import json
++import unittest
++
++import FreeCAD as App
++import Part
++
++from freecad.SolidDesign.app import dressup, pattern, refs, util
++from freecad.SolidDesign.app import part as app_part
++from freecad.SolidDesign.core import bodies as core_bodies
++from freecad.SolidDesign.core import topo
++from freecad.SolidDesign.core.features import common as core_common
++from freecad.SolidDesign.core.features import edges as core_edges
++from freecad.SolidDesign.gui import selection as selmod
++from helpers import V, circle, extrude, new_doc, plane, rect, sketch
++
++N = 4                       # a 4 x 4 pattern: 16 bodies
++
++
++def build(doc, part):
++    """A drilled, filleted block patterned 4 x 4, then a fillet on the last."""
++    sk = sketch(doc, plane(part, "Top Plane"))
++    rect(sk, 0, 0, 8, 8)
++    doc.recompute()
++    extrude(doc, part, sk, Depth=4)
++    hs = sketch(doc, plane(part, "Top Plane"))
++    circle(hs, 4, 4, 1.5)
++    doc.recompute()
++    extrude(doc, part, hs, "Cut", EndCondition="Through All")
++    last = util.features(part)[-1]
++    edges = ["Edge%d" % i for i, e in enumerate(last.Shape.Edges, 1)
++             if abs(e.CenterOfMass.z - 4) < 1e-6 and e.Curve.TypeId == "Part::GeomLine"]
++    fi = dressup.create_fillet(doc, part, edges)
++    fi.Radius = 0.5
++    doc.recompute()
++    f = pattern.create_linear(doc, part, Bodies=list(part.BodyIds), Spacing=12, Instances=N,
++                              Direction2=True, Spacing2=12, Instances2=N)
++    f.Direction1Ref = (plane(part, "X Axis"), [])
++    f.Direction2Ref = (plane(part, "Y Axis"), [])
++    doc.recompute()
++    return f
++
++
++# The plain ways, as they were, to compare with.
++
++def old_body_of_element(obj, elem):
++    ids = list(obj.BodyIds)
++    shape = obj.Shape
++    children = shape.childShapes() if shape.ShapeType == "Compound" else [shape]
++    for i, ch in enumerate(children):
++        elems = ch.Faces if elem.ShapeType == "Face" else ch.Edges \
++            if elem.ShapeType == "Edge" else ch.Vertexes
++        if any(e.isSame(elem) for e in elems):
++            return ids[i]
++    for i, ch in enumerate(children):
++        if core_edges.find_in(ch, elem) is not None:
++            return ids[i]
++    return ""
++
++
++def old_follow(target, sub, base):
++    kind = refs._elem_kind(sub)
++    old = refs._mapped(target.Shape, sub)
++    if not old or kind is None:
++        return None
++    shape = base.Shape
++    n = len(shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes)
++    hits = []
++    for i in range(1, n + 1):
++        name = "{}{}".format(kind, i)
++        m = refs._mapped(shape, name)
++        if m == old or (m.startswith(old) and m[len(old):len(old) + 1] == ";"):
++            hits.append(name)
++    if len(hits) == 1:
++        return hits[0]
++    if not hits:
++        for i in range(1, n + 1):
++            name = "{}{}".format(kind, i)
++            m = refs._mapped(shape, name)
++            h = shape.getElementHistory(m) if m else None
++            if h and (h[1] == old or old in (h[2] or [])):
++                hits.append(name)
++        if len(hits) == 1:
++            return hits[0]
++    return None
++
++
++def old_map_to_feature(elem, feature):
++    shape = feature.Shape
++    kind = elem.ShapeType
++    elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes
++    for i, e in enumerate(elems, 1):
++        if e.isSame(elem):
++            return "{}{}".format(kind, i)
++    for i, e in enumerate(elems, 1):
++        if selmod._same_geometry(e, elem):
++            return "{}{}".format(kind, i)
++    return None
++
++
++class ScaleModel(unittest.TestCase):
++
++    @classmethod
++    def setUpClass(cls):
++        cls.doc, cls.part = new_doc("Scale")
++        cls.pat = build(cls.doc, cls.part)
++        cls.fill = util.features(cls.part)[2]
++
++    @classmethod
++    def tearDownClass(cls):
++        App.closeDocument(cls.doc.Name)
++
++    def test_pattern_made_every_body(self):
++        self.assertEqual(self.pat.ErrorMessage, "")
++        self.assertEqual(len(self.pat.BodyIds), N * N)
++
++    def test_copies_share_the_seed_topology_and_keep_types(self):
++        kids = self.pat.Shape.childShapes()
++        self.assertTrue(all(k.isPartner(kids[0]) for k in kids[1:]))
++        self.assertEqual(len({(round(k.Placement.Base.x), round(k.Placement.Base.y))
++                              for k in kids}), N * N)
++        moved = topo.transformed(self.fill.Shape.Edges[0], App.Placement(V(5, 0, 0),
++                                                                        App.Rotation()), 7)
++        self.assertEqual(moved.ShapeType, "Edge")
++        self.assertTrue(hasattr(moved, "Curve"))
++
++    def test_moved_copy_measures_match_opencascade(self):
++        for k in self.pat.Shape.childShapes()[1:6]:
++            fresh = k.copy()            # new topology: measured by OCC itself
++            self.assertAlmostEqual(topo.size_of(k), abs(fresh.Volume), 6)
++            self.assertLess((topo.centroid(k) - fresh.CenterOfMass).Length, 1e-6)
++            bb, fb = topo.bbox(k), fresh.BoundBox
++            for a, b in ((bb.XMin, fb.XMin), (bb.YMax, fb.YMax), (bb.ZMax, fb.ZMax)):
++                self.assertAlmostEqual(a, b, 6)
++
++    def test_cached_measures_are_copies(self):
++        k = self.pat.Shape.childShapes()[3]
++        c = topo.centroid(k)
++        c.x += 100
++        self.assertLess((topo.centroid(k) - k.CenterOfMass).Length, 1e-6)
++        b = topo.bbox(k)
++        b.enlarge(50)
++        self.assertAlmostEqual(topo.bbox(k).XMin, k.BoundBox.XMin, 6)
++
++    def test_a_moved_handle_is_not_the_cached_shape(self):
++        k = self.pat.Shape.childShapes()[2]
++        before = topo.centroid(k)
++        k2 = Part.Shape(k)
++        k2.Placement = App.Placement(V(0, 0, 50), App.Rotation()).multiply(k2.Placement)
++        self.assertAlmostEqual(topo.centroid(k2).z - before.z, 50, 6)
++        self.assertLess((topo.centroid(k) - before).Length, 1e-9)
++
++    def test_body_of_element_as_before(self):
++        shape = self.pat.Shape
++        for kind, elems in (("Face", shape.Faces), ("Edge", shape.Edges),
++                            ("Vertex", shape.Vertexes)):
++            for i in range(0, len(elems), max(1, len(elems) // 23)):
++                e = Part.getShape(self.pat, "{}{}".format(kind, i + 1), needSubElement=True)
++                self.assertEqual(refs.body_of_element(self.pat, e),
++                                 old_body_of_element(self.pat, e), (kind, i))
++        far = Part.makeBox(1, 1, 1, V(500, 0, 0)).Faces[0]
++        self.assertEqual(refs.body_of_element(self.pat, far), "")
++
++    def test_fingerprints_as_before_and_unshared(self):
++        e = Part.getShape(self.pat, "Face7", needSubElement=True)
++        ix = refs._index(self.pat)
++        a = refs.fingerprint(e, "x", ix)
++        a["pts"][0][0] += 99
++        a["c"][0] += 99
++        b = refs.fingerprint(e, "x", ix)
++        self.assertEqual(json.dumps(b), json.dumps(refs._fingerprint(e, "x")))
++
++    def test_follow_as_before(self):
++        seed = self.fill
++        for kind, n in (("Face", len(seed.Shape.Faces)), ("Edge", len(seed.Shape.Edges))):
++            for i in range(1, n + 1):
++                sub = "{}{}".format(kind, i)
++                self.assertEqual(refs.follow(seed, sub, self.pat),
++                                 old_follow(seed, sub, self.pat), sub)
++
++    def test_index_of_and_find_element_as_before(self):
++        shape = self.pat.Shape
++        for i in range(1, len(shape.Faces) + 1, 7):
++            sub = "Face%d" % i
++            e = shape.getElement(sub)
++            self.assertEqual(refs._index_of(self.pat, e), sub)
++            fp = refs._fingerprint_in(self.pat, e)
++            self.assertEqual(refs.find_element(self.pat, sub, fp), sub)
++            # A name that moved: found again by its fingerprint, when it is the only one.
++            other = "Face%d" % (i % len(shape.Faces) + 1)
++            cands = refs._match(self.pat, fp)
++            want = refs._index_of(self.pat, cands[0]) if len(cands) == 1 else None
++            if not any(c.isSame(shape.getElement(other)) for c in cands):
++                self.assertEqual(refs.find_element(self.pat, other, fp), want)
++
++    def test_index_follows_a_new_shape(self):
++        ix = refs._index(self.pat)
++        self.assertIs(refs._index(self.pat), ix)
++        other = refs._index(self.fill)
++        self.assertIsNot(other, ix)
++        self.assertEqual(len(other.children), 1)
++
++    def test_map_to_feature_as_before(self):
++        views = app_part.body_views(self.part)
++        for v in views[::3]:
++            for sub in ("Face1", "Face5", "Edge3", "Edge11", "Vertex2"):
++                e = v.Shape.getElement(sub)
++                self.assertEqual(selmod.map_to_feature(e, self.pat),
++                                 old_map_to_feature(e, self.pat), (v.Name, sub))
++            self.assertEqual(selmod.map_to_feature(v.Shape.getElement("Face2"), self.fill),
++                             old_map_to_feature(v.Shape.getElement("Face2"), self.fill))
++
++    def test_body_holding_as_before(self):
++        base = core_bodies.BodySet.from_columns(self.pat.Shape, list(self.pat.BodyIds),
++                                                list(self.pat.BodyKinds),
++                                                list(self.pat.BodyFeatures))
++        for v in app_part.body_views(self.part)[::4]:
++            e = v.Shape.getElement("Edge4")
++            want = None
++            for b in base:
++                found = core_edges.find_in(b.shape, e)
++                if found is not None:
++                    want = (b.id, found)
++                    break
++            b, found = core_edges.body_holding(base, e)
++            self.assertEqual(b.id, want[0])
++            self.assertTrue(found.isSame(want[1]))
++
++    def test_sync_reclaims_folders_only_on_change(self):
++        f = app_part.folder(self.part, core_bodies.SOLID)
++        app_part.sync(self.part)
++        rev = f.Revision
++        app_part.sync(self.part)
++        self.assertEqual(f.Revision, rev)
++        names = dict(self.part.BodyNames)
++        bid = list(self.part.BodyIds)[0]
++        self.part.BodyNames = dict(names, **{bid: "Renamed"})
++        try:
++            app_part.sync(self.part)
++            self.assertEqual(f.Revision, rev + 1)
++            v = [v for v in app_part.body_views(self.part) if v.BodyId == bid][0]
++            self.assertEqual(app_part.clean_label(v.Label), "Renamed")
++        finally:
++            self.part.BodyNames = names
++            app_part.sync(self.part)
++
++    def test_views_show_their_bodies(self):
++        kids = self.part.Shape.childShapes()
++        ids = list(self.part.BodyIds)
++        for v in app_part.body_views(self.part):
++            k = kids[ids.index(v.BodyId)]
++            self.assertTrue(v.Shape.isPartner(k))
++            self.assertTrue(v.Placement.isSame(k.Placement, 1e-9))
++
++
++class Pieces(unittest.TestCase):
++
++    def test_insert_many_after_is_inserting_one_by_one(self):
++        def fresh():
++            bs = core_bodies.BodySet()
++            for i in "abcd":
++                bs.add(i, Part.makeBox(1, 1, 1), "F")
++            return bs
++        one, many = fresh(), fresh()
++        prev = "b"
++        for k in ("x", "y", "z"):
++            one.insert_after(prev, k, Part.makeBox(1, 1, 1), "G")
++            prev = k
++        many.insert_many_after("b", [(k, Part.makeBox(1, 1, 1), "G") for k in "xyz"])
++        self.assertEqual(one.ids(), many.ids())
++        self.assertEqual(many.ids(), ["a", "b", "x", "y", "z", "c", "d"])
++
++    def test_ids_taken_as_before(self):
++        mem = {}
++        for i in range(30):
++            mem["F:%d" % (i + 1)] = [3.0 * i, 0, 0, 1.0]
++            mem["G:%d" % (i + 1)] = [3.0 * i, 0, 0, 1.0]
++        shapes = [Part.makeBox(1, 1, 1, V(3.0 * i - 0.5, -0.5, -0.5)) for i in (4, 9, 0, 29, 40)]
++        a = core_bodies.IdAllocator("F", mem, taken={"F:10"})
++        got = a.take(shapes)
++        self.assertEqual(got[0], "F:5")
++        self.assertEqual(got[2], "F:1")
++        self.assertEqual(got[3], "F:30")
++        self.assertNotIn("F:10", got)
++        self.assertEqual(a.take([shapes[0]], prefix="G"), ["G:5"])
++
++    def test_cut_with_a_pattern_of_tools(self):
++        tag = 9
++        base = core_bodies.BodySet()
++        for i in range(6):
++            base.add("b%d" % i, topo.tagged(Part.makeBox(4, 4, 4, V(10 * i, 0, 0)), 3), "F")
++        tools = [Part.makeCylinder(0.5, 10, V(10 * i + 2, 2, -3)) for i in (0, 2, 4)]
++        tool = topo.tagged(Part.makeCompound(tools), tag)
++
++        def run(flip):
++            alloc = core_bodies.IdAllocator("C")
++            return core_common.apply_cut(base, tool, "C", tag, core_common.Scope(),
++                                         core_common.Keep(), alloc, flip)
++        r = run(False)
++        self.assertEqual(sorted(r.contact), ["b0", "b2", "b4"])
++        self.assertEqual(sorted(r.touched), ["b0", "b2", "b4"])
++        vols = {b.id: b.shape.Volume for b in r.bodies}
++        self.assertAlmostEqual(vols["b1"], 64, 6)
++        self.assertAlmostEqual(vols["b0"], 64 - 3.141592653589793 * 0.25 * 4, 4)
++        f = run(True)
++        self.assertEqual(sorted(f.bodies.ids()), ["b0", "b2", "b4"])
++        self.assertEqual(sorted(f.touched), ["b%d" % i for i in range(6)])
++
++    def test_touches_any_is_touches(self):
++        tools = [Part.makeBox(1, 1, 1, V(5 * i, 0, 0)) for i in range(5)]
++        comp = Part.makeCompound(tools)
++        parts = topo.tool_parts(comp)
++        for x in (-3, 0.5, 2.5, 4.0, 10.999999, 30):
++            b = Part.makeBox(1, 1, 1, V(x, 0, 0))
++            self.assertEqual(topo.touches_any(b, comp, parts), topo.touches(b, comp), x)
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.43.0
+

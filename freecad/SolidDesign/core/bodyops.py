@@ -65,11 +65,8 @@ def combine(base, op, main_id, tool_ids, feature, tag, alloc):
         out.remove(i)
     named = split_pieces(ids[0], parts, alloc)
     out.replace(ids[0], named[0][1], feature)
-    prev = ids[0]
-    for pid, s in named[1:]:
-        out.insert_after(prev, pid, s, feature)
-        res.created.append(pid)
-        prev = pid
+    out.insert_many_after(ids[0], [(pid, s, feature) for pid, s in named[1:]])
+    res.created.extend(pid for pid, _s in named[1:])
     res.touched.append(ids[0])
     return res, r
 
@@ -247,17 +244,11 @@ def split(base, tools, target_ids, consume, keep_ids, feature, tag, alloc, refin
         if consume:
             named = split_pieces(bid, parts, alloc)
             out.replace(bid, named[0][1], feature)
-            prev = bid
-            for pid, s in named[1:]:
-                out.insert_after(prev, pid, s, feature)
-                prev = pid
+            out.insert_many_after(bid, [(pid, s, feature) for pid, s in named[1:]])
         else:
             ids = alloc.take(parts, prefix="{}:{}".format(feature, bid))
             named = list(zip(ids, parts))
-            prev = bid
-            for pid, s in named:
-                out.insert_after(prev, pid, s, feature)
-                prev = pid
+            out.insert_many_after(bid, [(pid, s, feature) for pid, s in named])
         res.pieces.extend((pid, s, bid) for pid, s in named)
         res.touched.append(bid)
     if not any_cut:
@@ -303,11 +294,8 @@ def move_copy(base, ids, step, copy, copies, feature, tag, alloc):
             pl = step.multiply(pl)
             shapes.append(topo.transformed(body.shape, pl, tag))
         new_ids = alloc.take(shapes, prefix="{}:{}".format(feature, bid))
-        prev = bid
-        for nid, s in zip(new_ids, shapes):
-            out.insert_after(prev, nid, s, feature)
-            res.created.append(nid)
-            prev = nid
+        out.insert_many_after(bid, [(nid, s, feature) for nid, s in zip(new_ids, shapes)])
+        res.created.extend(new_ids)
         moved.extend(shapes)
     return res, (topo.compound(moved, tag) if moved else None)
 

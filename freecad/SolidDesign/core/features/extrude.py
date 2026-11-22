@@ -279,14 +279,17 @@ def _direction_solid(p, base, faces, d, ext, tag, big, first):
                 raise topo.GeometryError("Up To Body: the extrusion doesn't reach the body.")
             return keep[0] if len(keep) == 1 else topo.fuse(keep[0], keep[1:], tag)
         targets = [b.shape for b in base.bodies(SOLID)]
+        # Only the bodies whose boxes reach the extrusion's can be in its way (the
+        # others add nothing to the cut, names included).
+        near = [t for t in targets if not topo.boxes_apart(t, long_)]
         if p.mode == "Add" or not targets:
-            pieces = topo.cut(long_, targets, tag).Solids if targets else []
+            pieces = topo.cut(long_, near or targets, tag).Solids if targets else []
             if len(pieces) <= 1:
                 raise topo.GeometryError("Up To Next: nothing is in the way of the extrusion. "
                                          "Use Blind or another end condition.")
         else:
             pieces = []
-            for t in targets:
+            for t in near:
                 pieces.extend(topo.common(long_, [t], tag).Solids)
             if not pieces:
                 raise topo.GeometryError("Up To Next: the cut doesn't reach any material.")
@@ -575,5 +578,5 @@ def compute(p, base):
         res = common.apply_cut(base, tool, p.feature, p.tag, p.scope, p.keep, p.alloc, p.flip)
         if not res.touched:
             raise topo.GeometryError("The cut doesn't touch any body in its scope.")
-        preview = common.removed_material(tool, base, p.scope, p.tag)
+        preview = common.removed_material(tool, base, p.scope, p.tag, res)
     return res, tool, preview

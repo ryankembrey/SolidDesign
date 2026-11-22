@@ -68,6 +68,7 @@ def values(cat: Catalog) -> dict[str, str]:
         "health.tiny_edge": md.number(str(d["health"]["tiny_edge"])) + " mm",
         "health.sliver": md.number(str(d["health"]["sliver"])) + " mm",
         "search_key": d["command_line"]["search_shortcut"],
+        "slow": md.number(str(d.get("perf", {}).get("slow", 0.5))),
     }
     for t in cat.tools.values():
         out[f"keyword.{t.name}"] = d["command_line"]["keywords"].get(t.name, "")

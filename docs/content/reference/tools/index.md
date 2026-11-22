@@ -117,6 +117,7 @@ Every tool in the workbench, as the **Solid Design** menu groups them. Each page
 | :-- | :-- | :-- |
 | ![](../../assets/icons/force-rebuild.svg){ .tool-icon-small } | [Force Rebuild](force-rebuild.md) | Rebuilds every feature from scratch. |
 | ![](../../assets/icons/whats-wrong.svg){ .tool-icon-small } | [What's Wrong](whats-wrong.md) | Lists what's wrong in the model, why, and what to do: shows each problem in the view and offers the fix. |
+| ![](../../assets/icons/performance-trace.svg){ .tool-icon-small } | [Performance Trace](performance-trace.md) | Records where the time goes while you work: turn it on, do the slow thing, turn it off to see the slowest actions and how often each feature was rebuilt. |
 
 ## Working faster
 

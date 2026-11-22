@@ -374,10 +374,7 @@ def repeat(base, seeds, body_ids, moves, feature, tag, alloc, merge_bodies=False
             continue
         out = out.copy()
         ids = alloc.take(copies, prefix="{}:{}".format(feature, bid))
-        prev = bid
-        for nid, s in zip(ids, copies):
-            out.insert_after(prev, nid, s, feature)
-            res.created.append(nid)
-            prev = nid
+        out.insert_many_after(bid, [(nid, s, feature) for nid, s in zip(ids, copies)])
+        res.created.extend(ids)
     res.bodies = out
     return res, (topo.compound(shown, tag) if shown else None)

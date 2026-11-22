@@ -58,6 +58,7 @@ class Result(object):
         self.touched = []       # IDs changed by the operation
         self.created = []       # IDs created
         self.warnings = []
+        self.contact = None     # apply_cut: IDs of the bodies the tool touches
 
 
 def apply_add(base, tool, feature, tag, merge, scope, alloc):
@@ -83,8 +84,23 @@ def apply_add(base, tool, feature, tag, merge, scope, alloc):
     candidates = scope.pick(base, SOLID) if merge else []
     # touched[t] = scoped bodies each tool solid touches
     touched = []
+    # topo.touches for every pair, with each box looked up once (a pattern merged
+    # into hundreds of bodies is hundreds of thousands of pairs).
+    cshapes = [base.get(bid).shape for bid in candidates]
+    cboxes = [topo.bbox(s) for s in cshapes]
     for ts in tsolids:
-        touched.append([bid for bid in candidates if topo.touches(base.get(bid).shape, ts)])
+        tb = topo.bbox(ts)
+        row = []
+        for bid, s, cb in zip(candidates, cshapes, cboxes):
+            if topo.box_gap(cb, tb):
+                continue
+            try:
+                if s.distToShape(ts)[0] <= topo.LIN_TOL:
+                    row.append(bid)
+            except Exception:
+                pass
+        touched.append(row)
+    rank = {b: i for i, b in reversed(list(enumerate(candidates)))}
 
     # Group tool solids that share a body (union-find over tool solids).
     parent = list(range(len(tsolids)))
@@ -108,7 +124,7 @@ def apply_add(base, tool, feature, tag, merge, scope, alloc):
 
     loose = []
     for g in groups.values():
-        bids = sorted({b for ti in g for b in touched[ti]}, key=candidates.index)
+        bids = sorted({b for ti in g for b in touched[ti]}, key=rank.__getitem__)
         if not bids:
             loose.extend(tsolids[ti] for ti in g)
             continue
@@ -151,10 +167,21 @@ def apply_cut(base, tool, feature, tag, scope, keep, alloc, flip=False):
     res = Result(out)
     if tool is None or tool.isNull() or not (tool.Solids or tool.Faces):
         raise topo.GeometryError("The cut made no tool shape.")
+    if not flip:
+        res.contact = set()
+    parts_of_tool = topo.tool_parts(tool)
     for bid in scope.pick(base):
         body = base.get(bid)
-        if not flip and not topo.touches(body.shape, tool):
-            alloc.keep(bid, body.shape)
+        if not flip:
+            if not topo.touches_any(body.shape, tool, parts_of_tool):
+                alloc.keep(bid, body.shape)
+                continue
+            res.contact.add(bid)
+        elif topo.boxes_apart(body.shape, tool):
+            # Kept inside a tool it is nowhere near: nothing is left of it (what
+            # the boolean would give, without running it).
+            out.remove(bid)
+            res.touched.append(bid)
             continue
         if flip:
             r = topo.common(body.shape, [tool], tag)
@@ -177,11 +204,8 @@ def apply_cut(base, tool, feature, tag, scope, keep, alloc, flip=False):
         named = split_pieces(bid, parts, alloc)
         out.replace(bid, named[0][1], feature)
         res.touched.append(bid)
-        prev = bid
-        for pid, s in named[1:]:
-            out.insert_after(prev, pid, s, feature)
-            res.created.append(pid)
-            prev = pid
+        out.insert_many_after(bid, [(pid, s, feature) for pid, s in named[1:]])
+        res.created.extend(pid for pid, _s in named[1:])
         res.pieces.extend((pid, s, bid) for pid, s in named)
 
     if res.pieces and not keep.all:
@@ -197,10 +221,15 @@ def apply_cut(base, tool, feature, tag, scope, keep, alloc, flip=False):
     return res
 
 
-def removed_material(tool, base, scope, tag):
-    """What a cut takes away, for the preview (spec 8.2)."""
-    shapes = [base.get(b).shape for b in scope.pick(base, SOLID)]
-    shapes = [s for s in shapes if topo.touches(s, tool)]
+def removed_material(tool, base, scope, tag, cut=None):
+    """What a cut takes away, for the preview (spec 8.2). ``cut``: the Result of
+    the cut just made with this tool, which already knows what it touches."""
+    contact = getattr(cut, "contact", None)
+    if contact is not None:
+        shapes = [base.get(b).shape for b in scope.pick(base, SOLID) if b in contact]
+    else:
+        shapes = [base.get(b).shape for b in scope.pick(base, SOLID)]
+        shapes = [s for s in shapes if topo.touches(s, tool)]
     if not shapes:
         return tool
     try:

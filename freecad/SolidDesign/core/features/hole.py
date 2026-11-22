@@ -511,9 +511,16 @@ def _sink_up(wide, narrow, slot, z_exit, h):
 
 def _inside(point, d, solids, big):
     """[(t_in, t_out)] where the line from ``point`` along ``d`` is inside the solids."""
-    seg = Part.LineSegment(point - d * 1e-6, point + d * big).toShape()
+    a, b = point - d * 1e-6, point + d * big
+    seg = Part.LineSegment(a, b).toShape()
+    # The segment's own box: a solid whose box is apart from it can't meet it (one
+    # boolean per solid and position was the cost of Through All with many bodies).
+    sb = App.BoundBox(min(a.x, b.x), min(a.y, b.y), min(a.z, b.z),
+                      max(a.x, b.x), max(a.y, b.y), max(a.z, b.z))
     out = []
     for s in solids:
+        if topo.box_gap(topo.bbox(s), sb):
+            continue
         try:
             c = seg.common(s)
         except Exception:
@@ -646,4 +653,4 @@ def compute(p, base, scope=None):
     if not res.touched:
         raise topo.GeometryError("The holes don't touch any body. Check the points and the "
                                  "direction (Reverse Direction).")
-    return res, tool, common.removed_material(tool, base, scope or common.Scope(), p.tag)
+    return res, tool, common.removed_material(tool, base, scope or common.Scope(), p.tag, res)

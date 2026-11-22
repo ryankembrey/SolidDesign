@@ -233,7 +233,9 @@
     ],
     "commands": [
      "SD_Rebuild",
-     "SD_WhatsWrong"
+     "SD_WhatsWrong",
+     "Separator",
+     "SD_PerfTrace"
     ]
    },
    {
@@ -375,7 +377,9 @@
     ],
     "commands": [
      "SD_Rebuild",
-     "SD_WhatsWrong"
+     "SD_WhatsWrong",
+     "Separator",
+     "SD_PerfTrace"
     ]
    }
   ]
@@ -1269,6 +1273,16 @@
    "checkable": false,
    "class": "RebuildCommand",
    "doc": ""
+  },
+  {
+   "name": "SD_PerfTrace",
+   "label": "Performance Trace",
+   "tooltip": "Records where the time goes while you work: turn it on, do the slow thing, turn it off to see the slowest actions and how often each feature was rebuilt.",
+   "pixmap": "freecad/SolidDesign/resources/icons/Rebuild.svg",
+   "shortcut": "",
+   "checkable": true,
+   "class": "PerfTraceCommand",
+   "doc": "Evaluate → Performance Trace: on, it records where the time goes; off, it\n    shows what it found."
   },
   {
    "name": "SD_ContextToolbar",
@@ -18682,6 +18696,7 @@
    "SD_CenterOfMass": "centerofmass",
    "SD_WhatsWrong": "whatswrong",
    "SD_Rebuild": "forcerebuild",
+   "SD_PerfTrace": "performancetrace",
    "SD_ReferenceLabels": "referencenames"
   },
   "skip_groups": [
@@ -19118,5 +19133,8 @@
  "health": {
   "tiny_edge": 0.01,
   "sliver": 0.005
+ },
+ "perf": {
+  "slow": 0.5
  }
 }

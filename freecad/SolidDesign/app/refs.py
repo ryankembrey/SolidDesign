@@ -19,7 +19,9 @@ fingerprint is tried within the same body:
 Never pick silently between several matches.
 """
 
+import bisect
 import json
+from collections import OrderedDict
 
 import FreeCAD as App
 import Part
@@ -109,35 +111,193 @@ def outline(elem):
     return [[round(p.x, 4), round(p.y, 4), round(p.z, 4)] for p in pts]
 
 
-def fingerprint(elem, body_id=""):
+def _fingerprint(elem, body_id=""):
     c = topo.centroid(elem) if elem.ShapeType != "Vertex" else elem.Point
     return {"kind": elem.ShapeType, "type": _type_name(elem), "dir": _orientation(elem),
             "c": [c.x, c.y, c.z], "size": _size(elem), "body": body_id or "",
             "pts": outline(elem)}
 
 
+def _copy_fp(fp):
+    return {k: ([list(p) for p in v] if k == "pts" else list(v) if isinstance(v, list) else v)
+            for k, v in fp.items()}
+
+
+def fingerprint(elem, body_id="", ix=None):
+    """``ix``: the _Index of the shape ``elem`` is in, which keeps fingerprints
+    already worked out (an element that didn't change isn't measured again)."""
+    if ix is None:
+        return _fingerprint(elem, body_id)
+    try:
+        h = elem.hashCode()
+    except Exception:
+        return _fingerprint(elem, body_id)
+    for e, b, fp in ix.fps.get(h, ()):
+        if b == body_id and e.isSame(elem):
+            return _copy_fp(fp)
+    fp = _fingerprint(elem, body_id)
+    ix.fps.setdefault(h, []).append((elem, body_id, _copy_fp(fp)))
+    return fp
+
+
+# ------------------------------------------------------------------ shape indexes
+# With hundreds of bodies, finding which body holds an element, or which element
+# a mapped name now has, meant walking every element of the model for every
+# reference on every recompute. An index is built once per feature shape (and
+# rebuilt when the shape changes) and answers the same questions by lookup.
+
+_INDEXES = OrderedDict()
+_INDEXES_KEPT = 16
+
+
+class _Index:
+    def __init__(self, shape):
+        self.shape = shape
+        self.children = shape.childShapes() if shape.ShapeType == "Compound" else [shape]
+        self._kinds = {}
+        self._cum = {}
+        self.fps = {}
+        self._names = {}
+        self._history = {}
+        self._bbox = None
+
+    def elements(self, kind):
+        """{hashCode: [(element, child index)]} over the children's elements (in
+        child order, so the first isSame match is the first child that has it)."""
+        m = self._kinds.get(kind)
+        if m is None:
+            m = {}
+            for i, ch in enumerate(self.children):
+                elems = ch.Faces if kind == "Face" else ch.Edges if kind == "Edge" \
+                    else ch.Vertexes
+                for e in elems:
+                    m.setdefault(e.hashCode(), []).append((e, i))
+            self._kinds[kind] = m
+        return m
+
+    def _ranges(self, kind):
+        """Running totals of each child's elements of a kind, when no element is
+        in two children (the shape's own numbering is then child after child);
+        else None (split pieces can share faces)."""
+        if kind not in self._cum:
+            cum, n = [], 0
+            for ch in self.children:
+                n += ch.countElement(kind)
+                cum.append(n)
+            self._cum[kind] = cum if n == self.shape.countElement(kind) else None
+        return self._cum[kind]
+
+    def child_of(self, elem):
+        """The index of the first child holding ``elem`` (isSame), or None."""
+        try:
+            kind = elem.ShapeType
+            cum = self._ranges(kind) if len(self.children) > 1 else None
+            if cum is not None:
+                # OpenCASCADE's own index of the element in the whole shape.
+                k, i = self.shape.findSubShape(elem)
+                if not i or k != kind:
+                    return None
+                return bisect.bisect_left(cum, i)
+            hits = self.elements(kind).get(elem.hashCode(), ())
+        except Exception:
+            return None
+        for e, i in hits:
+            if e.isSame(elem):
+                return i
+        return None
+
+    def names(self, kind):
+        """Sorted [(mapped name, index name)] of one kind of element."""
+        v = self._names.get(kind)
+        if v is None:
+            shape = self.shape
+            n = shape.countElement(kind)
+            try:
+                rmap = shape.ElementReverseMap
+            except Exception:
+                rmap = {}
+            v = []
+            for i in range(1, n + 1):
+                name = "{}{}".format(kind, i)
+                m = rmap.get(name, "")
+                if not isinstance(m, str):
+                    m = _mapped(shape, name)     # several names: the one getElement gives
+                if m:
+                    v.append((m, name))
+            v.sort()
+            self._names[kind] = v
+        return v
+
+    def history(self, kind):
+        """[(index name, history)] of one kind of element, in index order."""
+        v = self._history.get(kind)
+        if v is None:
+            shape = self.shape
+            v = []
+            for i in range(1, shape.countElement(kind) + 1):
+                name = "{}{}".format(kind, i)
+                m = _mapped(shape, name)
+                try:
+                    h = shape.getElementHistory(m) if m else None
+                except Exception:
+                    h = None
+                v.append((name, h))
+            self._history[kind] = v
+        return v
+
+    def diagonal(self):
+        if self._bbox is None:
+            self._bbox = topo.bbox(self.shape).DiagonalLength
+        return self._bbox
+
+
+def _index(obj, shape=None):
+    """The index of a feature's shape (``shape``: obj.Shape when already read)."""
+    if shape is None:
+        shape = obj.Shape
+    try:
+        key = (obj.Document.Name, obj.Name)
+    except Exception:
+        return _Index(shape)
+    ix = _INDEXES.get(key)
+    if ix is not None and topo.same_shape(ix.shape, shape):
+        _INDEXES.move_to_end(key)
+        return ix
+    ix = _Index(shape)
+    _INDEXES[key] = ix
+    while len(_INDEXES) > _INDEXES_KEPT:
+        _INDEXES.popitem(last=False)
+    return ix
+
+
+def clear_indexes():
+    _INDEXES.clear()
+
+
 def _children(obj):
-    shape = obj.Shape
-    return shape.childShapes() if shape.ShapeType == "Compound" else [shape]
+    return _index(obj).children
 
 
-def body_of_element(obj, elem):
+def body_of_element(obj, elem, ix=None):
     """The body ID (from a feature's BodyIds) that holds an element, or ''."""
     ids = list(getattr(obj, "BodyIds", []) or [])
     if not ids or elem is None:
         return ""
-    kind = elem.ShapeType
-    children = _children(obj)
-    for i, ch in enumerate(children):
-        elems = ch.Faces if kind == "Face" else ch.Edges if kind == "Edge" else ch.Vertexes
-        for e in elems:
-            if e.isSame(elem):
-                return ids[i] if i < len(ids) else ""
+    if ix is None:
+        ix = _index(obj)
+    i = ix.child_of(elem)
+    if i is not None:
+        return ids[i] if i < len(ids) else ""
     from ..core.features.edges import find_in
-    for i, ch in enumerate(children):           # shapes that don't share topology
+    for i, ch in enumerate(ix.children):        # shapes that don't share topology
         if find_in(ch, elem) is not None:
             return ids[i] if i < len(ids) else ""
     return ""
+
+
+def _fingerprint_in(obj, elem):
+    ix = _index(obj)
+    return fingerprint(elem, body_of_element(obj, elem, ix), ix)
 
 
 # ------------------------------------------------------------------ fingerprints
@@ -187,7 +347,7 @@ def set_ref(obj, prop, target, subs=""):
     for sub in subs:
         try:
             elem = Part.getShape(target, sub, needSubElement=True)
-            fps.append(fingerprint(elem, body_of_element(target, elem)))
+            fps.append(_fingerprint_in(target, elem))
         except Exception:
             fps.append(None)
     _store(obj, prop, fps)
@@ -236,7 +396,7 @@ def _note_repair(obj, prop, what, old_fp, target, sub, elem, msg, origin=None):
     # Repaired twice before it was checked: where it was first is what matters.
     old = first["old"] if first is not None and first.get("old") else old_fp
     items.append({"prop": prop, "what": what, "old": old,
-                  "new": fingerprint(elem, body_of_element(target, elem)),
+                  "new": _fingerprint_in(target, elem),
                   "sub": sub, "target": target.Name if target is not None else "",
                   "origin": (first or {}).get("origin") or
                   (origin.Name if origin is not None else ""), "msg": msg})
@@ -309,24 +469,20 @@ def follow(target, sub, base):
     old = _mapped(target.Shape, sub)
     if not old or kind is None:
         return None
-    shape = base.Shape
-    n = len(shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes)
+    ix = _index(base)
+    names = ix.names(kind)
     hits = []
-    for i in range(1, n + 1):
-        name = "{}{}".format(kind, i)
-        m = _mapped(shape, name)
-        if m == old or (m.startswith(old) and m[len(old):len(old) + 1] == ";"):
+    # Exact matches and old + ";..." sort together, right after ``old``.
+    i = bisect.bisect_left(names, (old,))
+    while i < len(names) and names[i][0].startswith(old):
+        m, name = names[i]
+        if m == old or m[len(old):len(old) + 1] == ";":
             hits.append(name)
+        i += 1
     if len(hits) == 1:
         return hits[0]
     if not hits:
-        for i in range(1, n + 1):
-            name = "{}{}".format(kind, i)
-            m = _mapped(shape, name)
-            try:
-                h = shape.getElementHistory(m) if m else None
-            except Exception:
-                h = None
+        for name, h in ix.history(kind):
             if h and (h[1] == old or old in (h[2] or [])):
                 hits.append(name)
         if len(hits) == 1:
@@ -343,37 +499,45 @@ def _same_dir(a, b, tol=1e-6):
     return abs(abs(va.normalize().dot(vb.normalize())) - 1.0) < tol
 
 
-def _candidates(target, fp):
-    shape = target.Shape
+def _candidates(target, fp, ix=None):
+    if ix is None:
+        ix = _index(target)
+    shape = ix.shape
     ids = list(getattr(target, "BodyIds", []) or [])
     if fp.get("body") and ids and fp["body"] in ids:
-        ch = _children(target)
         idx = ids.index(fp["body"])
-        if idx < len(ch):
-            shape = ch[idx]
+        if idx < len(ix.children):
+            shape = ix.children[idx]
     kind = fp["kind"]
     elems = shape.Faces if kind == "Face" else shape.Edges if kind == "Edge" else shape.Vertexes
     return [e for e in elems if _type_name(e) == fp["type"] and _same_dir(_orientation(e), fp["dir"])]
 
 
-def _match(target, fp):
-    cands = _candidates(target, fp)
+def _near(e, fp, scale):
+    c = App.Vector(*fp["c"])
+    ec = topo.centroid(e) if e.ShapeType != "Vertex" else e.Point
+    size = _size(e)
+    return (ec - c).Length <= 0.01 * scale and (
+        fp["size"] == 0 or abs(size - fp["size"]) <= 0.1 * max(fp["size"], 1e-9))
+
+
+def _match(target, fp, ix=None):
+    if ix is None:
+        ix = _index(target)
+    cands = _candidates(target, fp, ix)
     if len(cands) <= 1:
         return cands
-    c = App.Vector(*fp["c"])
-    scale = max(target.Shape.BoundBox.DiagonalLength, 1e-6)
-    near = []
-    for e in cands:
-        ec = topo.centroid(e) if e.ShapeType != "Vertex" else e.Point
-        size = _size(e)
-        if (ec - c).Length <= 0.01 * scale and (
-                fp["size"] == 0 or abs(size - fp["size"]) <= 0.1 * max(fp["size"], 1e-9)):
-            near.append(e)
-    return near
+    scale = max(ix.diagonal(), 1e-6)
+    return [e for e in cands if _near(e, fp, scale)]
 
 
 def _index_of(target, elem):
     kind = elem.ShapeType
+    try:
+        k, i = target.Shape.findSubShape(elem)
+        return "{}{}".format(kind, i) if k == kind and i else None
+    except Exception:
+        pass
     elems = target.Shape.Faces if kind == "Face" else target.Shape.Edges if kind == "Edge" \
         else target.Shape.Vertexes
     for i, e in enumerate(elems, 1):
@@ -463,7 +627,7 @@ def get_refs(obj, prop, what="reference", base=None):
             subs.append(s)
             warns.append(w)
         setattr(obj, prop, (base, subs))
-        _store(obj, prop, [fingerprint(e, body_of_element(base, e)) for e in elems])
+        _store(obj, prop, [_fingerprint_in(base, e) for e in elems])
         return elems, [w for w in warns if w]
     target, subs = val
     if not subs:
@@ -486,7 +650,8 @@ def get_refs(obj, prop, what="reference", base=None):
             _note_repair(obj, prop, what, fp, t, s, e, w, origin=target)
     if new_target is not target or list(new_subs) != list(subs):
         setattr(obj, prop, (new_target, new_subs))
-    new_fps = [fingerprint(e, body_of_element(new_target, e)) for e in elems]
+    ix = _index(new_target) if elems else None
+    new_fps = [fingerprint(e, body_of_element(new_target, e, ix), ix) for e in elems]
     if new_fps != fps:
         _store(obj, prop, new_fps)
     return elems, warns
@@ -509,9 +674,32 @@ def find_element(target, sub, fp):
         elem = target.Shape.getElement(sub)
     except Exception:
         elem = None
-    cands = _match(target, fp) if fp else []
+    if elem is not None and not fp:
+        return sub
+    ix = _index(target) if fp else None
+    if elem is not None and _still(target, elem, fp, ix):
+        return sub
+    cands = _match(target, fp, ix) if fp else []
     if elem is not None and (not fp or any(c.isSame(elem) for c in cands)):
         return sub
     if len(cands) == 1:
         return _index_of(target, cands[0])
     return None
+
+
+def _still(target, elem, fp, ix):
+    """True when ``elem`` is sure to be among _match(target, fp): of the
+    fingerprint's body, type and direction, and near where it was (being near
+    is enough either way: alone it is the only candidate, else it passes)."""
+    try:
+        if elem.ShapeType != fp["kind"] or _type_name(elem) != fp["type"] or \
+                not _same_dir(_orientation(elem), fp["dir"]):
+            return False
+        ids = list(getattr(target, "BodyIds", []) or [])
+        if fp.get("body") and ids and fp["body"] in ids:
+            idx = ids.index(fp["body"])
+            if idx < len(ix.children) and ix.child_of(elem) != idx:
+                return False
+        return _near(elem, fp, max(ix.diagonal(), 1e-6))
+    except Exception:
+        return False

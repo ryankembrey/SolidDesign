@@ -428,11 +428,29 @@ class CommandBar(QtWidgets.QFrame):
             App.Console.PrintLog("Solid Design: hints: {}\n".format(e))
             self.hints = []
 
+    def _plane_sizes(self):
+        out = []
+        for h in self.hints:
+            if h.kind == "Plane":
+                try:
+                    out.append(round(h.obj.ViewObject.getBoundingBox().DiagonalLength, 3))
+                except Exception:
+                    out.append(None)
+        return tuple(out)
+
+    def _planes_resized(self):
+        """FreeCAD sizes the planes to the model whenever it likes (sometimes after
+        the labels were placed): put the labels back on them when they change."""
+        sizes = self._plane_sizes()
+        if sizes and sizes != getattr(self, "_plane_sig", None):
+            self._place_planes()
+
     def _place_planes(self):
         """Move the planes' labels onto the planes as drawn (FreeCAD sizes the
         origin when it draws it)."""
         if not self.isVisible() or not self.hints:
             return
+        self._plane_sig = self._plane_sizes()
         try:
             view = Gui.ActiveDocument.ActiveView
             p = self.parentWidget()
@@ -694,6 +712,7 @@ class CommandBar(QtWidgets.QFrame):
             return
         cam = self._camera()
         if cam == self._cam:
+            self._planes_resized()
             return
         if getattr(self, "_moving", None) != cam:
             self._moving = cam              # wait until it stops

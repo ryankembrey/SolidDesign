@@ -22,7 +22,7 @@ import Part
 
 from ..core import topo
 from ..core.bodies import BodySet
-from . import refs, util
+from . import perf, refs, util
 
 # Features being edited in a panel that shows the model before them (Fillet,
 # Chamfer): they still compute their result for the preview while the rollback
@@ -121,6 +121,14 @@ class FeatureProxy(object):
 
     # -------------------------------------------------- recompute
     def execute(self, obj):
+        if not perf.enabled():
+            return self._execute(obj)
+        label = obj.Label.rstrip(u"\u200b")
+        perf.count("features recomputed", u"{} [{}]".format(label, obj.Name))
+        with perf.span("feature", u"{} ({})".format(label, self.TYPE)):
+            return self._execute(obj)
+
+    def _execute(self, obj):
         try:
             base = self.base_bodies(obj)
         except topo.GeometryError as e:
@@ -168,6 +176,7 @@ class FeatureProxy(object):
             obj.WarningMessage = w
         self.write(obj, out, preview)
 
+    @perf.traced("feature.write")
     def write(self, obj, bodies, preview):
         try:
             comp = bodies.to_compound(obj.ID)

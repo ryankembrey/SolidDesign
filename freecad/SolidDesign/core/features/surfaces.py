@@ -133,12 +133,18 @@ def _solid_of(shape, what):
 
 def _body_of_edges(base, edges):
     """(body, the body's own edges) when every edge is on one body, else (None, [])."""
+    from .edges import NEAR
+    boxes = [e.BoundBox for e in edges]
     for b in base:
+        bb = topo.bbox(b.shape)
+        if any(topo.box_gap(bb, eb, NEAR) for eb in boxes):
+            continue                    # an edge is nowhere near this body
         own = []
+        body_edges = b.shape.Edges
         for e in edges:
-            hit = next((x for x in b.shape.Edges if x.isSame(e)), None)
+            hit = next((x for x in body_edges if x.isSame(e)), None)
             if hit is None:
-                for x in b.shape.Edges:
+                for x in body_edges:
                     if abs(x.Length - e.Length) < 1e-7 and \
                             (x.CenterOfMass - e.CenterOfMass).Length < 1e-6:
                         hit = x
@@ -699,4 +705,4 @@ def thicken(p, base):
     res = common.apply_cut(rest, tool, p.feature, p.tag, p.scope, common.Keep(), p.alloc)
     if not res.touched:
         raise topo.GeometryError("The thickened surface doesn't cut any body.")
-    return res, common.removed_material(tool, rest, p.scope, p.tag)
+    return res, common.removed_material(tool, rest, p.scope, p.tag, res)

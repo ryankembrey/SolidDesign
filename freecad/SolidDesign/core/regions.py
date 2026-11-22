@@ -118,6 +118,14 @@ def regions(sketch, tag=None):
     corner = pl.multVec(App.Vector(bb.XMin - margin * 0.5, bb.YMin - margin * 0.5, 0))
     arranged = topo.general_fuse(big, edges, tag)
 
+    # Each sketch edge's padded box, once (not once per region edge).
+    boxes = []
+    for se in edges:
+        box = App.BoundBox(se.BoundBox)
+        # Padded: a drawn shape's box comes from its display mesh, which cuts
+        # inside arcs.
+        box.enlarge(max(1e-5, 0.01 * box.DiagonalLength))
+        boxes.append(box)
     found = []
     for f in arranged.Faces:
         try:
@@ -129,11 +137,7 @@ def regions(sketch, tag=None):
         for e in f.Edges:
             mid = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
             for i, se in enumerate(edges, 1):
-                box = App.BoundBox(se.BoundBox)
-                # Padded: a drawn shape's box comes from its display mesh, which
-                # cuts inside arcs.
-                box.enlarge(max(1e-5, 0.01 * box.DiagonalLength))
-                if not box.isInside(mid):
+                if not boxes[i - 1].isInside(mid):
                     continue
                 try:
                     if se.distToShape(Part.Vertex(mid))[0] < 1e-6:
@@ -201,11 +205,21 @@ def default_profile(sketch, tag):
     if not shape.Edges:
         raise topo.GeometryError("{} is empty.".format(sketch.Label))
     wires = shape.Wires
-    loose = [e for e in shape.Edges if not any(e.isSame(we) for w in wires for we in w.Edges)]
+    in_wires = {}                       # hashCode -> wire edges (isSame shares it)
+    for w in wires:
+        for we in w.Edges:
+            in_wires.setdefault(we.hashCode(), []).append(we)
+    loose = [e for e in shape.Edges
+             if not any(e.isSame(we) for we in in_wires.get(e.hashCode(), ()))]
     closed = [w for w in wires if w.isClosed()]
     open_ = [w for w in wires if not w.isClosed()] + [Part.Wire(e) for e in loose]
+    # Contours whose boxes are apart can't touch: only the others are measured
+    # (every pair of a sketch of hundreds of holes was measured).
+    boxes = [w.BoundBox for w in closed]
     for i in range(len(closed)):
         for j in range(i + 1, len(closed)):
+            if topo.box_gap(boxes[i], boxes[j], 1e-6):
+                continue
             try:
                 if closed[i].distToShape(closed[j])[0] < 1e-7:
                     raise topo.GeometryError(

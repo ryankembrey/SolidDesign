@@ -789,5 +789,5 @@ def compute(p, tool):
     res = common.apply_cut(base, tool, p.feature, p.tag, p.scope, p.keep, p.alloc, p.flip)
     if not res.touched:
         raise topo.GeometryError("The cut doesn't touch any body in its scope.")
-    return res, common.removed_material(tool, base, p.scope, p.tag)
+    return res, common.removed_material(tool, base, p.scope, p.tag, res)
 

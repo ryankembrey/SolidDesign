@@ -51,6 +51,23 @@ def scaled(shape, about, factors, tag):
     return topo.tagged(out, tag)
 
 
+def mass_centre(shape):
+    """The centre of mass of a body's solids (a compound has no CenterOfMass of its
+    own), else the middle of its bounding box."""
+    solids = shape.Solids
+    if not solids:
+        return shape.BoundBox.Center
+    if len(solids) == 1:
+        return solids[0].CenterOfMass
+    total = sum(s.Volume for s in solids)
+    if total <= 0:
+        return shape.BoundBox.Center
+    c = App.Vector()
+    for s in solids:
+        c += s.CenterOfMass * (s.Volume / total)
+    return c
+
+
 def scale(base, ids, about_kind, about_pl, factors, feature, tag):
     out = base.copy()
     res = common.Result(out)
@@ -60,7 +77,7 @@ def scale(base, ids, about_kind, about_pl, factors, feature, tag):
             raise topo.GeometryError("A body to scale no longer exists. Re-pick it.")
         pl = about_pl
         if about_kind == CENTROID:
-            c = b.shape.CenterOfMass if b.shape.Solids else b.shape.BoundBox.Center
+            c = mass_centre(b.shape)
             pl = App.Placement(c, about_pl.Rotation)
         out.replace(bid, scaled(b.shape, pl, factors, tag), feature)
         res.touched.append(bid)

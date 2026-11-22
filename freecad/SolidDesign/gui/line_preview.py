@@ -42,6 +42,12 @@ def _restore(keys):
 def dry_run(cmd, line, under=None):
     """Make ``cmd`` with a parsed ``line`` and undo it. Returns (node or None,
     problem or "")."""
+    from ..app import perf
+    with perf.span("line.preview", cmd):
+        return _dry_run(cmd, line, under)
+
+
+def _dry_run(cmd, line, under=None):
     from . import command_line as cl
     from . import viewproviders
     if cmd in NO_PREVIEW or cmd in _refused or cl._proxy_classes().get(cmd) is None:

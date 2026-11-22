@@ -183,10 +183,12 @@ def open_extrude(doc, part, mode, sketch):
 
 def _edit_new(doc, obj):
     from . import viewproviders
-    viewproviders.attach_feature(obj, new=True)
-    doc.recompute()
-    Gui.Selection.clearSelection()
-    Gui.ActiveDocument.setEdit(obj.Name, 0)
+    from ..app import perf
+    with perf.span("tool.start", obj.Label):
+        viewproviders.attach_feature(obj, new=True)
+        doc.recompute()
+        Gui.Selection.clearSelection()
+        Gui.ActiveDocument.setEdit(obj.Name, 0)
 
 
 def _picked_items(part, kinds):

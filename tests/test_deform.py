@@ -49,6 +49,25 @@ class TestScale(Case):
         self.assertAlmostEqual(self.shape().Volume, 4000, 3)
 
 
+    def test_body_held_as_a_compound(self):
+        """A body can come out of a feature as a compound (fillets do): it has no
+        CenterOfMass of its own, and Scale failed with an internal error."""
+        import Part
+        from freecad.SolidDesign.core.bodies import BodySet
+        from freecad.SolidDesign.core.features import deform as core
+        box = Part.makeBox(10, 10, 40)
+        base = BodySet.from_columns(Part.makeCompound([Part.makeCompound([box])]), ["b1"],
+                                    ["solid"], ["F"])
+        b = base.get("b1")
+        self.assertEqual(b.shape.ShapeType, "Compound")
+        res = core.scale(base, ["b1"], core.CENTROID, App.Placement(), (2.0, 2.0, 2.0),
+                         "Scale", 7)
+        out = res.bodies.get("b1").shape
+        self.assertAlmostEqual(out.Volume, 4000 * 8, 3)
+        self.assertAlmostEqual(out.BoundBox.Center.z, 20, 6)    # about its own centre
+        self.assertAlmostEqual(core.mass_centre(b.shape).z, 20, 9)
+
+
 class TestFlex(Case):
     def test_twist_bend_taper_stretch(self):
         f = deform.create_flex(self.doc, self.part, FlexType="Twisting", Angle=90)

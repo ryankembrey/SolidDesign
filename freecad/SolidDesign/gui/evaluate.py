@@ -762,6 +762,77 @@ class RebuildCommand(object):
         force_rebuild(App.ActiveDocument)
 
 
+PERF_PARAMS = "User parameter:BaseApp/Preferences/Mod/SolidDesign"
+
+
+def show_perf_report(text):
+    """The trace's report in a window: copy it, or find it in the file it was
+    written to."""
+    from ..app import perf
+    d = QtWidgets.QDialog(Gui.getMainWindow())
+    d.setWindowTitle("Solid Design performance trace")
+    d.resize(980, 640)
+    lay = QtWidgets.QVBoxLayout(d)
+    note = QtWidgets.QLabel(u"Also written to {}. The slowest actions come first, each "
+                            u"with what took the time inside it.".format(perf.report_path()))
+    note.setWordWrap(True)
+    lay.addWidget(note)
+    box = QtWidgets.QPlainTextEdit()
+    box.setReadOnly(True)
+    box.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+    f = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+    box.setFont(f)
+    box.setPlainText(text)
+    lay.addWidget(box, 1)
+    detailed = QtWidgets.QCheckBox("Next time, also a full Python profile of the slowest "
+                                   "actions (slows FreeCAD down while tracing)")
+    detailed.setChecked(App.ParamGet(PERF_PARAMS).GetBool("PerfTraceDetailed", False))
+    detailed.toggled.connect(lambda on: App.ParamGet(PERF_PARAMS).SetBool(
+        "PerfTraceDetailed", on))
+    lay.addWidget(detailed)
+    row = QtWidgets.QHBoxLayout()
+    row.addStretch(1)
+    copy = QtWidgets.QPushButton("Copy")
+    copy.clicked.connect(lambda: QtWidgets.QApplication.clipboard().setText(text))
+    close = QtWidgets.QPushButton("Close")
+    close.clicked.connect(d.accept)
+    row.addWidget(copy)
+    row.addWidget(close)
+    lay.addLayout(row)
+    d.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+    d.show()
+    return d
+
+
+class PerfTraceCommand(object):
+    """Evaluate → Performance Trace: on, it records where the time goes; off, it
+    shows what it found."""
+
+    def GetResources(self):
+        from ..app import perf
+        return {"Pixmap": icon("Rebuild"), "MenuText": "Performance Trace",
+                "ToolTip": "Records where the time goes while you work: turn it on, do the "
+                           "slow thing, turn it off to see the slowest actions and how often "
+                           "each feature was rebuilt.",
+                # A check box in the menu: ticked while it records (SD_PROFILE=1
+                # before starting FreeCAD ticks it from the start).
+                "Checkable": perf.enabled()}
+
+    def IsActive(self):
+        return True
+
+    def Activated(self, checked=None):
+        from ..app import perf
+        on = not perf.enabled() if checked is None else bool(checked)
+        if on:
+            perf.start(cprofile=App.ParamGet(PERF_PARAMS).GetBool("PerfTraceDetailed", False))
+            App.Console.PrintMessage("Solid Design: performance trace on. Turn it off "
+                                     "(Evaluate → Performance Trace) to see the report.\n")
+        elif perf.enabled():
+            show_perf_report(perf.stop())
+
+
 def register():
     Gui.addCommand("SD_WhatsWrong", WhatsWrongCommand())
     Gui.addCommand("SD_Rebuild", RebuildCommand())
+    Gui.addCommand("SD_PerfTrace", PerfTraceCommand())

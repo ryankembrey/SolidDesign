@@ -1172,8 +1172,8 @@ def _edge_at(edge, frac=0.5):
 
 def _faces_at(shape, m):
     """The faces of ``shape`` through the point ``m``."""
-    from .preview import touches
-    return [f for f in shape.Faces if touches(f, m)]
+    from .preview import FaceFinder
+    return FaceFinder(shape).faces(m)
 
 
 def _away_in(face, m, t):

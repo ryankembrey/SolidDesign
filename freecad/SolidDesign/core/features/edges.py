@@ -45,16 +45,34 @@ def find_in(shape, elem):
     return None
 
 
+# Far enough to cover how boxes are made (an element on a body overlaps its box;
+# one matched by geometry has its centre within 1e-6 of the body's element).
+NEAR = 1e-4
+
+
+def body_holding(base, elem):
+    """(body, ``elem`` as an element of the body's own shape): the first body in
+    order that holds it (find_in), or (None, None). Bodies whose box is nowhere
+    near the element are passed over without looking at their elements."""
+    try:
+        eb = elem.BoundBox
+    except Exception:
+        eb = None
+    for b in base:
+        if eb is not None and topo.box_gap(topo.bbox(b.shape), eb, NEAR):
+            continue
+        found = find_in(b.shape, elem)
+        if found is not None:
+            return b, found
+    return None, None
+
+
 def faces_by_body(base, faces):
     """Group picked faces by body, as faces of that body's own shape."""
     out = {}
     for f in faces:
-        hit = None
-        for b in base:
-            found = find_in(b.shape, f)
-            if found is not None:
-                hit = (b.id, found)
-                break
+        b, found = body_holding(base, f)
+        hit = (b.id, found) if b is not None else None
         if hit is None:
             raise topo.GeometryError("A picked face isn't on any body before this feature. "
                                      "Re-pick it.")
@@ -70,12 +88,8 @@ def by_body(base, elems):
     """
     out = {}
     for el in elems:
-        hit = None
-        for b in base:
-            found = find_in(b.shape, el)
-            if found is not None:
-                hit = (b, found)
-                break
+        b, found = body_holding(base, el)
+        hit = (b, found) if b is not None else None
         if hit is None:
             raise topo.GeometryError("A picked {} isn't on any body before this feature. "
                                      "Re-pick it.".format(el.ShapeType.lower()))
@@ -85,8 +99,10 @@ def by_body(base, elems):
         for it in items:
             if not any(it.isSame(x) for x in lst):
                 lst.append(it)
-    order = [b.id for b in base]
-    return dict(sorted(out.items(), key=lambda kv: order.index(kv[0])))
+    order = {}
+    for i, b in enumerate(base):
+        order.setdefault(b.id, i)
+    return dict(sorted(out.items(), key=lambda kv: order[kv[0]]))
 
 
 def _tangent_at(edge, vertex):
@@ -101,23 +117,50 @@ def _tangent_at(edge, vertex):
     return t
 
 
+class _Same(object):
+    """A set of shapes by isSame (same topology, any orientation), looked up by
+    hash: isSame shapes share their hash (TShape and Location)."""
+
+    def __init__(self, shapes=()):
+        self._by = {}
+        for x in shapes:
+            self.add(x)
+
+    def add(self, x):
+        self._by.setdefault(x.hashCode(), []).append(x)
+
+    def __contains__(self, x):
+        return any(y.isSame(x) for y in self._by.get(x.hashCode(), ()))
+
+
 def tangent_chain(shape, edges, tol=1e-6):
     """Add the edges tangent-continuous with the picks (SolidWorks' Tangent
-    propagation): neighbours that meet a picked edge smoothly at a vertex."""
+    propagation): neighbours that meet a picked edge smoothly at a vertex.
+
+    The edges at each vertex are found from a map made once, in the shape's
+    edge order, so the result (and its order) is what going through every edge
+    of the shape for every vertex gave, without doing that."""
+    all_edges = shape.Edges
+    at_vertex = {}                      # vertex hash -> [(vertex, edge index)]
+    for i, f in enumerate(all_edges):
+        for fv in f.Vertexes:
+            at_vertex.setdefault(fv.hashCode(), []).append((fv, i))
     out = list(edges)
+    seen = _Same(out)
     todo = list(edges)
     while todo:
         e = todo.pop()
         for v in e.Vertexes:
             t0 = _tangent_at(e, v)
-            for f in shape.Edges:
-                if any(f.isSame(x) for x in out):
-                    continue
-                if not any(fv.isSame(v) for fv in f.Vertexes):
+            idx = sorted(set(i for fv, i in at_vertex.get(v.hashCode(), ()) if fv.isSame(v)))
+            for i in idx:
+                f = all_edges[i]
+                if f in seen:
                     continue
                 t1 = _tangent_at(f, v)
                 if abs(abs(t0.dot(t1)) - 1.0) < tol:
                     out.append(f)
+                    seen.add(f)
                     todo.append(f)
     return out
 
