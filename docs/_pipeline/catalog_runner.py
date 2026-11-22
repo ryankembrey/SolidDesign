@@ -273,7 +273,7 @@ def main():
     _initialize(wb)
 
     from freecad.SolidDesign.app import health
-    from freecad.SolidDesign.gui import command_line, command_search
+    from freecad.SolidDesign.gui import command_line, command_search, line_ex, line_help
 
     commands = [_command(n, c) for n, c in COMMANDS.items()]
     by_tool = command_line._proxy_classes()
@@ -305,6 +305,9 @@ def main():
             "skip_groups": list(command_line.SKIP_GROUPS),
             "value_types": list(command_line.VALUE_TYPES),
             "search_shortcut": command_search.SHORTCUT,
+            "cheat_sheet": [{"topic": t, "title": title, "rows": [list(r) for r in rows]}
+                            for t, title, rows in line_help.HELP],
+            "commands": {n: list(v) for n, v in sorted(line_ex.COMMANDS.items())},
         },
         "health": {"tiny_edge": health.TINY_EDGE, "sliver": health.SLIVER},
     }

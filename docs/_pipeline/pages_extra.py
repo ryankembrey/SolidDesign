@@ -35,7 +35,28 @@ def command_line_page(cat: Catalog) -> str:
         main = cl["main"].get(t.name, [])
         rows.append([_link(t), f"`{kw}`", ", ".join(f"**{m}**" for m in main) or "–"])
     out += md.table(["Tool", "Word", "Values in order"], rows)
-    return out
+    sheet = cl.get("cheat_sheet") or []
+    if sheet:
+        out += ("## Cheat sheet\n\n"
+                "The same as <kbd>:</kbd> `h` <kbd>Enter</kbd> shows over the 3D view "
+                "(<kbd>Esc</kbd> closes it; `:h sel` goes to a part).\n\n")
+        for part in sheet:
+            out += f"### {part['title']}\n\n"
+            out += md.table(["Type", "What it does"],
+                            [[f"`{a}`", b] for a, b in part["rows"]])
+    cmds = cl.get("commands") or {}
+    if cmds:
+        out += "## The line's own commands\n\n"
+        out += ("Words that start a line and aren't tools. A short form does the same as "
+                "the word it is next to.\n\n")
+        seen, rows = {}, []
+        for name, (usage, summary) in cmds.items():
+            seen.setdefault((usage, summary), []).append(name)
+        for (usage, summary), names in sorted(seen.items(), key=lambda kv: max(kv[1], key=len)):
+            names.sort(key=len, reverse=True)
+            rows.append([" · ".join(f"`{n}`" for n in names), f"`{usage}`", summary])
+        out += md.table(["Command", "Example", "What it does"], rows)
+    return out.rstrip("\n") + "\n"
 
 
 def keyboard_page(cat: Catalog) -> str:
@@ -101,7 +122,8 @@ def index_page(cat: Catalog) -> str:
     out += ("- [Tools](tools/index.md): a page for every tool, with every control in its panel.\n"
             "- [Toolbars](toolbars.md): what's on each toolbar.\n"
             "- [Keyboard shortcuts](keyboard.md).\n"
-            "- [Command line words](command-line.md): the word for each tool, and its values.\n"
+            "- [Command line](command-line.md): the word for each tool, its values, and the "
+            "cheat sheet.\n"
             "- [Drag handles](drag-handles.md): which tools have them, and what they set.\n\n")
     out += f"This describes Solid Design {cat.data.get('version', '')}.\n"
     return out

@@ -24,6 +24,12 @@ through the history (kept between sessions); Escape closes.
 
 "." repeats the last feature made (from the bar, or OK in a panel) with the same
 settings, on the selection or what's under the pointer.
+
+This module parses a tool's line and runs it, and handles the keys. The rest is in
+its own modules: the bar (line_bar), sel= (line_select), the line's own commands
+(line_ex), completion (line_complete), the cheat sheet (line_help), the live
+preview (line_preview), labels on the tree, panels and toolbars (widget_hints),
+and what's kept (line_store).
 """
 
 import FreeCAD as App
@@ -384,10 +390,7 @@ def assignments(line, options, vars_, main):
             kinds = ("bool",)
         else:
             kinds = ("enum", "num", "int")
-        fit = [o for o, (k, _c) in options.items() if k in kinds]
-        prop = _resolve(name, fit) if fit else None
-        if prop not in options:
-            prop = _resolve(name, options)
+        prop = option_for(name, options, main, kinds)
         if prop not in options:
             raise ValueError(prop)
         kind, choices = options[prop]
@@ -402,6 +405,23 @@ def assignments(line, options, vars_, main):
             v = value_of(tok, vars_) or ("expr", _bind(tok, vars_))
             out_vals.append((prop, v[0], v[1]))
     return out_opts + out_vals
+
+
+def option_for(name, options, main=(), kinds=None):
+    """The option a typed name means: the main values first ("d" is Depth, not
+    Draft), then those of ``kinds``, then any (see _resolve). The option, or an
+    error string."""
+    n = norm(name)
+    for m in main:
+        if m in options and norm(m).startswith(n) and \
+                (kinds is None or options[m][0] in kinds):
+            if n == norm(m) or not any(norm(o) == n for o in options):
+                return m
+    fit = [o for o, (k, _c) in options.items() if kinds is None or k in kinds]
+    prop = _resolve(name, fit) if fit else None
+    if prop not in options:
+        prop = _resolve(name, options)
+    return prop
 
 
 def _choice(tok, choices, prop):
@@ -516,12 +536,62 @@ def _target(under):
         pass
 
 
-def run(text, under=None):
-    """Run a command line. Returns (feature or None, message)."""
+class _Picks(object):
+    """What the line's own commands ask of the bar, for a line run without one
+    (a key binding): no labels in view, the selection it made."""
+
+    def __init__(self, keys):
+        self.code_keys = {}
+        self.keys = keys
+
+    def selection_keys(self):
+        return list(self.keys)
+
+    def feature_from_code(self, code):
+        return None
+
+
+def run(text, under=None, ctx=None, select=True):
+    """Run a command line: an alias's line, a selection (sel=, >register), the
+    line's own commands (line_ex) or a tool. Returns (feature or None, message);
+    the message may be a line_ex.Action, for the bar. ``ctx`` (the bar) holds the
+    labels in view; a key binding has none (sel=new, sel=@a... still work)."""
+    from . import line_bar, line_ex, line_select
+    text = line_ex.expand_alias(text)
+    notes = []
+    if select:
+        keys, problems = [], []
+        for _i, _k, value in line_bar._sel_tokens(text.split(" ")):
+            c = line_select.Context(App.ActiveDocument, None,
+                                    dict(getattr(ctx, "code_keys", {}) or {}),
+                                    view=getattr(Gui.ActiveDocument, "ActiveView", None)
+                                    if Gui.ActiveDocument else None)
+            k, p = line_select.resolve(value.split(","), c)
+            keys += [x for x in k if x not in keys]
+            problems += p
+        if problems:
+            return None, "; ".join(problems)
+        if keys:
+            Gui.Selection.clearSelection()
+            for k in keys:
+                try:
+                    Gui.Selection.addSelection(*k)
+                except Exception:
+                    pass
+        notes = [line_ex.store_register(r, keys) for r in line_bar.register_tokens(text)]
+        text = line_bar.strip_selection(text)
+        if not text:
+            return None, " ".join(notes) or "{} picked.".format(len(keys))
+        if ctx is None:
+            ctx = _Picks(keys)
+    r = line_ex.run(text, ctx)
+    if r is not None:
+        return None, r
     line = parse(text)
     if line.error:
         return None, line.error
-    return execute(line.cmd, line=line, under=under)
+    obj, msg = execute(line.cmd, line=line, under=under)
+    return obj, " ".join(notes + [msg or ""]).strip()
 
 
 def execute(cmd, line=None, assigns=None, under=None):
@@ -540,11 +610,7 @@ def execute(cmd, line=None, assigns=None, under=None):
     def hold(obj):
         made.append(obj)
         return True                     # don't open the panel yet
-    viewproviders.EDIT_HOOK[0] = hold
-    try:
-        Gui.runCommand(cmd)
-    finally:
-        viewproviders.EDIT_HOOK[0] = None
+    viewproviders.run_held(cmd, hold)
     label = c.getInfo().get("menuText", cmd).replace("&", "")
     if not made:
         has = line is not None and (line.values or line.named)
@@ -554,7 +620,9 @@ def execute(cmd, line=None, assigns=None, under=None):
     before = snapshot(obj)
     try:
         if assigns is None:
-            assigns = assignments(line, settable(obj), variables(doc), _main(cmd, obj))
+            from .line_ex import with_defaults
+            assigns = assignments(with_defaults(cmd, line), settable(obj), variables(doc),
+                                  _main(cmd, obj))
         apply(obj, assigns)
         doc.recompute()
         err = obj.ErrorMessage
@@ -615,67 +683,9 @@ def repeat():
 # ------------------------------------------------------------------ completion
 
 def completions(text):
-    """[(text to put in place of the last word, what to show)] for the line so far."""
-    from . import command_search
-    from .hints import SEL_KEYS
-    parts = text.lstrip(":").split(" ")
-    word = parts[-1]
-    if "=" in word and word.split("=", 1)[0].lower() in SEL_KEYS:
-        # Labels show in the view; a selection word (sel=jk,loop) completes here.
-        from .hints import ALPHABET
-        from .pick_tools import WORDS
-        head, _sep, part = word.rpartition(",")
-        key, _eq, first = word.partition("=")
-        if not _sep:
-            head, part = key + "=", first
-        else:
-            head += ","
-        if not part or all(c in ALPHABET for c in part.lower()):
-            return []
-        return [(head + w + ",", u"{}  —  adds {}".format(w, tip))
-                for w, tip in WORDS.items() if w.startswith(part.lower())]
-    listing = tools()
-    if len(parts) == 1:
-        ranked = command_search.rank(word, [(n, label, tip) for n, _kw, label, tip in listing]) \
-            if word else []
-        kws = {n: kw for n, kw, _l, _t in listing}
-        return [(kws[e[0]] + " ", u"{}  —  {}".format(kws[e[0]], e[1])) for e in ranked[:12]]
-    cmd = find_tool(parts[0], listing)
-    if cmd is None:
-        return []
-    opts = catalog(cmd)
-    vars_ = variables(App.ActiveDocument)
-    out = []
-    if "=" in word:
-        name, part = word.split("=", 1)
-        prop = _resolve(name, opts) if opts else name
-        kind, choices = opts.get(prop, (None, None))
-        cands = [(c, "") for c in (choices or [])] if kind == "enum" else \
-            [("yes", ""), ("no", "")] if kind == "bool" else []
-        cands += [(v, "variable") for v in sorted(vars_)]
-        for c, what in cands:
-            if not part or norm(c).startswith(norm(part)) or command_search.fuzzy(part, c):
-                shown = u"{}={}".format(prop, c) + (u"  —  " + what if what else "")
-                out.append(("{}={} ".format(name, norm(c) if what == "" and kind == "enum"
-                                            else c), shown))
-        return out[:12]
-    main = [m for m in MAIN.get(cmd, []) if m in opts]
-    if not word or "sel".startswith(norm(word)):
-        out.append(("sel=", u"sel=  —  pick in the view by the letters on each element"))
-    for prop, (kind, choices) in sorted(opts.items(), key=lambda kv: (kv[0] not in main, kv[0])):
-        if not word or command_search.fuzzy(word, prop) is not None:
-            out.append((prop + "=", u"{}=  —  {}{}".format(
-                prop, kind, " (in order: %d)" % (main.index(prop) + 1) if prop in main else "")))
-        if kind == "enum":
-            for c in choices or ():
-                if word and norm(c).startswith(norm(word)):
-                    out.append((norm(c) + " ", u"{}  —  {}".format(c, prop)))
-        if kind == "bool" and word and norm(prop).startswith(norm(word)):
-            out.append((norm(prop) + " ", u"{}  —  yes".format(prop)))
-    for v in sorted(vars_):
-        if word and command_search.fuzzy(word, v) is not None:
-            out.insert(0, (v + " ", u"{}  —  variable ({})".format(v, vars_[v])))
-    return out[:12]
+    """[(text to put in place of the last word, what to show)] (see line_complete)."""
+    from .line_complete import completions as c
+    return c(text)
 
 
 # ------------------------------------------------------------------ history
@@ -722,372 +732,27 @@ def current():
     return _bar[0] if _alive(_bar[0]) else None
 
 
-def open_bar(under=None):
+def open_bar(under=None, mode="line", panel=None):
     from .command_search import _view_widget
     view = _view_widget()
     if view is None:
         return None
     bar = current()
-    if bar is None or bar.parent() is not view:
+    if bar is None or getattr(bar, "view", None) is not view:
         if bar is not None:
             bar.list.deleteLater()
             bar.deleteLater()
         bar = _bar[0] = _make_bar(view)
-    bar.start(under)
+    bar.start(under, mode, panel)
     return bar
 
 
 def _make_bar(view):
-    from PySide import QtCore, QtWidgets
-
-    class CommandBar(QtWidgets.QFrame):
-        def __init__(self, parent):
-            super(CommandBar, self).__init__(parent)
-            self.setObjectName("SD_CommandLine")
-            self.setAutoFillBackground(True)
-            self.setFrameShape(QtWidgets.QFrame.StyledPanel)
-            lay = QtWidgets.QHBoxLayout(self)
-            lay.setContentsMargins(6, 3, 6, 3)
-            colon = QtWidgets.QLabel(":")
-            f = colon.font()
-            f.setBold(True)
-            colon.setFont(f)
-            self.edit = QtWidgets.QLineEdit()
-            self.edit.setFrame(False)
-            self.edit.setPlaceholderText(
-                u"fillet 2 sel=jk,dl   ·   extrude 10 cut   ·   chamfer d=Width/2   ·   "
-                u"Tab completes, ↑ history, Esc closes")
-            self.edit.installEventFilter(self)
-            self.edit.textEdited.connect(lambda _t: self.suggest())
-            lay.addWidget(colon)
-            lay.addWidget(self.edit, 1)
-            self.list = QtWidgets.QListWidget(parent)
-            self.list.setFocusPolicy(QtCore.Qt.NoFocus)
-            self.list.hide()
-            self.under = None
-            self.hist = []
-            self.hpos = 0
-            self.cands = []
-            self.cpos = -1
-            self.typed = ""
-            # Link hints: labels on what can be picked (see hints.py).
-            from . import hints as hints_mod
-            self.overlay = hints_mod.make_overlay(parent)
-            self.overlay.clicked.connect(self.hint_clicked)
-            self.hints = []
-            self.hint_kinds = None
-            self.picks = {}             # code -> (doc, object, sub) it picked
-            self.word_picks = {}        # (place, word, code) -> [(doc, object, sub)] it added
-            self._cam = None
-            self.cam_timer = QtCore.QTimer(self)
-            self.cam_timer.setInterval(250)
-            self.cam_timer.timeout.connect(self._camera_moved)
-            parent.installEventFilter(self)
-
-        def start(self, under):
-            self.under = under
-            self.hist = history()
-            self.hpos = len(self.hist)
-            self.picks = {}
-            self.word_picks = {}
-            self.hints = []
-            self.hint_kinds = None
-            self.edit.clear()
-            self.place()
-            self.show()
-            self.raise_()
-            self.edit.setFocus()
-            self.suggest()
-
-        def place(self):
-            p = self.parentWidget()
-            h = self.edit.sizeHint().height() + 8
-            self.setGeometry(0, p.height() - h, p.width(), h)
-            self._place_list()
-
-        def _place_list(self):
-            p = self.parentWidget()
-            n = min(self.list.count(), 10)
-            if not n:
-                self.list.hide()
-                return
-            rh = max(self.list.sizeHintForRow(0), 18)
-            h = rh * n + 6
-            self.list.setGeometry(0, self.geometry().top() - h, min(p.width(), 560), h)
-            self.list.show()
-            self.list.raise_()
-
-        def suggest(self):
-            text = self.edit.text()
-            text = self.follow_hints(text, inserted=len(text) > len(self.typed))
-            self.typed = text
-            self.cands = completions(self.typed)
-            self.cpos = -1
-            self.list.clear()
-            for _put, shown in self.cands:
-                self.list.addItem(shown)
-            self._place_list()
-
-        # ---- link hints
-        def follow_hints(self, text, inserted):
-            """Show the labels while a selection is being typed; a typed label
-            picks its element and adds the comma; a label taken out of the line
-            is unpicked. Returns the line (with the comma added)."""
-            from . import hints as hm
-            _rest, sels = hm.split_selection(text)
-            present = {c for _k, cs in sels for c in cs}
-            for code in [c for c in self.picks if c not in present]:
-                doc, obj, sub = self.picks.pop(code)
-                try:
-                    Gui.Selection.removeSelection(doc, obj, sub)
-                except Exception:
-                    pass
-            self.apply_words(text)
-            words = text.split(" ")
-            last = words[-1]
-            key = last.split("=", 1)[0].lower() if "=" in last else None
-            cmd = find_tool(words[0]) if len(words) > 1 and "=" not in words[0] else None
-            kinds = hm.sel_kinds(key, cmd) if key else None
-            if kinds is None:
-                self.show_hints(False)
-                return text
-            if kinds != self.hint_kinds:
-                self.find_hints(kinds)
-            prefix = last.split("=", 1)[1].split(",")[-1]
-            hit = next((h for h in self.hints if h.code == prefix), None)
-            if inserted and hit is not None and prefix not in self.picks:
-                self.picks[prefix] = hit.key()
-                try:
-                    Gui.Selection.addSelection(*hit.key())
-                except Exception:
-                    pass
-                text += ","
-                self.edit.setText(text)
-                prefix = ""
-            elif prefix and any(c not in hm.ALPHABET for c in prefix.lower()):
-                pass                    # a selection word being typed (sel=jk,loop)
-            elif prefix and not any(h.code.startswith(prefix) for h in self.hints):
-                _say(u"No label \"{}\" in view.".format(prefix))
-            self.overlay.set_state(self.hints, prefix, self.picks.keys())
-            self.show_hints(True)
-            return text
-
-        def apply_words(self, text, final=False):
-            """Selection words (sel=jk,tangent,loop): each adds the edges it names
-            from the edge picked before it. A word counts once it is followed by a
-            comma (or, with *final*, on Enter); taking it out of the line takes its
-            edges out of the selection."""
-            from . import hints as hm
-            from . import pick_tools
-            want = {}
-            toks = text.split(" ")
-            for ti, tok in enumerate(toks):
-                if "=" not in tok or tok.split("=", 1)[0].strip().lower() not in hm.SEL_KEYS:
-                    continue
-                parts = tok.split("=", 1)[1].split(",")
-                if ti == len(toks) - 1 and not final:
-                    parts = parts[:-1]          # the part being typed
-                base = None
-                for pi, part in enumerate(parts):
-                    if part in self.picks:
-                        doc, obj, sub = self.picks[part]
-                        base = (part, doc, obj, sub) if sub.startswith("Edge") else None
-                        continue
-                    which = pick_tools.word(part)
-                    if which is None:
-                        continue
-                    if base is None:
-                        _say(u"\"{}\" adds edges from an edge: pick one before it.".format(part))
-                        continue
-                    code, doc, obj, sub = base
-                    o = App.getDocument(doc).getObject(obj)
-                    names = pick_tools.expand(o, sub, which)
-                    if not names:
-                        _say(u"No {} from that edge.".format(which))
-                    want[(ti, pi, which, code)] = [(doc, obj, n) for n in names]
-            picked = set(self.picks.values())
-            for k in [k for k in self.word_picks if k not in want]:
-                still = {x for kk, v in want.items() for x in v} | picked
-                for key in self.word_picks.pop(k):
-                    if key not in still:
-                        try:
-                            Gui.Selection.removeSelection(*key)
-                        except Exception:
-                            pass
-            for k, keys in want.items():
-                if k in self.word_picks:
-                    continue
-                for key in keys:
-                    try:
-                        Gui.Selection.addSelection(*key)
-                    except Exception:
-                        pass
-                self.word_picks[k] = keys
-
-        def hint_clicked(self, code):
-            """A label clicked: as if typed; a picked one clicked: taken out."""
-            words = self.edit.text().split(" ")
-            last = words[-1]
-            if "=" not in last:
-                return
-            key, value = last.split("=", 1)
-            parts = [c for c in value.split(",")]
-            if code in self.picks:
-                parts = [c for c in parts if c != code]
-                words[-1] = key + "=" + ",".join(parts)
-                text = self.follow_hints(" ".join(words), inserted=False)
-            else:
-                parts[-1] = code                # in place of a half-typed label
-                words[-1] = key + "=" + ",".join(parts)
-                text = self.follow_hints(" ".join(words), inserted=True)
-            self.edit.setText(text)
-            self.typed = text
-            self.edit.setFocus()
-
-        def find_hints(self, kinds):
-            from . import hints as hm
-            self.hint_kinds = kinds
-            try:
-                view = Gui.ActiveDocument.ActiveView
-                p = self.parentWidget()
-                ratio = float(view.getSize()[0]) / max(1, p.width())
-                found = hm.visible(view, hm.view_objects(App.ActiveDocument), kinds, ratio,
-                                   p.height())
-                keep = {k: c for c, k in self.picks.items()}
-                self.hints = hm.assign(found, keep, (p.width() / 2.0, p.height() / 2.0))
-                self._cam = self._camera()
-            except Exception as e:
-                App.Console.PrintLog("Solid Design: hints: {}\n".format(e))
-                self.hints = []
-
-        def show_hints(self, on):
-            if on:
-                self.overlay.setGeometry(self.parentWidget().rect())
-                self.overlay.show()
-                self.overlay.raise_()
-                self.raise_()
-                if self.list.isVisible():
-                    self.list.raise_()
-                self.cam_timer.start()
-            else:
-                self.overlay.hide()
-                self.cam_timer.stop()
-
-        def _camera(self):
-            try:
-                cam = Gui.ActiveDocument.ActiveView.getCameraNode()
-                return (tuple(cam.position.getValue().getValue()),
-                        tuple(cam.orientation.getValue().getValue()),
-                        getattr(cam, "height", None) and cam.height.getValue(),
-                        tuple(Gui.ActiveDocument.ActiveView.getSize()))
-            except Exception:
-                return None
-
-        def _camera_moved(self):
-            """The view turned or zoomed: label what can be seen now (picked
-            elements keep their labels)."""
-            if not self.overlay.isVisible() or self.hint_kinds is None:
-                return
-            cam = self._camera()
-            if cam == self._cam:
-                return
-            if getattr(self, "_moving", None) != cam:
-                self._moving = cam              # wait until it stops
-                return
-            self.find_hints(self.hint_kinds)
-            last = self.edit.text().split(" ")[-1]
-            prefix = last.split("=", 1)[1].split(",")[-1] if "=" in last else ""
-            self.overlay.set_state(self.hints, prefix, self.picks.keys())
-
-        def complete(self, d):
-            if not self.cands:
-                return
-            self.cpos = (self.cpos + d) % len(self.cands)
-            put = self.cands[self.cpos][0]
-            parts = self.typed.split(" ")
-            parts[-1] = put.rstrip(" ")
-            text = " ".join(parts) + (" " if put.endswith(" ") else "")
-            self.edit.setText(text)
-            self.list.setCurrentRow(self.cpos)
-            # Tab to sel= shows the labels straight away, as typing it does.
-            self.follow_hints(text, inserted=False)
-
-        def eventFilter(self, obj, ev):
-            if obj is self.parentWidget() and ev.type() == QtCore.QEvent.Resize:
-                if self.isVisible():
-                    self.place()
-                return False
-            if obj is self.edit and ev.type() == QtCore.QEvent.KeyPress:
-                k = ev.key()
-                if k == QtCore.Qt.Key_Tab:
-                    self.complete(1)
-                    return True
-                if k == QtCore.Qt.Key_Backtab:
-                    self.complete(-1)
-                    return True
-                if k in (QtCore.Qt.Key_Up, QtCore.Qt.Key_Down) and self.hist:
-                    self.hpos = max(0, min(len(self.hist), self.hpos +
-                                           (-1 if k == QtCore.Qt.Key_Up else 1)))
-                    self.edit.setText(self.hist[self.hpos] if self.hpos < len(self.hist)
-                                      else "")
-                    self.suggest()
-                    return True
-                if k in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
-                    self.enter()
-                    return True
-                if k == QtCore.Qt.Key_Escape:
-                    self.close_bar()
-                    return True
-            return super(CommandBar, self).eventFilter(obj, ev)
-
-        def enter(self):
-            from .hints import split_selection
-            text = self.edit.text().strip()
-            if not text:
-                self.close_bar()
-                return
-            self.apply_words(text, final=True)
-            rest, _sels = split_selection(text)
-            if not rest:
-                # Only picks: leave them selected for the next tool.
-                n = len({k for v in self.word_picks.values() for k in v} |
-                        set(self.picks.values()))
-                self.close_bar(keep=True)
-                _say("{} picked.".format(n) if n != 1 else "1 picked.")
-                return
-            line = parse(rest)
-            if line.error:
-                _say(line.error)
-                self.edit.selectAll()
-                return
-            add_history(rest)
-            self.close_bar(keep=True)
-            under = self.under
-            QtCore.QTimer.singleShot(0, lambda: _say(run(rest, under)[1]))
-
-        def close_bar(self, keep=False):
-            """Esc drops what was picked by letters; Enter keeps it (the tool
-            takes it, or it stays selected)."""
-            if not keep:
-                for doc, obj, sub in list(self.picks.values()) + \
-                        [k for v in self.word_picks.values() for k in v]:
-                    try:
-                        Gui.Selection.removeSelection(doc, obj, sub)
-                    except Exception:
-                        pass
-            self.picks = {}
-            self.word_picks = {}
-            self.hints = []
-            self.hint_kinds = None
-            self.show_hints(False)
-            self.list.hide()
-            self.hide()
-            try:
-                self.parentWidget().setFocus()
-            except Exception:
-                pass
-
-    return CommandBar(view)
+    """The bar for a 3D view's widget, on the layer over it (in front of any
+    overlaid docks: see top_layer)."""
+    from .line_bar import CommandBar
+    from .top_layer import for_view
+    return CommandBar(for_view(view))
 
 
 # ------------------------------------------------------------------ keys
@@ -1110,14 +775,13 @@ def _typing(w):
     return False
 
 
-def ready():
-    """Whether ":" and "." are Solid Design's now: its workbench, a 3D view, no tool
-    or sketch open, and not typing in a field."""
+def _ours():
+    """Solid Design's workbench, a 3D view, and not typing in a field."""
     from PySide import QtWidgets
     try:
         if type(Gui.activeWorkbench()).__name__ != "SolidDesignWorkbench":
             return False
-        if Gui.Control.activeDialog() or Gui.ActiveDocument is None:
+        if Gui.ActiveDocument is None:
             return False
         if not hasattr(Gui.ActiveDocument.ActiveView, "getSceneGraph"):
             return False
@@ -1126,10 +790,99 @@ def ready():
     return not _typing(QtWidgets.QApplication.focusWidget())
 
 
+def ready():
+    """Whether ":" and "." are Solid Design's now: its workbench, a 3D view, no tool
+    or sketch open, and not typing in a field."""
+    try:
+        if Gui.Control.activeDialog():
+            return False
+    except Exception:
+        return False
+    return _ours()
+
+
+def open_panel():
+    """The open Solid Design panel whose controls ":" labels, or None."""
+    from .sketch_panel import LAST
+    try:
+        if not Gui.Control.activeDialog():
+            return None
+    except Exception:
+        return None
+    p = LAST[0]
+    form = getattr(p, "widget", None) if p is not None else None
+    if form is None or not _alive(form) or not form.isVisible():
+        return None
+    return p
+
+
+#: How long the keys of a binding may be apart (ms).
+BIND_TIMEOUT = 1000
+
+
+def _run_binding(line):
+    from . import line_ex
+    try:
+        _obj, msg = run(line, _pointer_target())
+    except Exception as e:
+        msg = "{}: {}".format(type(e).__name__, e)
+    if isinstance(msg, line_ex.Action):
+        if msg.kind == "help":
+            from . import line_help
+            from .command_search import _view_widget
+            line_help.show(_view_widget(), line_help.find(msg.arg) if msg.arg else None)
+            return
+        if msg.kind == "toolbar":
+            open_bar(None, "toolbar")
+            return
+        msg = ""
+    _say(msg)
+
+
 def _make_filter():
-    from PySide import QtCore
+    from PySide import QtCore, QtWidgets
+    from . import line_store
 
     class Keys(QtCore.QObject):
+        def __init__(self):
+            super(Keys, self).__init__()
+            self.keys = ""                  # the keys of a binding typed so far
+            self.timer = QtCore.QTimer(self)
+            self.timer.setSingleShot(True)
+            self.timer.setInterval(BIND_TIMEOUT)
+            self.timer.timeout.connect(self._timeout)
+
+        def _timeout(self):
+            line = line_store.bindings().get(self.keys)
+            self.keys = ""
+            if line:
+                _run_binding(line)
+
+        def _binding(self, text, t):
+            """A key of a binding: True when it's ours. A binding runs as soon as
+            no longer one starts with what's been typed."""
+            b = line_store.bindings()
+            if not b:
+                return False
+            keys = self.keys + text
+            if not any(k.startswith(keys) for k in b):
+                keys = text                 # start again from this key
+                if not any(k.startswith(keys) for k in b):
+                    if t == QtCore.QEvent.KeyPress:
+                        self.keys = ""
+                    return False
+            if t == QtCore.QEvent.ShortcutOverride:
+                return True
+            self.keys = keys
+            longer = [k for k in b if k.startswith(keys) and k != keys]
+            if keys in b and not longer:
+                self.keys = ""
+                self.timer.stop()
+                QtCore.QTimer.singleShot(0, lambda line=b[keys]: _run_binding(line))
+            else:
+                self.timer.start()
+            return True
+
         def eventFilter(self, obj, ev):
             t = ev.type()
             if t not in (QtCore.QEvent.KeyPress, QtCore.QEvent.ShortcutOverride):
@@ -1140,19 +893,33 @@ def _make_filter():
                                          QtCore.Qt.MetaModifier)
             except Exception:
                 return False
-            if text not in (":", ".") or mods or ev.isAutoRepeat():
+            if not text or mods or ev.isAutoRepeat():
                 return False
-            from PySide import QtWidgets
-            if obj is not QtWidgets.QApplication.focusWidget() or not ready():
+            if obj is not QtWidgets.QApplication.focusWidget():
                 return False
-            if t == QtCore.QEvent.ShortcutOverride:
-                ev.accept()             # ours: not a shortcut
+            if text == ":" and open_panel() is not None and _ours():
+                if t == QtCore.QEvent.ShortcutOverride:
+                    ev.accept()
+                    return True
+                open_bar(None, "panel", open_panel())
                 return True
-            if text == ":":
-                open_bar(_pointer_target())
-            else:
-                QtCore.QTimer.singleShot(0, repeat)
-            return True
+            if not ready():
+                return False
+            if text in (":", "."):
+                if t == QtCore.QEvent.ShortcutOverride:
+                    ev.accept()             # ours: not a shortcut
+                    return True
+                self.keys = ""
+                if text == ":":
+                    open_bar(_pointer_target())
+                else:
+                    QtCore.QTimer.singleShot(0, repeat)
+                return True
+            if text.isprintable() and self._binding(text, t):
+                if t == QtCore.QEvent.ShortcutOverride:
+                    ev.accept()
+                return True
+            return False
 
     return Keys()
 

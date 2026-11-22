@@ -59,8 +59,12 @@ class TestParsing(unittest.TestCase):
         self.assertIn(("Mode", "enum", "Surface"), assigns("extrude mode=surf"))
         self.assertIn(("Draft", "bool", True), assigns("extrude draft=yes"))
         self.assertIn(("Depth", "expr", "VarSet.Width/2"), assigns("extrude depth=Width/2"))
-        with self.assertRaises(ValueError):            # Depth or Depth2?
-            assigns("extrude dep=3")
+        # A short name means the first value it fits (Depth, not Depth2 or Draft).
+        self.assertIn(("Depth", "num", 3.0), assigns("extrude dep=3"))
+        self.assertIn(("Depth", "num", 3.0), assigns("extrude d=3"))
+        self.assertIn(("Depth2", "num", 3.0), assigns("extrude depth2=3"))
+        with self.assertRaises(ValueError):
+            assigns("extrude zz=3")
         with self.assertRaises(ValueError):
             assigns("extrude 1 2 3")                   # only two values go in order
 

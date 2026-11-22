@@ -50,7 +50,11 @@ class TestLine(unittest.TestCase):
     def test_kinds(self):
         self.assertEqual(hints.sel_kinds("sel", "SD_Fillet"), ("Edge",))
         self.assertEqual(hints.sel_kinds("sel", "SD_Shell"), ("Face",))
-        self.assertEqual(hints.sel_kinds("sel", "SD_Sketch"), ("Plane",))
+        # Sketch takes a planar face, or a plane (labelled too).
+        self.assertEqual(hints.sel_kinds("sel", "SD_Sketch"), ("Plane", hints.REF_PLANE))
+        self.assertEqual(hints.sel_kinds("sel", "SD_Split"),
+                         hints.DEFAULT_KINDS + (hints.REF_PLANE,))
+        self.assertEqual(hints.sel_kinds("f", "SD_Split"), ("Face",))
         self.assertEqual(hints.sel_kinds("sel", None), hints.DEFAULT_KINDS)
         self.assertEqual(hints.sel_kinds("v", "SD_Fillet"), ("Vertex",))
         self.assertIsNone(hints.sel_kinds("radius", "SD_Fillet"))

@@ -7,7 +7,7 @@ Everything in the workbench, made from its code, so it is always current.
 - [Tools](tools/index.md): a page for every tool, with every control in its panel.
 - [Toolbars](toolbars.md): what's on each toolbar.
 - [Keyboard shortcuts](keyboard.md).
-- [Command line words](command-line.md): the word for each tool, and its values.
+- [Command line](command-line.md): the word for each tool, its values, and the cheat sheet.
 - [Drag handles](drag-handles.md): which tools have them, and what they set.
 
 This describes Solid Design 0.1.0.

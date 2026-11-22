@@ -499,3 +499,19 @@ def get_ref(obj, prop, what="reference", base=None):
     if not elems:
         return None, None
     return elems[0], (warns[0] if warns else None)
+
+
+def find_element(target, sub, fp):
+    """The name of the element of ``target`` a fingerprint means: ``sub`` while it
+    still matches, else the one element that does; None when none (or several)
+    do. For selections kept by name, such as the command line's registers."""
+    try:
+        elem = target.Shape.getElement(sub)
+    except Exception:
+        elem = None
+    cands = _match(target, fp) if fp else []
+    if elem is not None and (not fp or any(c.isSame(elem) for c in cands)):
+        return sub
+    if len(cands) == 1:
+        return _index_of(target, cands[0])
+    return None

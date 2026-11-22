@@ -1137,3 +1137,74 @@ as SolidWorks' does.
   Edit; Normal To, Zoom; Hide, Delete.
 - "The feature that made it" is the earliest feature whose own result (what it
   added, removed or changed) has a face (edge, vertex) through the clicked one.
+
+## The command line, grown (2026-11-22, owner's request)
+
+No SolidWorks equivalent: Vim's ex commands, registers and marks, and Vimium's hints,
+for CAD. Left out on purpose (owner): Python on the line, counts (`3.`), macros
+(`q a` / `@a`) and chaining lines with `;`.
+- **Selection grammar.** `sel=` parts are a source then filters after colons.
+  Sources: a label, `new` (what the last feature made, found by comparing with its
+  base: same kind, place and size), `last.top` / `last.caps` / `last.sides` / `last`,
+  `edges` / `faces` / `vertices` / `*` (what's shown), `@a`. Filters: shapes
+  (`circular`, `planar`...), `concave` / `convex`, directions (`top`, `+x`...),
+  `largest` / `smallest` / `nearest` (the pointer when ":" was pressed), measures
+  (`r<5`, `len>20`, `area>100`, `z=10`, within 0.001 mm), `par:z` / `perp:z`, and a kind
+  (`jk:edges`: the edges of face jk). One-letter kinds are filters only and `*` is all,
+  so no source can be read as a label (no word is all label letters).
+- **Steps** after a label: `]` next neighbour clockwise on screen (from 12 o'clock
+  round the element's centre), `[` back, `+` along tangent edges. (`n` was the first
+  idea; it clashed with `new`.)
+- **Words** after an edge (`loop`, `tangent`...) all work from the last pick, not from
+  the word before them: `jk,loop,otherloop` is both loops of jk.
+- **Registers** are kept in the document (`Meta`), each element by name and
+  fingerprint: after a change the name is used while it still matches, else the one
+  element that does.
+- **Marks** are kept in the document too; aliases, bindings and defaults in
+  FreeCAD's parameters (they're the user's, across documents).
+- **`set` does two jobs:** `set fillet.r=1` (a tool's default: a dot) and
+  `set r=3 /Fillet/` (on features named). `old->new` changes only those that have old.
+- **Short names mean the first value they fit:** `d=3` on an extrude is Depth (not
+  Depth2 or Draft), `+2` / `-2` add to what a feature has. Before, `dep=3` was refused
+  as ambiguous.
+- **Live preview** makes the feature in a transaction and aborts it, then rebuilds as a
+  panel's Cancel does. Found doing it: a tool held from opening its panel left
+  FreeCAD's automatic transactions off, so the next tool's transaction was committed
+  the moment it started (a second `:fillet 2` set its radius outside its undo step).
+  The line now resets that after every held tool. A tool that still commits anything
+  in the background is undone and never tried again that session.
+- **Completion:** with one way to go (one candidate, or one the word starts, or one all
+  the others begin with) the rest shows in grey and Tab or → takes it; otherwise Tab
+  goes down the list, shortest first. Ctrl+R searches the history loosely.
+- **Labels beyond the view:** after `edit `, `suppress `, `hide `..., the tree's rows
+  (the part's row is opened); `edit ` also labels faces (the feature that made it).
+  `:` with a panel open labels its controls, just left of each; a label needs Enter
+  (or a click), so `ds=10` can be typed. `toolbar` labels the toolbar's buttons and a
+  whole label clicks at once.
+- **Bindings** are typed in the 3D view with no tool open; a key that starts a
+  binding is held for up to a second, then dropped if nothing matches.
+- **`:h`** shows the cheat sheet (line_help.HELP, also the docs' command line page)
+  over the 3D view; Esc or × closes it.
+- **In front of overlaid docks** (owner's report, the same day): with View → Overlay
+  the tree and task panel sit over the 3D view and the cheat sheet showed behind
+  them, as did the bar and its suggestions. They now live on a layer that is a child
+  of the main window kept over the 3D view and in front (top_layer.py). It takes
+  clicks only where its widgets are, hides when they do, and raises itself again
+  when FreeCAD raises an overlay.
+- **Toolbar labels** (owner's report, the same day): centred on the buttons they hid
+  the icons, so you couldn't tell which was which. They are badges on each button's
+  bottom right corner now, the list under the line says what each label is (and
+  narrows as you type), and a button's name works too: `fit all`, Enter.
+- **Planes, names, clicks, hover and hidden elements** (owner's request, the same
+  day): `sel=front` / `top` / `right` are the origin's planes (as filters after a
+  colon those words still mean the highest...); anything in the tree is picked by its
+  name without spaces (`Plane1`, `Sketch2`, a body; `Body.Edge3` an element). A body
+  is named after its last feature, so that name means the body. Tools that take a
+  plane label the planes too, the hidden origin planes drawn while they do.
+  A click on the model while picking adds what was clicked to the line by its label
+  (by name if it has none), Ctrl+click takes it out, a click on nothing keeps the
+  line's picks; the keyboard stays in the line. A label under the pointer is drawn in
+  FreeCAD's preselection colour and preselects its element. Ctrl+X labels hidden
+  elements too (dashed), with the bodies' materials made see-through in the scene only.
+- Found doing it: running a tool for the live preview moved the keyboard to the 3D
+  view, so typing after a pause went nowhere. The line keeps the focus now.

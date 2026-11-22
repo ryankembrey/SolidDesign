@@ -448,6 +448,24 @@ def _is_base_of(feature, obj):
 EDIT_HOOK = [None]
 
 
+def run_held(cmd, hold):
+    """Run a tool with ``hold(obj)`` asked before its panel opens (True: don't open
+    it). A refused setEdit leaves FreeCAD's automatic transactions switched off
+    until the next resetEdit, and then the next tool's transaction is committed
+    as soon as it starts: so reset it."""
+    EDIT_HOOK[0] = hold
+    try:
+        Gui.runCommand(cmd)
+    finally:
+        EDIT_HOOK[0] = None
+        try:
+            gdoc = Gui.ActiveDocument
+            if gdoc is not None and gdoc.getInEdit() is None:
+                gdoc.resetEdit()
+        except Exception:
+            pass
+
+
 def _held(vobj):
     hook = EDIT_HOOK[0]
     if hook is None or not getattr(vobj.Proxy, "_new", False):

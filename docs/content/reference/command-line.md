@@ -77,3 +77,142 @@ Every tool the command line runs, the word for it, and the values it takes in or
 | [Curve Through Reference Points](tools/curve-through-reference-points.md) | `curvethroughreferencepoints` | – |
 | [Helix/Spiral](tools/helix-spiral.md) | `helixspiral` | **Height** |
 
+## Cheat sheet
+
+The same as <kbd>:</kbd> `h` <kbd>Enter</kbd> shows over the 3D view (<kbd>Esc</kbd> closes it; `:h sel` goes to a part).
+
+### Tools
+
+| Type | What it does |
+| :-- | :-- |
+| `fillet 2` | a tool and its main value(s), in order |
+| `extrude 10 cut` | a word picks an option |
+| `lp 20 4` | names match loosely: Linear Pattern, spacing 20, 4 of them |
+| `chamfer d=1.5 flip` | name=value sets any option; a yes/no option by its name |
+| `fillet Width/2` | a VarSet variable makes a live expression |
+| `fillet =Width/2 + 1mm` | = starts any FreeCAD expression; units work anywhere |
+| `Enter` | makes it (one undo step); if it can't, its panel opens |
+
+### Picking: sel=
+
+| Type | What it does |
+| :-- | :-- |
+| `sel=  then Tab` | labels on what the tool can use; type one to pick it |
+| `sel=jk,dl` | several picks; the comma is added for you |
+| `sel=jk]  sel=jk[` | step to the next neighbour clockwise (] ) or back ([ ) |
+| `sel=jk+` | step along tangent edges |
+| `sel=jk,tangent` | add the edges that run on smoothly (tan) |
+| `sel=jk,loop` | add the loop round the face facing you (otherloop: the other) |
+| `sel=jk,chain` | add the edges joined end to end |
+| `sel=new` | what the last feature made |
+| `sel=last.top` | the far end of the last feature (last.caps, last.sides, last) |
+| `sel=edges` | every edge shown (faces, vertices; * for both) |
+| `sel=jk:edges` | the edges of face jk |
+| `sel=@a` | register a |
+| `sel=front` | the origin's Front Plane (top, right) |
+| `sel=Plane1` | anything in the tree by name; Body.Edge3 an element |
+| `sel=jk,dl >a` | keep the picks in register a |
+
+### Filters (after a colon)
+
+| Type | What it does |
+| :-- | :-- |
+| `edges:circular` | circles and arcs (linear, curved) |
+| `edges:concave` | inside corners (convex: outside) |
+| `faces:planar` | flat faces (cylindrical, conical, spherical) |
+| `edges:top` | the highest (bottom, front, back, left, right, +x...) |
+| `faces:largest` | the biggest (smallest; nearest: to the pointer) |
+| `edges:r<5` | radius under 5 (r d len area x y z with < > = <= >=) |
+| `faces:par:z` | lying flat: normal along Z (perp:z for walls) |
+| `edges:par:z` | running along Z |
+
+### Features by name
+
+| Type | What it does |
+| :-- | :-- |
+| `Fillet1 r=3` | change a feature without opening it |
+| `last d=+2` | the last feature; + and - add to what it is |
+| `edit Fillet1` | open a feature (Tab labels the tree) |
+| `edit jk` | open the feature that made face jk |
+| `suppress /Fillet/` | names or /pattern/ (unsuppress) |
+| `rollto Boss-Extrude2` | move the rollback bar (rollto end) |
+| `set r=2->3 /Fillet/` | every 2 mm radius to 3 mm (set r=3 /Fillet/: all) |
+
+### Bodies and views
+
+| Type | What it does |
+| :-- | :-- |
+| `hide Body2` | hide bodies (show) |
+| `isolate Body1` | show only these (showall) |
+| `mark a` | save the view as a |
+| `'a` | back to view a (marks lists them, delmark a) |
+
+### Copying
+
+| Type | What it does |
+| :-- | :-- |
+| `yank sel=jk` | copy a face's area, an edge's length or radius, a point |
+| `yank Fillet1.Radius` | copy a feature's value |
+| `registers` | the registers (delreg a) |
+
+### Making it yours
+
+| Type | What it does |
+| :-- | :-- |
+| `alias m6 = holewizard size=m6` | then: m6 sel=jk (unalias m6) |
+| `bind gf = fillet 1 sel=new` | type gf in the 3D view to run it (unbind gf) |
+| `set fillet.r=1` | a tool's default: fillet alone uses 1 mm (unset fillet.r) |
+| `alias · bind · set` | list them |
+
+### Keys
+
+| Type | What it does |
+| :-- | :-- |
+| `:` | opens the line (in a panel: labels its controls) |
+| `.` | makes the last feature again on what you point at |
+| `Tab  Shift+Tab` | complete; the grey rest of a word is what Tab adds |
+| `→` | take the grey rest |
+| `↑ ↓` | earlier lines |
+| `Ctrl+R` | search earlier lines |
+| `Ctrl+X` | label hidden ones too (behind, facing away), model see-through |
+| `click` | on the model while picking: adds its label (Ctrl+click: out) |
+| `toolbar` | labels on the toolbar buttons; a label or a name clicks one (tb) |
+| `help  ·  h sel` | this sheet; with a topic, that part |
+| `Esc` | close |
+
+### In a panel
+
+| Type | What it does |
+| :-- | :-- |
+| `: then a label` | go to that control (a field, a button, a box) |
+| `ds=10` | set the control labelled ds |
+| `depth=10` | or by its name |
+
+## The line's own commands
+
+Words that start a line and aren't tools. A short form does the same as the word it is next to.
+
+| Command | Example | What it does |
+| :-- | :-- | :-- |
+| `alias` | `alias m6 = holewizard size=m6` | a word of yours for a line |
+| `bind` | `bind gf = fillet 1 sel=new` | keys typed in the 3D view run a line |
+| `delmark` | `delmark a` | forget a saved view |
+| `delreg` | `delreg a` | forget a register |
+| `edit` | `edit Fillet1 · edit jk` | open a feature; with a face's label, the feature that made it |
+| `help` · `h` | `help [topic]` | this cheat sheet (Esc closes it) |
+| `hide` | `hide Body2` | hide bodies |
+| `isolate` | `isolate Body1` | show only these bodies |
+| `mark` | `mark a` | save the view as a (then 'a jumps back) |
+| `marks` | `marks · delmark a` | the saved views |
+| `registers` · `reg` | `registers · delreg a` | the named selections (sel=jk,dl >a) |
+| `rollto` | `rollto Boss-Extrude2 · rollto end` | move the rollback bar to just after a feature |
+| `set` | `set fillet.r=1 · set r=2->3 /Fillet/` | a tool's default; or values on every feature named |
+| `show` | `show Body2` | show bodies |
+| `showall` | `showall` | show every body |
+| `suppress` · `sup` | `suppress Fillet1 · suppress /Fillet/` | skip features (names or /pattern/) |
+| `toolbar` · `tb` | `toolbar` | labels on the toolbar buttons: type one to click it |
+| `unalias` | `unalias m6` | forget an alias |
+| `unbind` | `unbind gf` | forget a binding |
+| `unset` | `unset fillet.r · unset fillet` | forget a tool's default |
+| `unsuppress` · `unsup` | `unsuppress /Fillet/` | bring suppressed features back |
+| `yank` | `yank sel=jk · yank Fillet1.Radius` | copy a measurement or a value |

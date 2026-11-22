@@ -216,3 +216,41 @@ def select_chain(shape, edge):
         if closed:
             break
     return [n for n in (edge_name(shape, e) for e in chain) if n], closed
+
+
+def is_concave(shape, edge, eps=1e-3):
+    """For an edge between two faces of a solid: True for an inside corner (where
+    a fillet adds material), False for an outside one, None when it can't be told
+    (one face, tangent faces, no solid)."""
+    faces = _faces_of(shape, edge)
+    if len(faces) != 2 or not shape.Solids:
+        return None
+    a, b = edge.FirstParameter, edge.LastParameter
+    m = edge.valueAt(0.5 * (a + b))
+    normals = []
+    for f in faces:
+        try:
+            u, v = f.Surface.parameter(m)
+            normals.append(f.normalAt(u, v))
+        except Exception:
+            return None
+    if abs(normals[0].dot(normals[1])) > 1 - 1e-6:
+        return None
+    # A step from the edge across the first face, square to the edge: the corner is
+    # inside when that step rises off the second face (on the side its normal
+    # points to, the outside of the solid).
+    try:
+        t = edge.tangentAt(0.5 * (a + b))
+    except Exception:
+        return None
+    d = normals[0].cross(t)
+    if d.Length < 1e-9:
+        return None
+    d.normalize()
+    step = eps * max(1.0, shape.BoundBox.DiagonalLength * 1e-3)
+    f0 = faces[0]
+    if not f0.isInside(m + d * step, step * 0.5, True):
+        d = -d
+        if not f0.isInside(m + d * step, step * 0.5, True):
+            return None
+    return d.dot(normals[1]) > 0

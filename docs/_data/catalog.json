@@ -18699,7 +18699,421 @@
    "Area",
    "Volume"
   ],
-  "search_shortcut": "/"
+  "search_shortcut": "/",
+  "cheat_sheet": [
+   {
+    "topic": "tools",
+    "title": "Tools",
+    "rows": [
+     [
+      "fillet 2",
+      "a tool and its main value(s), in order"
+     ],
+     [
+      "extrude 10 cut",
+      "a word picks an option"
+     ],
+     [
+      "lp 20 4",
+      "names match loosely: Linear Pattern, spacing 20, 4 of them"
+     ],
+     [
+      "chamfer d=1.5 flip",
+      "name=value sets any option; a yes/no option by its name"
+     ],
+     [
+      "fillet Width/2",
+      "a VarSet variable makes a live expression"
+     ],
+     [
+      "fillet =Width/2 + 1mm",
+      "= starts any FreeCAD expression; units work anywhere"
+     ],
+     [
+      "Enter",
+      "makes it (one undo step); if it can't, its panel opens"
+     ]
+    ]
+   },
+   {
+    "topic": "sel",
+    "title": "Picking: sel=",
+    "rows": [
+     [
+      "sel=  then Tab",
+      "labels on what the tool can use; type one to pick it"
+     ],
+     [
+      "sel=jk,dl",
+      "several picks; the comma is added for you"
+     ],
+     [
+      "sel=jk]  sel=jk[",
+      "step to the next neighbour clockwise (] ) or back ([ )"
+     ],
+     [
+      "sel=jk+",
+      "step along tangent edges"
+     ],
+     [
+      "sel=jk,tangent",
+      "add the edges that run on smoothly (tan)"
+     ],
+     [
+      "sel=jk,loop",
+      "add the loop round the face facing you (otherloop: the other)"
+     ],
+     [
+      "sel=jk,chain",
+      "add the edges joined end to end"
+     ],
+     [
+      "sel=new",
+      "what the last feature made"
+     ],
+     [
+      "sel=last.top",
+      "the far end of the last feature (last.caps, last.sides, last)"
+     ],
+     [
+      "sel=edges",
+      "every edge shown (faces, vertices; * for both)"
+     ],
+     [
+      "sel=jk:edges",
+      "the edges of face jk"
+     ],
+     [
+      "sel=@a",
+      "register a"
+     ],
+     [
+      "sel=front",
+      "the origin's Front Plane (top, right)"
+     ],
+     [
+      "sel=Plane1",
+      "anything in the tree by name; Body.Edge3 an element"
+     ],
+     [
+      "sel=jk,dl >a",
+      "keep the picks in register a"
+     ]
+    ]
+   },
+   {
+    "topic": "filters",
+    "title": "Filters (after a colon)",
+    "rows": [
+     [
+      "edges:circular",
+      "circles and arcs (linear, curved)"
+     ],
+     [
+      "edges:concave",
+      "inside corners (convex: outside)"
+     ],
+     [
+      "faces:planar",
+      "flat faces (cylindrical, conical, spherical)"
+     ],
+     [
+      "edges:top",
+      "the highest (bottom, front, back, left, right, +x...)"
+     ],
+     [
+      "faces:largest",
+      "the biggest (smallest; nearest: to the pointer)"
+     ],
+     [
+      "edges:r<5",
+      "radius under 5 (r d len area x y z with < > = <= >=)"
+     ],
+     [
+      "faces:par:z",
+      "lying flat: normal along Z (perp:z for walls)"
+     ],
+     [
+      "edges:par:z",
+      "running along Z"
+     ]
+    ]
+   },
+   {
+    "topic": "features",
+    "title": "Features by name",
+    "rows": [
+     [
+      "Fillet1 r=3",
+      "change a feature without opening it"
+     ],
+     [
+      "last d=+2",
+      "the last feature; + and - add to what it is"
+     ],
+     [
+      "edit Fillet1",
+      "open a feature (Tab labels the tree)"
+     ],
+     [
+      "edit jk",
+      "open the feature that made face jk"
+     ],
+     [
+      "suppress /Fillet/",
+      "names or /pattern/ (unsuppress)"
+     ],
+     [
+      "rollto Boss-Extrude2",
+      "move the rollback bar (rollto end)"
+     ],
+     [
+      "set r=2->3 /Fillet/",
+      "every 2 mm radius to 3 mm (set r=3 /Fillet/: all)"
+     ]
+    ]
+   },
+   {
+    "topic": "bodies",
+    "title": "Bodies and views",
+    "rows": [
+     [
+      "hide Body2",
+      "hide bodies (show)"
+     ],
+     [
+      "isolate Body1",
+      "show only these (showall)"
+     ],
+     [
+      "mark a",
+      "save the view as a"
+     ],
+     [
+      "'a",
+      "back to view a (marks lists them, delmark a)"
+     ]
+    ]
+   },
+   {
+    "topic": "copy",
+    "title": "Copying",
+    "rows": [
+     [
+      "yank sel=jk",
+      "copy a face's area, an edge's length or radius, a point"
+     ],
+     [
+      "yank Fillet1.Radius",
+      "copy a feature's value"
+     ],
+     [
+      "registers",
+      "the registers (delreg a)"
+     ]
+    ]
+   },
+   {
+    "topic": "yours",
+    "title": "Making it yours",
+    "rows": [
+     [
+      "alias m6 = holewizard size=m6",
+      "then: m6 sel=jk (unalias m6)"
+     ],
+     [
+      "bind gf = fillet 1 sel=new",
+      "type gf in the 3D view to run it (unbind gf)"
+     ],
+     [
+      "set fillet.r=1",
+      "a tool's default: fillet alone uses 1 mm (unset fillet.r)"
+     ],
+     [
+      "alias · bind · set",
+      "list them"
+     ]
+    ]
+   },
+   {
+    "topic": "keys",
+    "title": "Keys",
+    "rows": [
+     [
+      ":",
+      "opens the line (in a panel: labels its controls)"
+     ],
+     [
+      ".",
+      "makes the last feature again on what you point at"
+     ],
+     [
+      "Tab  Shift+Tab",
+      "complete; the grey rest of a word is what Tab adds"
+     ],
+     [
+      "→",
+      "take the grey rest"
+     ],
+     [
+      "↑ ↓",
+      "earlier lines"
+     ],
+     [
+      "Ctrl+R",
+      "search earlier lines"
+     ],
+     [
+      "Ctrl+X",
+      "label hidden ones too (behind, facing away), model see-through"
+     ],
+     [
+      "click",
+      "on the model while picking: adds its label (Ctrl+click: out)"
+     ],
+     [
+      "toolbar",
+      "labels on the toolbar buttons; a label or a name clicks one (tb)"
+     ],
+     [
+      "help  ·  h sel",
+      "this sheet; with a topic, that part"
+     ],
+     [
+      "Esc",
+      "close"
+     ]
+    ]
+   },
+   {
+    "topic": "panel",
+    "title": "In a panel",
+    "rows": [
+     [
+      ": then a label",
+      "go to that control (a field, a button, a box)"
+     ],
+     [
+      "ds=10",
+      "set the control labelled ds"
+     ],
+     [
+      "depth=10",
+      "or by its name"
+     ]
+    ]
+   }
+  ],
+  "commands": {
+   "alias": [
+    "alias m6 = holewizard size=m6",
+    "a word of yours for a line"
+   ],
+   "bind": [
+    "bind gf = fillet 1 sel=new",
+    "keys typed in the 3D view run a line"
+   ],
+   "delmark": [
+    "delmark a",
+    "forget a saved view"
+   ],
+   "delreg": [
+    "delreg a",
+    "forget a register"
+   ],
+   "edit": [
+    "edit Fillet1 · edit jk",
+    "open a feature; with a face's label, the feature that made it"
+   ],
+   "h": [
+    "help [topic]",
+    "this cheat sheet (Esc closes it)"
+   ],
+   "help": [
+    "help [topic]",
+    "this cheat sheet (Esc closes it)"
+   ],
+   "hide": [
+    "hide Body2",
+    "hide bodies"
+   ],
+   "isolate": [
+    "isolate Body1",
+    "show only these bodies"
+   ],
+   "mark": [
+    "mark a",
+    "save the view as a (then 'a jumps back)"
+   ],
+   "marks": [
+    "marks · delmark a",
+    "the saved views"
+   ],
+   "reg": [
+    "registers · delreg a",
+    "the named selections (sel=jk,dl >a)"
+   ],
+   "registers": [
+    "registers · delreg a",
+    "the named selections (sel=jk,dl >a)"
+   ],
+   "rollto": [
+    "rollto Boss-Extrude2 · rollto end",
+    "move the rollback bar to just after a feature"
+   ],
+   "set": [
+    "set fillet.r=1 · set r=2->3 /Fillet/",
+    "a tool's default; or values on every feature named"
+   ],
+   "show": [
+    "show Body2",
+    "show bodies"
+   ],
+   "showall": [
+    "showall",
+    "show every body"
+   ],
+   "sup": [
+    "suppress Fillet1 · suppress /Fillet/",
+    "skip features (names or /pattern/)"
+   ],
+   "suppress": [
+    "suppress Fillet1 · suppress /Fillet/",
+    "skip features (names or /pattern/)"
+   ],
+   "tb": [
+    "toolbar",
+    "labels on the toolbar buttons: type one to click it"
+   ],
+   "toolbar": [
+    "toolbar",
+    "labels on the toolbar buttons: type one to click it"
+   ],
+   "unalias": [
+    "unalias m6",
+    "forget an alias"
+   ],
+   "unbind": [
+    "unbind gf",
+    "forget a binding"
+   ],
+   "unset": [
+    "unset fillet.r · unset fillet",
+    "forget a tool's default"
+   ],
+   "unsup": [
+    "unsuppress /Fillet/",
+    "bring suppressed features back"
+   ],
+   "unsuppress": [
+    "unsuppress /Fillet/",
+    "bring suppressed features back"
+   ],
+   "yank": [
+    "yank sel=jk · yank Fillet1.Radius",
+    "copy a measurement or a value"
+   ]
+  }
  },
  "health": {
   "tiny_edge": 0.01,

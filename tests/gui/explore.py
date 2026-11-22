@@ -3128,7 +3128,10 @@ def command_line_link_hints():
     QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Backspace)
     wait(200)
     expect(selected() == [], "Backspace into the label unpicks it (%s)" % selected())
-    QtTest.QTest.keyClicks(bar.edit, c1[1] + c2)
+    QtTest.QTest.keyClicks(bar.edit, c1[1])
+    wait(100)
+    expect(c1 in bar.overlay.picked, "a typed label turns green at once")
+    QtTest.QTest.keyClicks(bar.edit, c2)
     wait(300)
     expect(selected() == sorted([front, right]) and bar.edit.text() == "fillet 2 sel=%s,%s,"
            % (c1, c2), "two picked (%s)" % bar.edit.text())
@@ -3161,6 +3164,8 @@ def command_line_link_hints():
     c0 = bar.hints[0].code
     expect(bar.edit.text() == "sel=%s," % c0 and selected() == [sub0],
            "clicking a label picks it, as typing it does (%s)" % bar.edit.text())
+    expect(c0 in bar.overlay.picked, "and it turns green at once, not after the next "
+           "pick (%s)" % sorted(bar.overlay.picked))
     shot("clicked")
     QtTest.QTest.mouseClick(bar.overlay, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier,
                             r.center().toPoint())
@@ -3206,6 +3211,503 @@ def command_line_link_hints():
     QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
     wait(200)
     expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+def _line_setup(name):
+    """A 40 x 30 x 10 plate in an isometric view, and helpers to type in the line."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import command_line
+    doc, part = new_doc(name)
+    extrude_ui(doc, part, plate_sketch(doc, part, 40, 30), 10)
+    view = Gui.ActiveDocument.ActiveView
+    view.viewIsometric()
+    Gui.SendMsgToActiveView("ViewFit")
+    wait(300)
+    Gui.Selection.clearSelection()
+    gl = [x for x in Gui.getMainWindow().findChildren(QtWidgets.QWidget)
+          if x.metaObject().className() == "QOpenGLWidget" and x.isVisible()][-1]
+
+    def open_line(text="", enter=False):
+        gl.setFocus()
+        wait(100)
+        QtTest.QTest.keyClick(gl, ":")
+        wait(300)
+        bar = command_line.current()
+        if text:
+            QtTest.QTest.keyClicks(bar.edit, text)
+            wait(300)
+        if enter:
+            QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+            wait(800)
+        return bar
+    return doc, part, gl, open_line
+
+
+def _selected():
+    return sorted(sub for s in Gui.Selection.getSelectionEx() for sub in s.SubElementNames)
+
+
+@scenario
+def command_line_help_and_completion():
+    """:h opens the cheat sheet over the view and Esc closes it (:h sel goes to a
+    part); with one way to go the rest of the word shows in grey and Tab (or →)
+    takes it; Ctrl+R searches earlier lines."""
+    from PySide6 import QtTest
+    doc, part, gl, open_line = _line_setup("HC")
+    bar = open_line("h", enter=True)
+    sheets = [w for w in Gui.getMainWindow().findChildren(QtWidgets.QFrame, "SD_LineHelp")
+              if w.isVisible()]
+    expect(len(sheets) == 1 and not bar.isVisible(), ":h shows the cheat sheet")
+    shot("help")
+    if sheets:
+        text = sheets[0].findChild(QtWidgets.QTextBrowser).toPlainText()
+        expect("sel=jk,loop" in text and "Ctrl+R" in text, "it lists the line's grammar")
+        QtTest.QTest.keyClick(sheets[0].findChild(QtWidgets.QTextBrowser),
+                              QtCore.Qt.Key_Escape)
+        wait(300)
+        expect(not sheets[0].isVisible(), "Esc closes it")
+    open_line("help filters", enter=True)
+    sheet = next((w for w in Gui.getMainWindow().findChildren(QtWidgets.QFrame, "SD_LineHelp")
+                  if w.isVisible()), None)
+    expect(sheet is not None and u"Filters (after a colon) \u2190" in
+           sheet.findChild(QtWidgets.QTextBrowser).toPlainText(),
+           ":h filters marks that part")
+    if sheet is not None:
+        QtTest.QTest.keyClick(sheet.findChild(QtWidgets.QTextBrowser), QtCore.Qt.Key_Escape)
+        wait(200)
+
+    bar = open_line("cham")
+    expect(bar.edit.ghost == "fer", "one way to go: the rest in grey (%r)" % bar.edit.ghost)
+    shot("ghost")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Tab)
+    wait(200)
+    expect(bar.edit.text() == "chamfer ", "Tab takes it (%r)" % bar.edit.text())
+    QtTest.QTest.keyClicks(bar.edit, "1 sel=ne")
+    wait(300)
+    expect(bar.edit.ghost == "w,", "sel=ne: new (%r)" % bar.edit.ghost)
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Right)
+    wait(300)
+    expect(bar.edit.text() == "chamfer 1 sel=new,", "→ takes it too (%r)" % bar.edit.text())
+    bar.edit.setText("fille")
+    bar.suggest()
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Tab)
+    wait(200)
+    expect(bar.edit.text() == "fillet ", "several (fillet, filledsurface): Tab takes the "
+           "first (%r)" % bar.edit.text())
+    bar.edit.setText("fillet 1 sel=new:ci")
+    bar.suggest()
+    expect(bar.edit.ghost == "rcular", "filters complete after a colon (%r)" % bar.edit.ghost)
+    bar.edit.setText("supp")
+    bar.suggest()
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Tab)
+    wait(200)
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Tab)
+    wait(200)
+    expect(bar.edit.text().startswith("suppress Boss-Extrude1"),
+           "a command, then a feature's name (%r)" % bar.edit.text())
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    wait(200)
+
+    from freecad.SolidDesign.gui import command_line
+    command_line.add_history("chamfer 1 sel=new")
+    command_line.add_history("hide Body")
+    bar = open_line()
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_R, QtCore.Qt.ControlModifier)
+    wait(200)
+    QtTest.QTest.keyClicks(bar.edit, "cham")
+    wait(200)
+    shown = [bar.list.item(i).text() for i in range(bar.list.count())]
+    expect(bar.mode == "history" and shown and shown[0] == "chamfer 1 sel=new",
+           "Ctrl+R searches earlier lines (%s)" % shown[:3])
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+    wait(200)
+    expect(bar.mode == "line" and bar.edit.text() == "chamfer 1 sel=new",
+           "Enter takes one back to the line (%r)" % bar.edit.text())
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    wait(200)
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
+def command_line_features_by_name():
+    """Features by name: "last d=+2" changes the last one in one undo step;
+    "suppress /pattern/"; "edit " labels the tree's rows and a label puts the
+    name in; the live preview shows a tool's result before Enter and leaves the
+    document as it was."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.app import util
+    doc, part, gl, open_line = _line_setup("FN")
+    ext = util.features(part)[-1]
+    u0 = doc.UndoCount
+    open_line("last d=+2", enter=True)
+    expect(abs(ext.Depth.Value - 12) < 1e-9 and doc.UndoCount == u0 + 1,
+           "last d=+2: 12 mm, one undo step (%s, %d)" % (ext.Depth, doc.UndoCount - u0))
+    open_line("suppress /Extrude/", enter=True)
+    expect(ext.Suppressed, "suppress /Extrude/")
+    open_line("unsup /Extrude/", enter=True)
+    expect(not ext.Suppressed, "unsuppress")
+
+    bar = open_line("edit ")
+    expect(any(h.target is ext for h in bar.whints),
+           "edit labels the tree's rows (%d)" % len(bar.whints))
+    shot("tree-labels")
+    h = next((h for h in bar.whints if h.target is ext), None)
+    if h is not None:
+        QtTest.QTest.keyClicks(bar.edit, h.code)
+        wait(300)
+        expect(bar.edit.text() == "edit Boss-Extrude1", "a label puts the name in (%r)"
+               % bar.edit.text())
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    wait(200)
+
+    # Live preview: made and undone in the background.
+    body = body_views(part)[0]
+    front = edge_at(body, V(0, 0, 12), V(40, 0, 12))
+    Gui.Selection.addSelection(doc.Name, body.Name, front)
+    n, u0, r0 = len(doc.Objects), doc.UndoCount, doc.RedoCount
+    bar = open_line("fillet 3")
+    wait(1200)
+    expect("line" in bar.preview.layers, "the fillet shows before Enter")
+    shot("preview")
+    expect(bar.edit.hasFocus(), "typing goes on in the line after the preview")
+    expect(len(doc.Objects) == n and doc.UndoCount == u0 and doc.RedoCount == r0 and
+           _selected() == [front], "and the document is as it was (%d %d %d %s)" %
+           (len(doc.Objects) - n, doc.UndoCount - u0, doc.RedoCount - r0, _selected()))
+    bar.edit.setText("fillet 30")
+    bar.suggest()
+    wait(1500)
+    expect(bar.msg.isVisible() and bar.msg.text() and "line" not in bar.preview.layers,
+           "too big: the reason shows under the line (%r)" % bar.msg.text())
+    shot("problem")
+    bar.edit.setText("fillet 3")
+    bar.suggest()
+    wait(200)
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+    wait(1500)
+    f = util.features(part)[-1]
+    expect(getattr(f.Proxy, "TYPE", "") == "Fillet" and abs(f.Radius.Value - 3) < 1e-9 and
+           not f.ErrorMessage and doc.UndoCount == u0 + 1,
+           "Enter makes it, one undo step (%d)" % (doc.UndoCount - u0))
+    nf = len(util.features(part))
+    Gui.Selection.addSelection(doc.Name, body_views(part)[0].Name,
+                               edge_at(body_views(part)[0], V(0, 30, 12), V(40, 30, 12)))
+    open_line("fillet 1")
+    wait(1200)
+    QtTest.QTest.keyClick(command_line_current().edit, QtCore.Qt.Key_Escape)
+    wait(300)
+    expect(len(util.features(part)) == nf and doc.RedoCount == 0,
+           "Esc after a preview: nothing made, nothing to redo (%d %d)" %
+           (len(util.features(part)) - nf, doc.RedoCount))
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+def command_line_current():
+    from freecad.SolidDesign.gui import command_line
+    return command_line.current()
+
+
+@scenario
+def command_line_panels_and_toolbar():
+    """":" with a panel open labels its controls: radius=3 sets one by name, a
+    label goes to it. ":toolbar" labels the toolbar buttons; a label clicks one."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import extrude_panel
+    doc, part, gl, open_line = _line_setup("PT")
+    body = body_views(part)[0]
+    Gui.Selection.addSelection(doc.Name, body.Name, edge_at(body, V(0, 0, 10), V(40, 0, 10)))
+    Gui.runCommand("SD_Fillet")
+    wait(800)
+    p = extrude_panel.LAST[0]
+    expect(type(p).__name__ == "FilletPanel", "the fillet panel is open")
+    gl.setFocus()
+    wait(100)
+    QtTest.QTest.keyClick(gl, ":")
+    wait(400)
+    bar = command_line_current()
+    expect(bar is not None and bar.isVisible() and bar.mode == "panel" and
+           len(bar.whints) >= 3, "\":\" labels the panel's controls (%s)" %
+           (bar and len(bar.whints)))
+    shot("panel-labels")
+    if bar is not None and bar.mode == "panel":
+        QtTest.QTest.keyClicks(bar.edit, "radius=3")
+        wait(200)
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+        wait(600)
+        expect(abs(p.radius.value() - 3) < 1e-9, "radius=3 sets it (%s)" % p.radius.value())
+    close_panel(False)
+    wait(300)
+
+    bar = open_line("toolbar", enter=True)
+    expect(bar.isVisible() and bar.mode == "toolbar" and len(bar.whints) > 5,
+           "toolbar labels the buttons (%d)" % len(bar.whints))
+    mw = Gui.getMainWindow()
+    o = bar.overlays.get(id(mw))
+    covered = [h.name for r, h in (o.rects() if o else [])
+               if r.contains(QtCore.QPointF(h.target.mapTo(mw, h.target.rect().center())))]
+    expect(o is not None and not covered, "the labels leave the icons' middles clear (%s)"
+           % covered[:5])
+    shown = [bar.list.item(i).text() for i in range(bar.list.count())]
+    h0 = bar.whints[0]
+    expect(len(shown) == len(bar.whints) and shown[0].startswith(h0.code) and
+           h0.name in shown[0], "the list says what each label is (%s)" % shown[:2])
+    shot("toolbar-labels")
+    fit = next((h for h in bar.whints if h.name.lower() == "fit all"), None)
+    if fit is not None:
+        QtTest.QTest.keyClicks(bar.edit, "fit all")
+        wait(200)
+        expect(bar._tb_hits and bar._tb_hits[0] is fit and
+               fit.code in bar.list.item(0).text(),
+               "typing a name finds its button (%s)" % bar.list.item(0).text())
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+        wait(400)
+        expect(not bar.isVisible(), "Enter clicks it and closes the line")
+        bar = open_line("toolbar", enter=True)
+    QtTest.QTest.keyClicks(bar.edit, "zzqq")
+    wait(200)
+    expect(bar.msg.isVisible() and "No button" in bar.msg.text(), "nothing matches: it says so")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    wait(200)
+    expect(not bar.isVisible() and not any(o.isVisible() for o in bar.overlays.values()),
+           "Esc takes the labels away")
+
+
+@scenario
+def command_line_registers_marks_binds():
+    """sel=... >a keeps a selection in register a (sel=@a brings it back, after a
+    change too); mark a / 'a save and restore the view; yank copies a length; a
+    binding typed in the view runs its line."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import line_store
+    doc, part, gl, open_line = _line_setup("RM")
+    open_line("sel=edges:linear:par:z >a", enter=True)
+    regs = line_store.registers(doc)
+    expect("a" in regs and len(regs["a"]) == 4 and len(_selected()) == 4,
+           "four upright edges kept in @a (%s)" % {k: len(v) for k, v in regs.items()})
+    Gui.Selection.clearSelection()
+    open_line("sel=@a", enter=True)
+    expect(len(_selected()) == 4, "sel=@a picks them again (%s)" % _selected())
+    Gui.Selection.clearSelection()
+    view = Gui.ActiveDocument.ActiveView
+    view.viewIsometric()
+    open_line("mark v", enter=True)
+    d0 = App.Vector(view.getViewDirection())
+    view.viewTop()
+    wait(300)
+    open_line("'v", enter=True)
+    expect((App.Vector(view.getViewDirection()) - d0).Length < 1e-6, "'v restores the view")
+    open_line("yank sel=edges:len>35:front:top", enter=True)
+    clip = QtWidgets.QApplication.clipboard().text()
+    expect(clip.strip() == "40", "yank copies the front edge's length (%r)" % clip)
+    try:
+        line_store.set_binding("gk", "sel=edges:circular")
+        line_store.set_binding("gf", "sel=edges:linear:par:z")
+        Gui.Selection.clearSelection()
+        gl.setFocus()
+        wait(100)
+        QtTest.QTest.keyClick(gl, "g")
+        QtTest.QTest.keyClick(gl, "f")
+        wait(600)
+        expect(len(_selected()) == 4, "gf in the view runs its line (%s)" % _selected())
+    finally:
+        line_store.remove_binding("gk")
+        line_store.remove_binding("gf")
+    expect(not errors_in_doc(doc), "no errors %s" % errors_in_doc(doc))
+
+
+@scenario
+def command_line_help_over_overlays():
+    """With FreeCAD's docks overlaid on the 3D view, the cheat sheet, the bar and
+    its suggestions are in front of them, not behind. (An overlaid dock is a child
+    of the main window raised over the 3D view; one is made here, as turning
+    FreeCAD's overlay on from a script doesn't take reliably.)"""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui.command_search import _view_widget
+    doc, part, gl, open_line = _line_setup("HO")
+    mw = Gui.getMainWindow()
+    view = _view_widget()
+    dock = QtWidgets.QFrame(mw)
+    dock.setObjectName("FakeOverlay")
+    dock.setAutoFillBackground(True)
+    top_left = view.mapTo(mw, QtCore.QPoint(0, 0))
+    dock.setGeometry(top_left.x(), top_left.y(), 320, view.height())
+    dock.show()
+    dock.raise_()
+    wait(200)
+
+    def in_front(w, local):
+        hit = QtWidgets.QApplication.widgetAt(w.mapToGlobal(local))
+        return hit is w or (hit is not None and w.isAncestorOf(hit))
+
+    try:
+        open_line("h", enter=True)
+        sheet = next((w for w in mw.findChildren(QtWidgets.QFrame, "SD_LineHelp")
+                      if w.isVisible()), None)
+        expect(sheet is not None, ":h opens the sheet")
+        if sheet is not None:
+            dock.raise_()               # FreeCAD raises its overlays again now and then
+            wait(600)
+            expect(in_front(sheet, QtCore.QPoint(60, 60)),
+                   "the sheet is in front of the overlaid dock")
+            shot("sheet-over-overlay")
+            QtTest.QTest.keyClick(sheet.findChild(QtWidgets.QTextBrowser),
+                                  QtCore.Qt.Key_Escape)
+            wait(300)
+        bar = open_line("e")
+        dock.raise_()
+        wait(600)
+        expect(in_front(bar, QtCore.QPoint(30, bar.height() // 2)),
+               "the bar is in front of it")
+        expect(bar.list.isVisible() and in_front(bar.list, QtCore.QPoint(15, 8)),
+               "and the suggestions")
+        shot("bar-over-overlay")
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+        wait(200)
+    finally:
+        dock.deleteLater()
+
+
+def _alive(w):
+    from freecad.SolidDesign.gui import command_line
+    return command_line._alive(w)
+
+
+@scenario
+def command_line_planes_clicks_hover():
+    """split sel= labels the planes too (hidden origin planes drawn while it does);
+    sel=front names one; a click on an edge with sel= open adds that edge's label
+    to the line, Ctrl+click (a removal) takes it out; a label under the pointer
+    turns amber and its edge lights up."""
+    from PySide6 import QtTest
+    from freecad.SolidDesign.gui import hints as hm
+    doc, part, gl, open_line = _line_setup("PC")
+    front = plane(part, "Front Plane")
+    vo = front.ViewObject
+    bar = open_line("split sel=")
+    planes = [h for h in bar.hints if h.kind == "Plane"]
+    expect(len(planes) >= 3 and any(h.obj is front for h in planes),
+           "split sel= labels the planes (%d)" % len(planes))
+    expect(vo.SwitchNode.whichChild.getValue() >= 0 and not vo.Visibility,
+           "the hidden origin planes show while labelled")
+    wait(300)
+    o = bar.overlay
+    v = Gui.ActiveDocument.ActiveView
+    ratio = float(v.getSize()[0]) / max(1, gl.width())
+    far = []
+    for x in planes:
+        bb = x.obj.ViewObject.getBoundingBox()
+        gx, gy = v.getPointOnViewport(bb.Center)
+        if abs(x.x - gx / ratio) > 40 or abs(x.y - (gl.height() - gy / ratio)) > 40:
+            far.append(x.obj.Label)
+    expect(not far, "each plane's label is on the plane as drawn (%s)" % far)
+    shot("plane-labels")
+    h = next((h for h in planes if h.obj is front), None)
+    if h is not None:
+        QtTest.QTest.keyClicks(bar.edit, h.code)
+        wait(300)
+        expect((doc.Name, front.Name, "") in [(s.DocumentName, s.ObjectName, "")
+                                              for s in Gui.Selection.getSelectionEx()],
+               "typing its label picks the plane")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    wait(300)
+    expect(vo.SwitchNode.whichChild.getValue() < 0, "Esc: the plane is hidden again")
+    bar = open_line("split sel=front,")
+    wait(200)
+    expect([s.ObjectName for s in Gui.Selection.getSelectionEx()] == [front.Name],
+           "sel=front picks the Front Plane")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Escape)
+    wait(200)
+
+    # A click on an edge while sel= is open.
+    body = body_views(part)[0]
+    edge = edge_at(body, V(0, 0, 10), V(40, 0, 10))
+    bar = open_line("fillet 2 sel=")
+    code = next((x.code for x in bar.hints if x.sub == edge), None)
+    v = Gui.ActiveDocument.ActiveView
+    el = body.Shape.getElement(edge)
+    gx, gy = v.getPointOnViewport(el.valueAt(0.5 * (el.FirstParameter + el.LastParameter)))
+    ratio = float(v.getSize()[0]) / max(1, gl.width())
+    pt = QtCore.QPoint(int(gx / ratio), int(gl.height() - gy / ratio))
+    QtTest.QTest.mouseClick(gl, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, pt)
+    wait(1000)
+    if edge not in _selected():
+        Gui.Selection.addSelection(doc.Name, body.Name, edge)   # the click missed it
+        wait(400)
+        log("  (clicked by selecting: the synthetic click didn't reach the view)")
+    expect(code is not None and bar.edit.text() == "fillet 2 sel=%s," % code and
+           bar.edit.hasFocus(), "a click on an edge adds its label (%r)" % bar.edit.text())
+    right = edge_at(body, V(40, 0, 10), V(40, 30, 10))
+    Gui.Selection.addSelection(doc.Name, body.Name, right)
+    wait(1000)
+    rc = next((x.code for x in bar.hints if x.sub == right), None)
+    expect(bar.edit.text() == "fillet 2 sel=%s,%s," % (code, rc) and
+           _selected() == sorted([edge, right]), "another click adds another (%r %s)"
+           % (bar.edit.text(), _selected()))
+    Gui.Selection.removeSelection(doc.Name, body.Name, right)
+    wait(1000)
+    expect(bar.edit.text() == "fillet 2 sel=%s," % code, "Ctrl+click takes it out (%r)"
+           % bar.edit.text())
+    Gui.Selection.clearSelection()
+    wait(400)
+    expect(_selected() == [edge], "a click on nothing leaves the line's picks (%s)"
+           % _selected())
+
+    # Hover.
+    o = bar.overlay
+    r, hh = next(((r, x) for r, x in o.rects() if x.code != code), (None, None))
+    if r is not None:
+        QtTest.QTest.mouseMove(o, r.center().toPoint())
+        wait(300)
+        pre = Gui.Selection.getPreselection()
+        expect(o.hover is hh and pre is not None and pre.ObjectName == hh.obj.Name and
+               hh.sub in pre.SubElementNames, "a label under the pointer stands out, and "
+               "its edge lights up (%s)" % (pre and pre.SubElementNames))
+        shot("hover")
+        QtTest.QTest.mouseMove(gl, QtCore.QPoint(5, 5))
+        wait(300)
+        expect(o.hover is None, "and stops when the pointer leaves")
+    # Hover colour: FreeCAD's preselection colour.
+    if r is not None:
+        QtTest.QTest.mouseMove(o, r.center().toPoint())
+        wait(200)
+        img = o.grab().toImage()
+        c = img.pixelColor(int(r.left()) + 2, int(r.center().y()))
+        want = hm.preselect_color()
+        expect(abs(c.red() - want.red()) + abs(c.green() - want.green()) +
+               abs(c.blue() - want.blue()) < 40, "hovered: the preselection colour "
+               "(%s, want %s)" % (c.name(), want.name()))
+        QtTest.QTest.mouseMove(gl, QtCore.QPoint(5, 5))
+        wait(200)
+
+    # Hidden ones: Ctrl+X labels them too, dashed, with the model see-through.
+    back = edge_at(body, V(0, 30, 0), V(40, 30, 0))
+    n0 = len(bar.hints)
+    expect(not any(x.sub == back for x in bar.hints), "a hidden edge has no label")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_X, QtCore.Qt.ControlModifier)
+    wait(400)
+    hb = next((x for x in bar.hints if x.sub == back), None)
+    expect(bar.xray and hb is not None and getattr(hb, "hidden", False) and
+           len(bar.hints) > n0 and bar.see_through.saved,
+           "Ctrl+X: hidden ones get labels too (%d -> %d)" % (n0, len(bar.hints)))
+    shot("hidden-too")
+    if hb is not None:
+        QtTest.QTest.keyClicks(bar.edit, hb.code)
+        wait(400)
+        expect(back in _selected(), "and can be picked (%s)" % _selected())
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Backspace)
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Backspace)
+        QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Backspace)
+        wait(300)
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_X, QtCore.Qt.ControlModifier)
+    wait(400)
+    expect(not bar.xray and not bar.see_through.saved and
+           not any(x.sub == back for x in bar.hints), "Ctrl+X again: back to what's seen")
+    QtTest.QTest.keyClick(bar.edit, QtCore.Qt.Key_Return)
+    wait(1500)
+    from freecad.SolidDesign.app import util
+    f = util.features(part)[-1]
+    expect(getattr(f.Proxy, "TYPE", "") == "Fillet" and len(f.Items[1]) == 1 and
+           not f.ErrorMessage, "Enter fillets the clicked edge (%r)" % bar.edit.text())
+    _ = hm
+
 
 @scenario
 def command_line_after_a_sketch():
